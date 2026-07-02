@@ -178,38 +178,10 @@ html.theme-dark .reading-pane {
   color: #1a1d23;
 }
 
-/* The whole compose window is a light "island" in dark mode (like the reading
-   pane) — its fields, toolbar and footer stay white so the message you're writing
-   looks the same as it will to the recipient. The header keeps the brand colour. */
-html.theme-dark .compose-modal {
-  --c-brand: #0078d4;
-  --c-brand-hover: #106ebe;
-  --c-brand-active: #005a9e;
-  --c-brand-light: #e3edf7;
-  --c-bg: #ffffff;
-  --c-list-bg: #ffffff;
-  --c-actionbar-bg: #fafbfc;
-  --c-page-bg: #f5f6f8;
-  --c-hover: #f4f5f7;
-  --c-divider: #eceef1;
-  --c-border: #e3e6ea;
-  --c-border-strong: #cdd2da;
-  --c-text: #1a1d23;
-  --c-text-secondary: #3a3f4a;
-  --c-text-muted: #5b6270;
-  --c-text-subtle: #9aa1ac;
-  --c-error: #c2333a;
-  --c-error-bg: #fce8ea;
-  --c-success: #107c10;
-  --c-success-bg: #dff6dd;
-  --c-warning: #f7e9c1;
-  --c-warning-text: #8a6f12;
-  background: #ffffff;
-  color: #1a1d23;
-}
-
 /* Keep rendered email + the message you're composing on a light surface so
-   HTML mail authored for white backgrounds stays readable in dark mode. */
+   HTML mail authored for white backgrounds stays readable in dark mode. The
+   compose FIELDS / toolbar / footer keep the app's dark chrome — only the message
+   text area (.compose-body) is light, like a real email on white. */
 html.theme-dark .thread-msg-body,
 html.theme-dark .compose-body {
   background: #ffffff;
@@ -2410,7 +2382,13 @@ body.dragging-msg .folder-item:not([data-folder="' + state.currentFolder + '"]):
   transform: translate(-50%, -50%);
 }
 .compose-modal.compose-expanded.open { transform: translate(-50%, -50%); }
-.compose-modal.compose-expanded .compose-body { flex: 1 1 auto; }
+/* Expanded window: the message text area grows to fill the height (instead of
+   capping at 360px), so there's no empty gap and Send sits at the bottom. */
+.compose-modal.compose-expanded .compose-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
 
 .compose-fields { padding: 4px 18px 0; }
 .compose-row {
