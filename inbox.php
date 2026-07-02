@@ -541,8 +541,10 @@ $prefs        = load_prefs($email);
         <button class="compose-tool" data-cmd="italic" title="Italic" aria-label="Italic" type="button"><i>I</i></button>
         <button class="compose-tool" data-cmd="underline" title="Underline" aria-label="Underline" type="button"><u>U</u></button>
         <button class="compose-tool" data-cmd="strikeThrough" title="Strikethrough" aria-label="Strikethrough" type="button"><s>S</s></button>
-        <button class="compose-tool compose-tool-color" id="composeColorBtn" title="Text color" aria-label="Text color" type="button">A<span class="compose-color-bar"></span></button>
-        <input type="color" id="composeColorInput" class="compose-color-input" value="#d13438" tabindex="-1" aria-hidden="true">
+        <span class="compose-color-wrap">
+            <button class="compose-tool compose-tool-color" id="composeColorBtn" title="Text color" aria-label="Text color" type="button">A<span class="compose-color-bar"></span></button>
+            <input type="color" id="composeColorInput" class="compose-color-input" value="#d13438" title="Text color" aria-label="Text color">
+        </span>
         <span class="compose-tool-divider"></span>
         <button class="compose-tool" data-cmd="insertUnorderedList" title="Bullet list" aria-label="Bullet list" type="button"><svg class="icon" width="14" height="14"><use href="#ic-list"/></svg></button>
         <button class="compose-tool" data-cmd="insertOrderedList" title="Numbered list" aria-label="Numbered list" type="button"><svg class="icon" width="14" height="14"><use href="#ic-list-ol"/></svg></button>

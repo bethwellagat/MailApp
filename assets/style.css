@@ -2491,7 +2491,9 @@ body.dragging-msg .folder-item:not([data-folder="' + state.currentFolder + '"]):
   background: var(--c-border);
   margin: 0 6px;
 }
-/* Text-colour tool: an "A" with a colour bar under it + a hidden native picker. */
+/* Text-colour tool: an "A" with a colour bar, with a real (but invisible) native
+   colour input overlaid on top so a click opens the OS picker directly. */
+.compose-color-wrap { position: relative; display: inline-flex; }
 .compose-tool-color { position: relative; font-weight: 700; font-size: 13px; }
 .compose-color-bar {
   position: absolute;
@@ -2502,7 +2504,17 @@ body.dragging-msg .folder-item:not([data-folder="' + state.currentFolder + '"]):
   border-radius: 2px;
   background: #d13438;
 }
-.compose-color-input { position: absolute; width: 0; height: 0; padding: 0; border: 0; opacity: 0; pointer-events: none; }
+.compose-color-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
 .compose-attachments {
   display: flex;
   flex-wrap: wrap;

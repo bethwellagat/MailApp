@@ -3348,33 +3348,70 @@
             for (const f of e.dataTransfer.files) addAttachment(f);
         });
 
-        document.querySelectorAll('.compose-tool').forEach((b) => {
+        // Remember the caret/selection inside the compose body so tools that move
+        // focus away (the colour picker, the link prompt) can restore it before
+        // applying — otherwise the command lands on nothing.
+        let composeSavedRange = null;
+        function composeSaveSelection() {
+            const sel = window.getSelection();
+            if (!sel || sel.rangeCount === 0) return;
+            const r = sel.getRangeAt(0);
+            const body = $('composeBody');
+            if (body && body.contains(r.commonAncestorContainer)) composeSavedRange = r.cloneRange();
+        }
+        function composeRestoreSelection() {
+            const body = $('composeBody');
+            if (body) body.focus();
+            if (composeSavedRange) {
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(composeSavedRange);
+            }
+        }
+        document.addEventListener('selectionchange', composeSaveSelection);
+
+        document.querySelectorAll('.compose-tool[data-cmd]').forEach((b) => {
             b.addEventListener('mousedown', (e) => {
-                e.preventDefault();
+                e.preventDefault(); // keep the body's selection while the button takes the click
                 const cmd = b.dataset.cmd;
-                if (!cmd) return; // attach / colour buttons have their own handlers
                 if (cmd === 'createLink') {
-                    const url = window.prompt('Link URL:', 'https://');
-                    if (url && url.trim()) document.execCommand('createLink', false, url.trim());
+                    composeSaveSelection();
+                    const url = (window.prompt('Link URL:', 'https://') || '').trim();
+                    composeRestoreSelection();
+                    if (url && url !== 'https://') {
+                        const sel = window.getSelection();
+                        if (sel && sel.isCollapsed) {
+                            // Nothing selected — insert the URL itself as a link.
+                            document.execCommand('insertHTML', false,
+                                '<a href="' + url.replace(/"/g, '&quot;') + '">' + escapeHtml(url) + '</a>');
+                        } else {
+                            document.execCommand('createLink', false, url);
+                        }
+                    }
+                } else if (cmd === 'removeFormat') {
+                    document.execCommand('removeFormat', false, null);
+                    document.execCommand('formatBlock', false, 'div'); // also drop blockquote/heading blocks
                 } else if (b.dataset.val) {
-                    document.execCommand(cmd, false, b.dataset.val); // e.g. formatBlock → blockquote
+                    document.execCommand(cmd, false, b.dataset.val); // formatBlock → blockquote
                 } else {
                     document.execCommand(cmd, false, null);
                 }
                 $('composeBody').focus();
             });
         });
-        // Text-colour picker: refocus the body first so foreColor applies to the
-        // last caret/selection, then colour it and update the tool's colour bar.
+
+        // Text colour: a native <input type=color> overlays the "A" button, so a
+        // click opens the OS picker directly (reliable across browsers). Restore
+        // the saved selection first so the colour lands on the selected text.
         const composeColorInput = $('composeColorInput');
         const composeColorBtn = $('composeColorBtn');
-        if (composeColorBtn && composeColorInput) {
+        if (composeColorInput && composeColorBtn) {
             const colorBar = composeColorBtn.querySelector('.compose-color-bar');
             if (colorBar) colorBar.style.background = composeColorInput.value;
-            composeColorBtn.addEventListener('mousedown', (e) => { e.preventDefault(); composeColorInput.click(); });
             composeColorInput.addEventListener('input', () => {
                 if (colorBar) colorBar.style.background = composeColorInput.value;
-                $('composeBody').focus();
+                composeRestoreSelection();
+                try { document.execCommand('styleWithCSS', false, true); } catch (e) {}
                 document.execCommand('foreColor', false, composeColorInput.value);
             });
         }
