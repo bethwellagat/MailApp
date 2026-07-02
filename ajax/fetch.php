@@ -848,6 +848,7 @@ function build_thread_msg($mbox, $uid, $folder, $withBody) {
         'from_addr'  => $from['email'],
         'to'         => decode_header($h->toaddress ?? ''),
         'cc'         => decode_header($h->ccaddress ?? ''),
+        'bcc'        => decode_header($h->bccaddress ?? ''), // present on saved drafts, lets Resume repopulate Bcc
         'date'       => $h->date ?? '',
         'timestamp'  => isset($h->udate) ? (int)$h->udate : (int)strtotime($h->date ?? 'now'),
         'seen'       => empty($h->Unseen),

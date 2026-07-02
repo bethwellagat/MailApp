@@ -1757,11 +1757,11 @@
         );
 
         let body = '';
-        if (wantSig) {
-            body += '<br><br><div class="email-signature">' + sig + '</div>';
-        }
-        if (opts.quoted) {
-            body += '<br><br>' + opts.quoted;
+        if (opts.body != null) {
+            body = opts.body; // explicit body (resuming a saved draft) — no signature/quote
+        } else {
+            if (wantSig) body += '<br><br><div class="email-signature">' + sig + '</div>';
+            if (opts.quoted) body += '<br><br>' + opts.quoted;
         }
 
         $('composeTitle').textContent  = opts.title || 'New Message';
@@ -1778,6 +1778,8 @@
             in_reply_to: opts.in_reply_to || '',
             references: opts.references  || '',
         };
+        state.composeDraft = { uid: opts.draftUid || 0, folder: opts.draftFolder || '', acct: opts.acct || '' };
+        clearTimeout(draftSaveTimer);
         clearAttachments();
         $('sendBtn').disabled = false;
         $('sendBtn').querySelector('.btn-send-label').textContent = 'Send';
@@ -1798,11 +1800,74 @@
             } catch (e) {}
         }
     }
+    let draftSaveTimer = null;
+    let suppressDraftSave = false;
     function closeCompose() {
         acClose();
+        clearTimeout(draftSaveTimer);
+        // Autosave a half-written message to Drafts on close (unless we just sent).
+        if (!suppressDraftSave) saveDraft(true);
+        suppressDraftSave = false;
         $('composeModal').classList.remove('open');
         state.composeOpen = false;
         modalTrap.deactivate($('composeModal'));
+    }
+    // ---- Draft autosave (to the IMAP Drafts folder; see ajax/draft.php) ----
+    async function draftApi(action, params, acct) {
+        const body = new URLSearchParams();
+        body.append('action', action);
+        for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null) body.append(k, String(v));
+        const url = 'ajax/draft.php' + (acct ? ('?acct=' + encodeURIComponent(acct)) : '');
+        try {
+            const r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
+            if (r.status === 401) { window.location = 'index'; return { error: 'Not authenticated' }; }
+            return await r.json();
+        } catch (e) { return { error: NET_ERR, network: true }; }
+    }
+    function composeHasContent() {
+        return !!($('composeTo').value.trim() || $('composeCc').value.trim() || $('composeBcc').value.trim() ||
+                  $('composeSubject').value.trim() || $('composeBody').textContent.trim());
+    }
+    async function saveDraft(force) {
+        if (!state.composeOpen && !force) return;
+        if (!composeHasContent()) return;
+        const d = state.composeDraft || {};
+        const reply = state.composeReply || {};
+        const acct = composeSendAcct();
+        const r = await draftApi('save', {
+            to: $('composeTo').value.trim(),
+            cc: $('composeCc').value.trim(),
+            bcc: $('composeBcc').value.trim(),
+            subject: $('composeSubject').value.trim(),
+            body: $('composeBody').innerHTML,
+            in_reply_to: reply.in_reply_to || '',
+            references: reply.references || '',
+            prev_uid: d.uid || 0,
+            prev_folder: d.folder || '',
+        }, acct);
+        if (r && r.ok && r.uid) state.composeDraft = { uid: r.uid, folder: r.folder || '', acct: acct };
+    }
+    function scheduleDraftSave() {
+        if (!state.composeOpen) return;
+        clearTimeout(draftSaveTimer);
+        draftSaveTimer = setTimeout(() => saveDraft(false), 12000); // 12s after the last edit
+    }
+    // Open a saved draft back into the composer (reuses the message parser, which
+    // now returns bcc). Bound to clicks on rows in a Drafts-type folder.
+    async function resumeDraft(uid) {
+        const acct = viewAcct();
+        const data = await apiGet('thread', withAcct({ uid: uid, folder: state.currentFolder }, acct));
+        if (!data || data.error || !Array.isArray(data.thread) || !data.thread.length) { showToast('Could not open draft'); return; }
+        const m = data.thread.find(x => x.uid === uid) || data.thread[data.thread.length - 1];
+        openCompose({
+            title: 'Draft',
+            to: m.to || '', cc: m.cc || '', bcc: m.bcc || '',
+            subject: (m.subject === '(no subject)' ? '' : (m.subject || '')),
+            body: m.body || '',
+            acct: acct,
+            draftUid: uid, draftFolder: state.currentFolder,
+            in_reply_to: m.in_reply_to || '', references: m.references || '',
+        });
     }
 
     /* ---------- Recipient autocomplete (To / Cc / Bcc) ----------
@@ -2010,6 +2075,11 @@
             attachments,
         };
 
+        // The message is sent — drop its autosaved draft and don't re-save on close.
+        const _sentDraft = state.composeDraft;
+        if (_sentDraft && _sentDraft.uid) draftApi('delete', { uid: _sentDraft.uid, folder: _sentDraft.folder }, _sentDraft.acct);
+        state.composeDraft = { uid: 0, folder: '', acct: '' };
+        suppressDraftSave = true;
         closeCompose();
 
         if (isImmediate) {
@@ -3074,6 +3144,14 @@
                 return;
             }
 
+            // Drafts: clicking a saved draft reopens it in the composer to keep
+            // editing (rather than the read-only reading pane).
+            if (!state.searchActive && folderType(state.currentFolder) === 'drafts') {
+                e.preventDefault();
+                resumeDraft(uid);
+                return;
+            }
+
             // Search results carry their origin folder; switch to it before opening
             // so the thread fetch and any subsequent action operates in the right
             // scope. Regular list rows (including the unified inbox) must NOT
@@ -3138,6 +3216,10 @@
         $('composeBccToggle').addEventListener('click', () => {
             setBccVisible(true);
             $('composeBcc').focus();
+        });
+        // Autosave the compose to Drafts a few seconds after the last edit.
+        ['composeTo', 'composeCc', 'composeBcc', 'composeSubject', 'composeBody'].forEach((id) => {
+            const el = $(id); if (el) el.addEventListener('input', scheduleDraftSave);
         });
 
         if ($('sendChevBtn')) {
