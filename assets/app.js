@@ -3433,6 +3433,26 @@
             });
         }
 
+        // Enter reliability: pasted/resumed draft HTML (wrapped by wrap_html) and
+        // some nested structures can leave the browser's native Enter unable to
+        // start a new line. Handle Enter explicitly so it always inserts a line —
+        // but leave list items to their native "new bullet/number" behaviour.
+        const composeBodyEl = $('composeBody');
+        if (composeBodyEl) {
+            composeBodyEl.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+                const sel = window.getSelection();
+                let n = sel && sel.rangeCount ? sel.anchorNode : null;
+                while (n && n !== composeBodyEl) {
+                    const nm = n.nodeName;
+                    if (nm === 'LI' || nm === 'UL' || nm === 'OL') return; // native list behaviour
+                    n = n.parentNode;
+                }
+                e.preventDefault();
+                document.execCommand(e.shiftKey ? 'insertLineBreak' : 'insertParagraph');
+            });
+        }
+
         $('replyBtn').addEventListener('click', () => startReply(false));
         $('replyAllBtn').addEventListener('click', () => startReply(true));
         $('forwardBtn').addEventListener('click', startForward);
