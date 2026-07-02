@@ -676,8 +676,11 @@ function sanitize_html($html) {
         }
         $html = preg_replace('#<\s*/?\s*(link|meta|base|param|form|input|button)\b[^>]*>#i', '', $html);
     } while ($html !== $before && ++$pass < 30);
-    // Unwrap document-structure tags but keep their inner content.
+    // Unwrap document-structure tags but keep their inner content. Also drop any
+    // stray <!doctype …> — harmless when rendered, but a doctype node at the start
+    // of a contenteditable (e.g. a resumed draft) breaks the editor's line breaks.
     $html = preg_replace('#</?(html|head|body)\b[^>]*>#i', '', $html);
+    $html = preg_replace('#<!doctype[^>]*>#i', '', $html);
 
     // 3) Strip inline event handlers (onclick=, onerror=, …) in any quoting
     //    style. Anchor on whitespace OR '/', so a slash-separated handler in a

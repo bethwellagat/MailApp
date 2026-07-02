@@ -1775,7 +1775,12 @@
 
         let body = '';
         if (opts.body != null) {
-            body = opts.body; // explicit body (resuming a saved draft) — no signature/quote
+            // Resuming a saved draft: no signature/quote. Clean it so the editor
+            // behaves — drop any stray doctype (breaks contenteditable line breaks)
+            // and guarantee a trailing editable line so the caret isn't trapped
+            // after a list / quote / table (which stops Enter from working).
+            body = String(opts.body).replace(/<!doctype[^>]*>/gi, '').trim();
+            if (/<\/(?:ul|ol|blockquote|table|pre|h[1-6]|div)>$/i.test(body)) body += '<p><br></p>';
         } else {
             if (wantSig) body += '<br><br><div class="email-signature">' + sig + '</div>';
             if (opts.quoted) body += '<br><br>' + opts.quoted;
