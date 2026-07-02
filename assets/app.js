@@ -1788,6 +1788,10 @@
         setBccVisible(!!opts.bcc);
         $('composeSubject').value      = opts.subject || '';
         $('composeBody').innerHTML     = body;
+        // Baseline for autosave: the signature / quoted text compose opens with.
+        // The body only counts as "content" once it differs from this, so a fresh
+        // compose that only holds the signature never autosaves an empty draft.
+        state.composeInitialText = $('composeBody').textContent.replace(/\s+/g, ' ').trim();
         $('composeStatus').textContent = '';
         $('composeStatus').className   = 'compose-status';
         populateComposeFrom(opts.acct);
@@ -1843,8 +1847,13 @@
         } catch (e) { return { error: NET_ERR, network: true }; }
     }
     function composeHasContent() {
-        return !!($('composeTo').value.trim() || $('composeCc').value.trim() || $('composeBcc').value.trim() ||
-                  $('composeSubject').value.trim() || $('composeBody').textContent.trim());
+        // A recipient or subject is enough on its own.
+        if ($('composeTo').value.trim() || $('composeCc').value.trim() ||
+            $('composeBcc').value.trim() || $('composeSubject').value.trim()) return true;
+        // Otherwise the body only counts if the user typed something beyond the
+        // signature / quoted text that compose opened with.
+        const bodyText = $('composeBody').textContent.replace(/\s+/g, ' ').trim();
+        return bodyText !== '' && bodyText !== (state.composeInitialText || '');
     }
     async function saveDraft(force) {
         if (!state.composeOpen && !force) return;
