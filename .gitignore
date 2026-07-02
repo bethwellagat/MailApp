@@ -1,0 +1,23 @@
+# ---------------------------------------------------------------------------
+# Per-user / per-deployment RUNTIME STATE — never commit.
+# This is where signatures, workspace logos, brand overrides, filters, snoozes,
+# contacts, the outbox, rate-limit files and the software-update token live.
+# Keeping data/ out of git is what lets a `git pull` (or the in-app updater)
+# refresh the CODE without ever touching a user's data.
+# ---------------------------------------------------------------------------
+/data/*
+# ...but DO ship the two templates a fresh install needs:
+!/data/.htaccess
+!/data/brand.json.example
+!/data/update.json.example
+
+# OS / editor / tooling cruft
+.DS_Store
+**/.DS_Store
+.claude/
+.idea/
+.vscode/
+
+# Not part of the app
+cgi-bin/
+.well-known/

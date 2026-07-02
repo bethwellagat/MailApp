@@ -1,0 +1,57 @@
+# WebMail — extension-less URLs
+#
+# Goal: serve /inbox, /settings, /logout, /index from the corresponding .php
+# file, and 301-redirect direct .php hits so old bookmarks land on the clean URL.
+# AJAX endpoints under /ajax/ keep their .php extension because the JS
+# references them directly.
+
+DirectoryIndex index.php
+Options -Indexes
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 1. External 301: /foo.php → /foo. THE_REQUEST holds the original browser
+    #    request line, so internal rewrites (step 2) don't trigger this and
+    #    create a loop. Skip /ajax/* — those are called by JS as foo.php.
+    RewriteCond %{REQUEST_URI} !^/ajax/
+    RewriteCond %{THE_REQUEST} \s/+([^?\s]+)\.php[\s?] [NC]
+    RewriteRule ^ /%1 [R=301,L]
+
+    # 2. Internal rewrite: /foo → /foo.php when /foo.php exists.
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME}.php -f
+    RewriteRule ^(.+?)/?$ $1.php [L]
+</IfModule>
+
+# Gzip text assets on the wire. style.css and app.js are the bulk of page
+# weight; compressing them is a large, free win. No-ops if mod_deflate is
+# absent on the host.
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml
+    AddOutputFilterByType DEFLATE application/javascript application/x-javascript text/javascript
+    AddOutputFilterByType DEFLATE application/json image/svg+xml
+</IfModule>
+
+# Caching policy.
+#   Static assets are loaded as e.g. style.css?v=<filemtime>, so the URL changes
+#   whenever the file does — we can safely cache them for a year as immutable.
+#   The .php pages are dynamic (they embed the per-session CSRF token and user
+#   data), so they must never be stored. No-ops if mod_headers is absent.
+<IfModule mod_headers.c>
+    <FilesMatch "\.(css|js|svg|png|jpe?g|gif|webp|ico|woff2?)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+    # The service worker and offline shell must NOT inherit the year-long
+    # immutable rule above, or an updated build would never be picked up. They
+    # are unversioned by nature (the browser refetches sw.js on its own update
+    # check), so force revalidation. This block follows the asset rule so it
+    # wins the Cache-Control override for these two files.
+    <FilesMatch "^(sw\.js|offline\.html)$">
+        Header set Cache-Control "no-cache, max-age=0, must-revalidate"
+    </FilesMatch>
+    <FilesMatch "\.php$">
+        Header set Cache-Control "no-store, no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>

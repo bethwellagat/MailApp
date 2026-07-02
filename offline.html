@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0078d4">
+<title>You're offline</title>
+<!--
+  Self-contained offline shell served by the service worker when a page
+  navigation fails with no network. Styles are inlined on purpose: the app's
+  CSS is requested with a ?v=<mtime> cache-bust, so its exact URL changes
+  whenever the file does and can't be relied on here. Brand-neutral text keeps
+  the single codebase portable across client domains.
+-->
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1a1d23; --muted: #5b6270;
+    --border: #e3e6ea; --brand: #0078d4; --brand-hover: #106ebe;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171c; --card: #1e2128; --text: #e6e8ec; --muted: #9aa1ac;
+      --border: #2f343d; --brand: #2b88d8; --brand-hover: #3a96e6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 40px 32px; max-width: 380px; width: 100%; text-align: center;
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  }
+  .mark {
+    width: 56px; height: 56px; border-radius: 14px; background: var(--brand);
+    display: inline-flex; align-items: center; justify-content: center; margin-bottom: 18px;
+  }
+  h1 { font-size: 19px; font-weight: 600; margin: 0 0 8px; }
+  p { font-size: 14px; line-height: 1.5; color: var(--muted); margin: 0 0 24px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 14px; color: #fff; cursor: pointer;
+    background: var(--brand); border: 0; border-radius: 8px; padding: 10px 22px;
+    transition: background .15s ease;
+  }
+  button:hover { background: var(--brand-hover); }
+  button:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .hint { margin-top: 18px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <main class="card" role="main">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="26" height="26">
+        <rect x="3" y="5" width="18" height="14" rx="2"/><polyline points="3 7 12 13 21 7"/>
+      </svg>
+    </span>
+    <h1>You're offline</h1>
+    <p>We can't reach the mail server right now. Messages you've already opened stay available, and anything new will load as soon as you're back online.</p>
+    <button type="button" onclick="location.reload()">Try again</button>
+    <div class="hint">Your connection will reconnect automatically.</div>
+  </main>
+  <script>
+    // Auto-recover: the moment the browser regains connectivity, reload so the
+    // user lands back on the live app without having to tap the button.
+    window.addEventListener('online', function () { location.reload(); });
+  </script>
+</body>
+</html>
