@@ -1883,8 +1883,25 @@
     // now returns bcc). Bound to clicks on rows in a Drafts-type folder.
     async function resumeDraft(uid) {
         const acct = viewAcct();
-        const data = await apiGet('thread', withAcct({ uid: uid, folder: state.currentFolder }, acct));
-        if (!data || data.error || !Array.isArray(data.thread) || !data.thread.length) { showToast('Could not open draft'); return; }
+        const folder = state.currentFolder;
+        const openThread = (u) => apiGet('thread', withAcct({ uid: u, folder: folder }, acct));
+        const ok = (d) => d && !d.error && Array.isArray(d.thread) && d.thread.length;
+
+        let data = await openThread(uid);
+        // Autosave replaces a draft (append new + delete old), so its UID changes
+        // and the list row can point at a message that no longer exists ("Message
+        // not found"). Recover without a full page reload: refresh the folder,
+        // re-find the SAME draft by Message-ID, and retry with its current UID.
+        if (!ok(data)) {
+            const row = state.messages.find(x => x.uid === uid);
+            const mid = (row && row.message_id) ? row.message_id : '';
+            if (mid) {
+                await loadMessages({ keepReading: true, silent: true });
+                const fresh = state.messages.find(x => x.message_id === mid);
+                if (fresh && fresh.uid !== uid) { uid = fresh.uid; data = await openThread(uid); }
+            }
+        }
+        if (!ok(data)) { showToast('Could not open draft'); return; }
         const m = data.thread.find(x => x.uid === uid) || data.thread[data.thread.length - 1];
         openCompose({
             title: 'Draft',
