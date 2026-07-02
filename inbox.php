@@ -111,6 +111,15 @@ $prefs        = load_prefs($email);
     <symbol id="ic-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
     </symbol>
+    <symbol id="ic-minimize" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="6" y1="18" x2="18" y2="18"/>
+    </symbol>
+    <symbol id="ic-expand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </symbol>
+    <symbol id="ic-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </symbol>
     <symbol id="ic-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
     </symbol>
@@ -482,9 +491,17 @@ $prefs        = load_prefs($email);
 <div class="compose-modal" id="composeModal" role="dialog" aria-label="New message">
     <div class="compose-header">
         <span class="compose-title" id="composeTitle">New Message</span>
-        <button class="compose-close" id="composeClose" aria-label="Close">
-            <svg class="icon" width="14" height="14"><use href="#ic-x"/></svg>
-        </button>
+        <div class="compose-header-actions">
+            <button class="compose-hdr-btn" id="composeMinimize" type="button" aria-label="Minimize" title="Minimize">
+                <svg class="icon" width="14" height="14"><use href="#ic-minimize"/></svg>
+            </button>
+            <button class="compose-hdr-btn" id="composeExpand" type="button" aria-label="Full screen" title="Full screen">
+                <svg class="icon" width="14" height="14"><use href="#ic-expand"/></svg>
+            </button>
+            <button class="compose-close" id="composeClose" type="button" aria-label="Close" title="Close">
+                <svg class="icon" width="14" height="14"><use href="#ic-x"/></svg>
+            </button>
+        </div>
     </div>
     <div class="compose-fields">
         <div class="compose-row" id="composeFromRow" hidden>

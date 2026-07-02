@@ -1746,6 +1746,23 @@
         $('composeBccToggle').setAttribute('aria-expanded', show ? 'true' : 'false');
     }
 
+    // Gmail-style compose window states: 'docked' (default bottom-right),
+    // 'minimized' (title bar only), 'expanded' (large centered dialog).
+    function setComposeMode(mode) {
+        const m = $('composeModal');
+        if (!m) return;
+        state.composeMode = mode;
+        m.classList.toggle('compose-minimized', mode === 'minimized');
+        m.classList.toggle('compose-expanded', mode === 'expanded');
+        const ex = $('composeExpand');
+        if (ex) {
+            const use = ex.querySelector('use');
+            if (use) use.setAttribute('href', mode === 'expanded' ? '#ic-collapse' : '#ic-expand');
+            const label = mode === 'expanded' ? 'Exit full screen' : 'Full screen';
+            ex.setAttribute('title', label); ex.setAttribute('aria-label', label);
+        }
+    }
+
     function openCompose(opts) {
         opts = opts || {};
         const isReplyOrForward = !!opts.quoted;
@@ -1783,6 +1800,7 @@
         clearAttachments();
         $('sendBtn').disabled = false;
         $('sendBtn').querySelector('.btn-send-label').textContent = 'Send';
+        setComposeMode('docked'); // always open docked; clears any prior minimize/expand
         $('composeModal').classList.add('open');
         state.composeOpen = true;
         modalTrap.activate($('composeModal'), { focus: false });
@@ -3209,6 +3227,13 @@
 
         $('composeBtn').addEventListener('click', () => openCompose());
         $('composeClose').addEventListener('click', closeCompose);
+        if ($('composeMinimize')) $('composeMinimize').addEventListener('click', () => setComposeMode(state.composeMode === 'minimized' ? 'docked' : 'minimized'));
+        if ($('composeExpand')) $('composeExpand').addEventListener('click', () => setComposeMode(state.composeMode === 'expanded' ? 'docked' : 'expanded'));
+        // Click the header of a minimized compose to restore it (Gmail behaviour).
+        const cmpHeader = document.querySelector('.compose-header');
+        if (cmpHeader) cmpHeader.addEventListener('click', (e) => {
+            if (state.composeMode === 'minimized' && !e.target.closest('.compose-header-actions')) setComposeMode('docked');
+        });
         $('sendBtn').addEventListener('click', () => sendMessage());
         acAttach($('composeTo'));
         acAttach($('composeCc'));
