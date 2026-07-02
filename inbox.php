@@ -546,6 +546,9 @@ $prefs        = load_prefs($email);
     </div>
     <div class="compose-footer">
         <span class="compose-status" id="composeStatus"></span>
+        <button class="compose-discard" id="composeDiscard" type="button" aria-label="Discard draft" title="Discard draft">
+            <svg class="icon" width="16" height="16"><use href="#ic-trash"/></svg>
+        </button>
         <div class="btn-send-group">
             <button class="btn-send" id="sendBtn">
                 <svg class="icon" width="14" height="14"><use href="#ic-send"/></svg>

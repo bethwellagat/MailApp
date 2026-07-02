@@ -1896,6 +1896,21 @@
             in_reply_to: m.in_reply_to || '', references: m.references || '',
         });
     }
+    // Discard: delete any autosaved draft for this compose, then close without
+    // re-saving on the way out.
+    function discardDraft() {
+        const d = state.composeDraft;
+        const had = !!(d && d.uid);
+        if (had) draftApi('delete', { uid: d.uid, folder: d.folder }, d.acct);
+        state.composeDraft = { uid: 0, folder: '', acct: '' };
+        suppressDraftSave = true; // skip the autosave-on-close
+        closeCompose();
+        if (had) {
+            showToast('Draft discarded');
+            loadFolders();
+            if (folderType(state.currentFolder) === 'drafts') loadMessages({ keepReading: true, silent: true });
+        }
+    }
 
     /* ---------- Recipient autocomplete (To / Cc / Bcc) ----------
        Suggests addresses from the per-user book harvested by the backend
@@ -3236,6 +3251,7 @@
 
         $('composeBtn').addEventListener('click', () => openCompose());
         $('composeClose').addEventListener('click', closeCompose);
+        if ($('composeDiscard')) $('composeDiscard').addEventListener('click', discardDraft);
         if ($('composeMinimize')) $('composeMinimize').addEventListener('click', () => setComposeMode(state.composeMode === 'minimized' ? 'docked' : 'minimized'));
         if ($('composeExpand')) $('composeExpand').addEventListener('click', () => setComposeMode(state.composeMode === 'expanded' ? 'docked' : 'expanded'));
         // Click the header of a minimized compose to restore it (Gmail behaviour).

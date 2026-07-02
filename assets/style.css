@@ -2602,6 +2602,18 @@ body.dragging-msg .folder-item:not([data-folder="' + state.currentFolder + '"]):
   color: var(--c-text-muted);
   flex: 1;
 }
+.compose-discard {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  color: var(--c-text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.compose-discard:hover { background: var(--c-error-bg); color: var(--c-error); }
 .compose-status.success { color: var(--c-success); }
 .compose-status.error { color: var(--c-error); }
 .btn-send {
