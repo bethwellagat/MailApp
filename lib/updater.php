@@ -8,15 +8,17 @@
  * workspace logos, brand override, filters, snoozes, contacts, outbox — lives under
  * data/, an update refreshes the app without disturbing any of it.
  *
- * Configuration lives in data/update.json (git-ignored, web-denied):
+ * Works out of the box with NO per-site configuration: it defaults to the built-in
+ * upstream repo (see UPDATE_DEFAULT_REPO below), which must be PUBLIC so no secret
+ * is ever needed. Everything is OPTIONAL and only for overrides — data/update.json
+ * (git-ignored, web-denied) can point at a fork, pin a branch, add a token for a
+ * PRIVATE repo, or restrict who may update:
  *   {
- *     "repo":        "owner/name",   // required — the upstream repo
+ *     "repo":        "owner/name",   // optional — override the built-in upstream
  *     "branch":      "main",         // optional — defaults to main
- *     "token":       "github_pat…",  // optional — required only for PRIVATE repos
+ *     "token":       "github_pat…",  // optional — ONLY if the repo is private (read-only, single-repo)
  *     "admin_email": "boss@acme.com" // optional — if set, only this user may update
  *   }
- * Use a fine-grained, READ-ONLY, single-repo token. The feature is disabled until
- * this file exists and names a valid repo.
  */
 
 function _update_dir()          { return __DIR__ . '/../data/.update'; }
@@ -24,20 +26,36 @@ function _update_config_file()  { return __DIR__ . '/../data/update.json'; }
 function _update_version_file() { return __DIR__ . '/../data/version.json'; }
 function _app_root()            { return dirname(__DIR__); }
 
-/** Parsed config, or null when the feature is not configured. */
+// Built-in upstream — the app updates from here with ZERO per-site configuration.
+// (A PUBLIC repo is required so no token/secret is ever needed; a private repo
+// cannot be pulled without a secret, and secrets must never live in the code.)
+// A fork can override any of these in data/update.json without editing code.
+if (!defined('UPDATE_DEFAULT_REPO'))   define('UPDATE_DEFAULT_REPO',   'bethwellagat/MailApp');
+if (!defined('UPDATE_DEFAULT_BRANCH')) define('UPDATE_DEFAULT_BRANCH', 'main');
+
+/**
+ * Effective config. Starts from the built-in defaults so updates work out of the
+ * box; data/update.json (if present) may override repo/branch and add a token
+ * (private repos only) or an admin_email gate. Returns null only if the resolved
+ * repo is somehow invalid.
+ */
 function update_config() {
+    $repo   = UPDATE_DEFAULT_REPO;
+    $branch = UPDATE_DEFAULT_BRANCH;
+    $token  = '';
+    $admin  = '';
     $f = _update_config_file();
-    if (!is_file($f)) return null;
-    $c = @json_decode((string)@file_get_contents($f), true);
-    if (!is_array($c) || empty($c['repo']) || !preg_match('#^[\w.-]+/[\w.-]+$#', (string)$c['repo'])) return null;
-    $branch = (string)($c['branch'] ?? 'main');
-    if (!preg_match('#^[\w./-]+$#', $branch)) $branch = 'main';
-    return [
-        'repo'        => (string)$c['repo'],
-        'branch'      => $branch,
-        'token'       => is_string($c['token'] ?? null) ? trim($c['token']) : '',
-        'admin_email' => strtolower(trim((string)($c['admin_email'] ?? ''))),
-    ];
+    if (is_file($f)) {
+        $c = @json_decode((string)@file_get_contents($f), true);
+        if (is_array($c)) {
+            if (!empty($c['repo'])   && preg_match('#^[\w.-]+/[\w.-]+$#', (string)$c['repo']))  $repo   = (string)$c['repo'];
+            if (!empty($c['branch']) && preg_match('#^[\w./-]+$#',        (string)$c['branch'])) $branch = (string)$c['branch'];
+            if (is_string($c['token'] ?? null)) $token = trim($c['token']);
+            $admin = strtolower(trim((string)($c['admin_email'] ?? '')));
+        }
+    }
+    if ($repo === '' || !preg_match('#^[\w.-]+/[\w.-]+$#', $repo)) return null;
+    return ['repo' => $repo, 'branch' => $branch, 'token' => $token, 'admin_email' => $admin];
 }
 
 /** The commit sha currently deployed (recorded after the last successful update). */

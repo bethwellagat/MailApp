@@ -133,22 +133,26 @@ access required (it downloads the GitHub zipball with `curl` and installs it wit
 `data/`**, so every user's signature, workspace logo, brand override, filters,
 contacts, snoozes and outbox survive untouched.
 
-Enable it by creating **`data/update.json`** (copy `data/update.json.example`):
+**No configuration is required.** Updates default to the app's built-in upstream
+repo (`UPDATE_DEFAULT_REPO` in `lib/updater.php`), which **must be public** — that's
+the only way one-click updates can work without storing a secret on every site.
+Just click **Check for updates → Update now**.
+
+Everything below is **optional**, via `data/update.json` (copy `data/update.json.example`)
+— only for a fork, a private repo, or restricting who can update:
 
 ```json
 {
   "repo": "your-github-user/your-repo",
   "branch": "main",
-  "token": "github_pat_… (only needed for a PRIVATE repo)",
-  "admin_email": "you@yourdomain.com (optional — restricts who can update)"
+  "token": "github_pat_… (ONLY for a PRIVATE repo — read-only, single-repo)",
+  "admin_email": "you@yourdomain.com (restricts the Update buttons to one account)"
 }
 ```
 
-- Use a **fine-grained, read-only, single-repo** token for private repos. It lives
-  only under `data/` (git-ignored, web-denied) — never in the code or the repo.
-- Set `admin_email` to limit the **Check / Update now** buttons to one account;
-  leave it blank to let any signed-in user update.
-- The feature stays hidden/disabled until `data/update.json` names a valid repo.
+- A private repo cannot be pulled without a secret; a token in `data/update.json`
+  (git-ignored, web-denied) is the only safe way, and it must never live in the code.
+- Set `admin_email` to limit **Check / Update now** to one account; blank = any user.
 - The deployed commit is recorded in `data/version.json`; "Check for updates"
   compares it to the branch tip. Updates apply per-file atomically and reload the app.
 

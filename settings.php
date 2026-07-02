@@ -545,7 +545,7 @@ if ('serviceWorker' in navigator) {
                 <button class="btn btn-primary" id="updateApplyBtn" type="button" hidden>Update now</button>
                 <span class="settings-status" id="updateStatus"></span>
             </div>
-            <p class="settings-hint">Configure the source in <span class="mono">data/update.json</span>: <span class="mono">repo</span> (owner/name), optional <span class="mono">branch</span>, optional <span class="mono">token</span> for private repos, and optional <span class="mono">admin_email</span> to limit who can update. Updates stay disabled until that file exists.</p>
+            <p class="settings-hint">No setup needed — updates come from the app's built-in code repository. Advanced (optional): create <span class="mono">data/update.json</span> to point at a fork (<span class="mono">repo</span>/<span class="mono">branch</span>), add a <span class="mono">token</span> for a private repo, or set <span class="mono">admin_email</span> to limit who can update.</p>
         </section>
 
     </div>
