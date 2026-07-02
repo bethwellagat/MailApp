@@ -3351,10 +3351,33 @@
         document.querySelectorAll('.compose-tool').forEach((b) => {
             b.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                document.execCommand(b.dataset.cmd, false, null);
+                const cmd = b.dataset.cmd;
+                if (!cmd) return; // attach / colour buttons have their own handlers
+                if (cmd === 'createLink') {
+                    const url = window.prompt('Link URL:', 'https://');
+                    if (url && url.trim()) document.execCommand('createLink', false, url.trim());
+                } else if (b.dataset.val) {
+                    document.execCommand(cmd, false, b.dataset.val); // e.g. formatBlock → blockquote
+                } else {
+                    document.execCommand(cmd, false, null);
+                }
                 $('composeBody').focus();
             });
         });
+        // Text-colour picker: refocus the body first so foreColor applies to the
+        // last caret/selection, then colour it and update the tool's colour bar.
+        const composeColorInput = $('composeColorInput');
+        const composeColorBtn = $('composeColorBtn');
+        if (composeColorBtn && composeColorInput) {
+            const colorBar = composeColorBtn.querySelector('.compose-color-bar');
+            if (colorBar) colorBar.style.background = composeColorInput.value;
+            composeColorBtn.addEventListener('mousedown', (e) => { e.preventDefault(); composeColorInput.click(); });
+            composeColorInput.addEventListener('input', () => {
+                if (colorBar) colorBar.style.background = composeColorInput.value;
+                $('composeBody').focus();
+                document.execCommand('foreColor', false, composeColorInput.value);
+            });
+        }
 
         $('replyBtn').addEventListener('click', () => startReply(false));
         $('replyAllBtn').addEventListener('click', () => startReply(true));

@@ -120,6 +120,13 @@ $prefs        = load_prefs($email);
     <symbol id="ic-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>
     </symbol>
+    <symbol id="ic-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
+    <symbol id="ic-redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h4"/></symbol>
+    <symbol id="ic-list-ol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-1.4 2-2.4 0-.7-.6-1.1-1.4-.9"/></symbol>
+    <symbol id="ic-indent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 8 7 12 3 16"/><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/></symbol>
+    <symbol id="ic-outdent" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 8 3 12 7 16"/><line x1="21" y1="6" x2="11" y2="6"/><line x1="21" y1="12" x2="11" y2="12"/><line x1="21" y1="18" x2="11" y2="18"/></symbol>
+    <symbol id="ic-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></symbol>
+    <symbol id="ic-clear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><line x1="5" y1="20" x2="11" y2="20"/><line x1="13" y1="4" x2="8.5" y2="20"/><line x1="15" y1="13" x2="21" y2="19"/><line x1="21" y1="13" x2="15" y2="19"/></symbol>
     <symbol id="ic-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
     </symbol>
@@ -527,16 +534,26 @@ $prefs        = load_prefs($email);
         </div>
     </div>
     <div class="compose-toolbar">
+        <button class="compose-tool" data-cmd="undo" title="Undo" aria-label="Undo" type="button"><svg class="icon" width="14" height="14"><use href="#ic-undo"/></svg></button>
+        <button class="compose-tool" data-cmd="redo" title="Redo" aria-label="Redo" type="button"><svg class="icon" width="14" height="14"><use href="#ic-redo"/></svg></button>
+        <span class="compose-tool-divider"></span>
         <button class="compose-tool" data-cmd="bold" title="Bold" aria-label="Bold" type="button"><b>B</b></button>
         <button class="compose-tool" data-cmd="italic" title="Italic" aria-label="Italic" type="button"><i>I</i></button>
         <button class="compose-tool" data-cmd="underline" title="Underline" aria-label="Underline" type="button"><u>U</u></button>
-        <button class="compose-tool" data-cmd="insertUnorderedList" title="Bullet list" aria-label="Bullet list" type="button">
-            <svg class="icon" width="14" height="14"><use href="#ic-list"/></svg>
-        </button>
+        <button class="compose-tool" data-cmd="strikeThrough" title="Strikethrough" aria-label="Strikethrough" type="button"><s>S</s></button>
+        <button class="compose-tool compose-tool-color" id="composeColorBtn" title="Text color" aria-label="Text color" type="button">A<span class="compose-color-bar"></span></button>
+        <input type="color" id="composeColorInput" class="compose-color-input" value="#d13438" tabindex="-1" aria-hidden="true">
         <span class="compose-tool-divider"></span>
-        <button class="compose-tool" id="composeAttach" title="Attach file" aria-label="Attach file" type="button">
-            <svg class="icon" width="14" height="14"><use href="#ic-paperclip"/></svg>
-        </button>
+        <button class="compose-tool" data-cmd="insertUnorderedList" title="Bullet list" aria-label="Bullet list" type="button"><svg class="icon" width="14" height="14"><use href="#ic-list"/></svg></button>
+        <button class="compose-tool" data-cmd="insertOrderedList" title="Numbered list" aria-label="Numbered list" type="button"><svg class="icon" width="14" height="14"><use href="#ic-list-ol"/></svg></button>
+        <button class="compose-tool" data-cmd="outdent" title="Decrease indent" aria-label="Decrease indent" type="button"><svg class="icon" width="14" height="14"><use href="#ic-outdent"/></svg></button>
+        <button class="compose-tool" data-cmd="indent" title="Increase indent" aria-label="Increase indent" type="button"><svg class="icon" width="14" height="14"><use href="#ic-indent"/></svg></button>
+        <span class="compose-tool-divider"></span>
+        <button class="compose-tool" data-cmd="formatBlock" data-val="blockquote" title="Quote" aria-label="Quote" type="button">&#8220;</button>
+        <button class="compose-tool" data-cmd="createLink" title="Insert link" aria-label="Insert link" type="button"><svg class="icon" width="14" height="14"><use href="#ic-link"/></svg></button>
+        <button class="compose-tool" data-cmd="removeFormat" title="Clear formatting" aria-label="Clear formatting" type="button"><svg class="icon" width="14" height="14"><use href="#ic-clear"/></svg></button>
+        <span class="compose-tool-divider"></span>
+        <button class="compose-tool" id="composeAttach" title="Attach file" aria-label="Attach file" type="button"><svg class="icon" width="14" height="14"><use href="#ic-paperclip"/></svg></button>
         <input type="file" id="composeFileInput" multiple hidden>
     </div>
     <div class="compose-body" id="composeBody" contenteditable="true" data-placeholder="Write your message…"></div>
