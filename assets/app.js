@@ -415,6 +415,25 @@
             if (navigator.setAppBadge) { if (n > 0) navigator.setAppBadge(n); else navigator.clearAppBadge(); }
         } catch (e) {}
     }
+    function notifySupported() { return typeof Notification !== 'undefined'; }
+    function notifyEnabled() {
+        return !!(window.__PREFS__ && window.__PREFS__.notifications) && notifySupported() && Notification.permission === 'granted';
+    }
+    // Fire a desktop notification for new inbox mail — but never while the user is
+    // actively looking at the app (visible AND focused); that would just be noise.
+    function maybeNotifyNewMail(delta, totalUnread) {
+        if (delta <= 0 || !notifyEnabled()) return;
+        const inFocus = !document.hidden && (document.hasFocus ? document.hasFocus() : true);
+        if (inFocus) return;
+        const brand = (BASE_TITLE.split('·').pop() || '').trim() || 'Mail';
+        try {
+            const n = new Notification(brand, {
+                body: (delta === 1 ? 'You have a new message' : 'You have ' + delta + ' new messages') + ' · ' + totalUnread + ' unread',
+                tag: 'wm-newmail', renotify: true,
+            });
+            n.onclick = function () { try { window.focus(); n.close(); } catch (e) {} };
+        } catch (e) {}
+    }
     function renderFolders() { renderSidebar(); applyUnreadIndicators(); }
     function renderMoveDropdown() {
         const html = state.folders
@@ -3409,18 +3428,19 @@
     /* ---------- Auto-refresh polling ---------- */
     async function pollForUpdates() {
         if (state.pollInflight) return;
-        if (document.hidden) return;
         if (state.composeOpen) return;
+        const hidden = document.hidden;
+        // While hidden we keep polling ONLY if desktop notifications are on (to
+        // catch background mail); otherwise there's nothing to do until refocus.
+        if (hidden && !notifyEnabled()) return;
         state.pollInflight = true;
         state.pollCount = (state.pollCount || 0) + 1;
         // Cost control on shared hosting: the frequent path is ONE cheap status
-        // probe (single imap_status). The heavy work — the four side-effect jobs,
-        // each of which opens its own IMAP connection, plus the full `folders`
-        // refresh that runs imap_status on EVERY folder — runs only every Nth
-        // cycle (or immediately when new mail is detected). New mail is still
-        // caught every cycle via the probe.
+        // probe (single imap_status). The heavy work — the four side-effect jobs
+        // plus the full per-folder `folders` refresh — runs only every Nth VISIBLE
+        // cycle (or when mail is detected). New mail is still caught every cycle.
         const HEAVY_EVERY = 3;
-        const doHeavy = (state.pollCount % HEAVY_EVERY) === 1; // cycles 1, 4, 7, …
+        const doHeavy = !hidden && (state.pollCount % HEAVY_EVERY) === 1; // cycles 1, 4, 7, …
 
         try {
             const acct = viewAcct() || state.primaryAccount || '';
@@ -3435,17 +3455,19 @@
                 ]);
             }
 
-            // Cheap probe of the folder in view (falls back to INBOX). One IMAP
-            // round-trip vs. the full per-folder walk.
-            const cur   = state.currentFolder || 'INBOX';
+            const prevInboxUnread = inboxUnreadCount();
+            // Probe INBOX while hidden (for notifications); the viewed folder while
+            // visible (for the silent list refresh). One IMAP round-trip either way.
+            const cur   = hidden ? 'INBOX' : (state.currentFolder || 'INBOX');
             const probe = await apiGet('status', withAcct({ folder: cur }, acct));
             const prevCurrent = state.folders.find(f => f.name === state.currentFolder);
-            const grew = probe && !probe.error && prevCurrent && probe.total > prevCurrent.total;
+            const grew     = !hidden && probe && !probe.error && prevCurrent && probe.total > prevCurrent.total;
+            const inboxGrew = hidden && probe && !probe.error && probe.unread > prevInboxUnread;
 
-            // Refresh all sidebar counts when something changed or on the heavy
-            // cycle — this keeps every folder's badge fresh without paying
-            // imap_status on all folders every minute.
-            if (doHeavy || grew) {
+            // Refresh all sidebar counts (also updates the tab title + app badge via
+            // renderFolders) on the heavy cycle, when the viewed folder grew, or when
+            // a hidden INBOX probe shows more unread.
+            if (doHeavy || grew || inboxGrew) {
                 const data = await apiGet('folders', withAcct({}, acct));
                 if (data && !data.error && Array.isArray(data.folders)) {
                     state.folders = data.folders;
@@ -3455,9 +3477,13 @@
                 }
             }
 
-            // New mail in the folder we're viewing → silently refresh the list.
-            // Skip if the user is mid-search or browsing an older page (we'd
-            // disrupt them and the new mail wouldn't appear there anyway).
+            // Desktop notification when inbox unread rose (no-op while focused).
+            const newInboxUnread = inboxUnreadCount();
+            maybeNotifyNewMail(newInboxUnread - prevInboxUnread, newInboxUnread);
+
+            // Visible + new mail in the folder we're viewing → silently refresh the
+            // list. Skip if mid-search or on an older page (we'd disrupt them and the
+            // new mail wouldn't appear there anyway).
             if (grew && !state.searchQuery && state.currentPage === 1) {
                 await loadMessages({ keepReading: true, silent: true });
             }

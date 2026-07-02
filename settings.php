@@ -248,6 +248,21 @@ if ('serviceWorker' in navigator) {
                 </div>
                 <span class="settings-status" id="themeStatus"></span>
             </div>
+
+            <header class="settings-section-header" style="margin-top:24px">
+                <h2>Notifications</h2>
+                <p class="settings-section-desc">Show a desktop notification and app-icon badge when new mail arrives while this tab is in the background. The unread count also appears in the browser tab title.</p>
+            </header>
+            <div class="settings-card">
+                <div class="settings-toggles">
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="notifyToggle" <?= !empty($prefs['notifications']) ? 'checked' : '' ?>>
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-label">Desktop new-mail notifications</span>
+                    </label>
+                </div>
+                <span class="settings-status" id="notifyStatus"></span>
+            </div>
         </section>
 
         <section id="signature" class="settings-section">
@@ -1241,6 +1256,40 @@ if ('serviceWorker' in navigator) {
             } catch (err) {
                 status.textContent = 'Network error';
                 status.style.color = 'var(--c-error)';
+            }
+        });
+    }
+
+    /* Desktop notifications toggle — request OS permission when turned on. */
+    const notifyToggle = $('notifyToggle');
+    if (notifyToggle) {
+        const nStatus = $('notifyStatus');
+        const setStatus = (msg, err) => { if (nStatus) { nStatus.textContent = msg; nStatus.style.color = err ? 'var(--c-error)' : ''; } };
+        const saveNotify = async (on) => {
+            const fd = new FormData(); fd.append('notifications', on ? 'true' : 'false');
+            try {
+                const resp = await fetch('ajax/prefs.php', { method: 'POST', body: fd, credentials: 'same-origin', headers: { 'X-CSRF-Token': window.__CSRF__ } });
+                const data = await resp.json();
+                if (data.error) { setStatus(data.error, true); return false; }
+                setStatus('Saved'); setTimeout(() => setStatus(''), 2500); return true;
+            } catch (e) { setStatus('Network error', true); return false; }
+        };
+        if (!('Notification' in window)) {
+            notifyToggle.disabled = true;
+            setStatus('This browser does not support notifications.', true);
+        }
+        notifyToggle.addEventListener('change', async () => {
+            if (notifyToggle.checked) {
+                let perm = ('Notification' in window) ? Notification.permission : 'denied';
+                if (perm === 'default') { try { perm = await Notification.requestPermission(); } catch (e) { perm = 'denied'; } }
+                if (perm !== 'granted') {
+                    notifyToggle.checked = false;
+                    setStatus(perm === 'denied' ? 'Blocked by the browser — allow notifications for this site, then try again.' : 'Permission not granted.', true);
+                    return;
+                }
+                await saveNotify(true);
+            } else {
+                await saveNotify(false);
             }
         });
     }

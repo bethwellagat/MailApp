@@ -25,6 +25,7 @@ function default_prefs() {
         'workspace_logo'      => '',
         'density'             => 'compact', // comfortable | cozy | compact
         'theme'               => 'system',  // system | light | dark
+        'notifications'       => false,     // desktop new-mail notifications
     ];
 }
 

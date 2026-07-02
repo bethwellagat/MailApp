@@ -70,6 +70,10 @@ if (isset($_POST['theme'])) {
     $updates['theme'] = $t;
 }
 
+if (isset($_POST['notifications'])) {
+    $updates['notifications'] = filter_var($_POST['notifications'], FILTER_VALIDATE_BOOLEAN);
+}
+
 if (isset($_POST['workspace_logo'])) {
     $rawLogo = (string)$_POST['workspace_logo'];
     if (strlen($rawLogo) > LOGO_MAX_BYTES) {
