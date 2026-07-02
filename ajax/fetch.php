@@ -793,6 +793,36 @@ function find_thread_uids_in_folder($box, $folder, $needle, &$diag = null) {
     return $hits;
 }
 
+/**
+ * Find current UIDs in $mbox for a set of Message-IDs by scanning the folder
+ * overview (imap_search HEADER is unreliable on this Dovecot — see the thread
+ * lookup note). Used to undo a move/delete by locating the messages in their new
+ * folder. Bounded to the most recent 5000 messages.
+ */
+function uids_for_message_ids($mbox, array $ids) {
+    $want = [];
+    foreach ($ids as $id) {
+        $id = strtolower(trim((string)$id, '<> '));
+        if ($id !== '') $want[$id] = true;
+    }
+    if (!$want) return [];
+    $check = @imap_check($mbox);
+    $total = $check ? (int)$check->Nmsgs : 0;
+    if ($total === 0) return [];
+    $start = max(1, $total - 5000 + 1);
+    $rows  = @imap_fetch_overview($mbox, "$start:$total", 0);
+    if (!is_array($rows)) return [];
+    $uids = [];
+    foreach ($rows as $om) {
+        if (empty($om->message_id)) continue;
+        if (isset($want[strtolower(trim($om->message_id, '<> '))])) {
+            $u = (int)@imap_uid($mbox, $om->msgno);
+            if ($u > 0) $uids[] = $u;
+        }
+    }
+    return $uids;
+}
+
 function build_thread_msg($mbox, $uid, $folder, $withBody) {
     $msgno = imap_msgno($mbox, $uid);
     if (!$msgno) return null;
@@ -973,6 +1003,7 @@ if ($action === 'messages') {
                 'flagged'      => !empty($m->flagged),
                 'answered'     => !empty($m->answered),
                 'size'         => (int)($m->size ?? 0),
+                'message_id'   => isset($m->message_id) ? $m->message_id : '',
                 'thread_count' => 1,
                 'thread_uids'  => [$uid],
             ];
@@ -1552,6 +1583,31 @@ if ($action === 'move') {
 
     if (!$moved) fail('Could not move message');
     ok(['ok' => true, 'count' => count($uids)]);
+}
+
+if ($action === 'restore') {
+    // Undo a delete/archive/move: move messages identified by Message-ID back from
+    // $from (where they landed) to $to (where they were). Message-ID match survives
+    // the uid change a move causes.
+    if ($method !== 'POST') fail('Method not allowed', 405);
+    $from = $_POST['from'] ?? '';
+    $to   = $_POST['to']   ?? '';
+    $ids  = (isset($_POST['message_ids']) && is_array($_POST['message_ids'])) ? $_POST['message_ids'] : [];
+    if ($from === '' || $to === '' || empty($ids)) fail('Missing parameters', 400);
+    if (!valid_mailbox_name($from) || !valid_mailbox_name($to)) fail('Invalid folder', 400);
+
+    $mbox = open_box($from);
+    if (!$mbox) fail('Could not open folder');
+    $uids  = uids_for_message_ids($mbox, $ids);
+    $count = 0;
+    if ($uids) {
+        if (@imap_mail_move($mbox, implode(',', $uids), $to, CP_UID)) {
+            @imap_expunge($mbox);
+            $count = count($uids);
+        }
+    }
+    @imap_close($mbox);
+    ok(['ok' => true, 'count' => $count]);
 }
 
 if ($action === 'flag') {

@@ -2323,16 +2323,46 @@
         return err ? err.error : null;
     }
 
+    // ---- Undo support for delete / archive / move (all reversible IMAP moves) ----
+    // Capture the Message-IDs of the target rows BEFORE the action, so we can find
+    // them again in their new folder (their uid changes when moved).
+    function capturedMsgIds(uids) {
+        const out = [];
+        for (const u of uids) {
+            const m = state.messages.find(x => x.uid === u);
+            if (m && m.message_id) out.push(m.message_id);
+        }
+        return out;
+    }
+    async function restoreMessages(fromFolder, toFolder, messageIds, acct) {
+        if (!fromFolder || !toFolder || !messageIds.length) return;
+        const r = await apiPost('restore', withAcct({ from: fromFolder, to: toFolder, message_ids: messageIds }, acct));
+        if (r && r.error) { showToast('Could not undo — ' + r.error); return; }
+        await Promise.all([loadMessages({ keepReading: true, silent: true }), loadFolders()]);
+    }
+    const _countWord = (n) => (n > 1 ? n + ' messages' : 'Message');
+
     async function actDelete(uids) {
         if (!Array.isArray(uids)) uids = actionTargetUids(); // tolerate being called as a click handler (event arg)
         if (!uids.length) return;
-        const word = uids.length > 1 ? (uids.length + ' messages') : 'this message';
-        if (!window.confirm('Move ' + word + ' to Trash?')) return;
+        // Undo is offered only in a single-account view WITH a Trash folder, so the
+        // delete is a reversible move. Without a Trash folder the server expunges
+        // permanently — keep the confirmation in that case.
+        const trash = !isUnifiedView() ? state.folders.find(f => /trash|deleted|bin/i.test(f.name)) : null;
+        if (!trash) {
+            const word = uids.length > 1 ? (uids.length + ' messages') : 'this message';
+            if (!window.confirm('Move ' + word + ' to Trash?')) return;
+        }
+        const from = state.currentFolder, acct = viewAcct();
+        const ids  = trash ? capturedMsgIds(uids) : [];
         const err = await fanOutAction('delete', uids);
         if (err) { alert(err); return; }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
         clearSelection();
         await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);
+        if (trash && ids.length) {
+            showUndoActionToast(_countWord(uids.length) + ' moved to Trash.', () => restoreMessages(trash.name, from, ids, acct));
+        }
     }
     async function actArchive(uids) {
         if (!Array.isArray(uids)) uids = actionTargetUids(); // tolerate being called as a click handler (event arg)
@@ -2344,11 +2374,14 @@
             alert('No Archive folder found. Create one in your mail server first.');
             return;
         }
+        const from = state.currentFolder, acct = viewAcct();
+        const ids  = capturedMsgIds(uids);
         const err = await fanOutAction('move', uids, { to: archive.name }, 'from');
         if (err) { alert(err); return; }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
         clearSelection();
         await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);
+        if (ids.length) showUndoActionToast(_countWord(uids.length) + ' archived.', () => restoreMessages(archive.name, from, ids, acct));
     }
     async function actMoveTo(target, uids) {
         if (!target) return;
@@ -2357,11 +2390,14 @@
         // The destination folder belongs to one account; block cross-account
         // moves from the unified view where rows may span accounts.
         if (isUnifiedView()) { alert('Open a specific account to move its messages.'); return; }
+        const from = state.currentFolder, acct = viewAcct();
+        const ids  = capturedMsgIds(uids);
         const err = await fanOutAction('move', uids, { to: target }, 'from');
         if (err) { alert(err); return; }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
         clearSelection();
         await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);
+        if (ids.length) showUndoActionToast(_countWord(uids.length) + ' moved.', () => restoreMessages(target, from, ids, acct));
     }
     async function actFlag(uids) {
         if (!Array.isArray(uids)) uids = actionTargetUids(); // tolerate being called as a click handler (event arg)
@@ -2602,6 +2638,24 @@
         el.classList.add('visible');
         clearTimeout(showToast._t);
         showToast._t = setTimeout(() => el.classList.remove('visible'), durationMs);
+    }
+
+    // Generic "action done · Undo" toast (its own node, separate from the Undo-Send
+    // toast). The action has already been applied; clicking Undo calls onUndo().
+    function showUndoActionToast(text, onUndo, seconds) {
+        seconds = seconds || 7;
+        let el = $('appToastAction');
+        if (!el) { el = document.createElement('div'); el.id = 'appToastAction'; el.className = 'app-toast app-toast-undo'; document.body.appendChild(el); }
+        let remaining = seconds, timer = null, used = false;
+        const close = () => { if (timer) { clearInterval(timer); timer = null; } el.classList.remove('visible'); };
+        el.innerHTML = '';
+        const txt = document.createElement('span'); txt.textContent = text + ' ';
+        const btn = document.createElement('button'); btn.className = 'app-toast-action'; btn.type = 'button'; btn.textContent = 'Undo';
+        btn.addEventListener('click', () => { if (used) return; used = true; close(); Promise.resolve(onUndo()).catch(() => {}); });
+        const counter = document.createElement('span'); counter.className = 'app-toast-counter'; counter.textContent = remaining + 's';
+        el.appendChild(txt); el.appendChild(btn); el.appendChild(counter);
+        el.classList.add('visible');
+        timer = setInterval(() => { remaining--; if (remaining <= 0) { close(); return; } const c = el.querySelector('.app-toast-counter'); if (c) c.textContent = remaining + 's'; }, 1000);
     }
 
     /* ---------- Snooze ---------- */
