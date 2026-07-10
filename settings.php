@@ -18,6 +18,7 @@ require_once __DIR__ . '/lib/calendar.php';
 require_once __DIR__ . '/lib/rules.php';
 require_once __DIR__ . '/lib/out_of_office.php';
 require_once __DIR__ . '/lib/csrf.php';
+require_once __DIR__ . '/lib/updater.php'; // update_installed_label() for the version row
 
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 // Safe JSON for embedding in a <script> block — escapes <, >, &, ' and ".
@@ -548,7 +549,7 @@ if ('serviceWorker' in navigator) {
             <div class="settings-card">
                 <div class="settings-row">
                     <div class="settings-row-label">Installed version</div>
-                    <div class="settings-row-value mono" id="updateCurrent">unknown</div>
+                    <div class="settings-row-value mono" id="updateCurrent"><?= h(update_installed_label()) ?></div>
                 </div>
                 <div class="settings-row">
                     <div class="settings-row-label">Status</div>
@@ -804,7 +805,7 @@ if ('serviceWorker' in navigator) {
             const d = await post('check');
             checkBtn.disabled = false;
             if (d.error) { stateEl.textContent = 'Not available.'; statusEl.className = 'settings-status error'; statusEl.textContent = d.error; applyBtn.hidden = true; return; }
-            curEl.textContent = d.current ? short(d.current) : 'not recorded';
+            if (d.installed_label) curEl.textContent = d.installed_label;
             if (d.update_available) {
                 stateEl.textContent = 'Update available — ' + short(d.latest) + (d.committed_at ? ' · ' + new Date(d.committed_at).toLocaleDateString() : '');
                 applyBtn.hidden = false;

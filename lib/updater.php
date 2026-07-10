@@ -64,6 +64,30 @@ function update_current_version() {
     return is_array($v) ? (string)($v['sha'] ?? '') : '';
 }
 
+/** The app's semantic version, shipped in the repo as version.php (bumped per release). */
+function update_app_version() {
+    $f = _app_root() . '/version.php';
+    if (is_file($f)) {
+        $v = @include $f;
+        if (is_array($v) && !empty($v['version'])) {
+            return ['version' => (string) $v['version'], 'date' => (string) ($v['date'] ?? '')];
+        }
+    }
+    return ['version' => '', 'date' => ''];
+}
+
+/**
+ * Human "Installed version" label = semver + the deployed commit as a build id.
+ * The build changes on every update (the updater stamps data/version.json), so the
+ * label always changes after an update, even when the semver hasn't been bumped.
+ */
+function update_installed_label() {
+    $v   = update_app_version();
+    $ver = $v['version'] !== '' ? $v['version'] : 'unknown';
+    $sha = update_current_version();
+    return $sha !== '' ? ($ver . ' · build ' . substr($sha, 0, 7)) : $ver;
+}
+
 /** HTTPS GET against the GitHub API with auth + UA. Returns [body, httpCode, error]. */
 function _update_api_get($url, $token, $accept = 'application/vnd.github+json') {
     if (!function_exists('curl_init')) return [null, 0, 'curl is not available on this server'];
@@ -108,6 +132,8 @@ function update_check() {
         'repo'             => $cfg['repo'],
         'branch'           => $cfg['branch'],
         'current'          => $cur,
+        'app_version'      => update_app_version()['version'],
+        'installed_label'  => update_installed_label(),
         'latest'           => $sha,
         'update_available' => ($cur === '' || strncmp($cur, $sha, 40) !== 0),
         'committed_at'     => (string)($data['commit']['committer']['date'] ?? ''),
