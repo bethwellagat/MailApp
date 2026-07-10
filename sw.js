@@ -20,7 +20,7 @@
 
 'use strict';
 
-var VERSION = 'v3';
+var VERSION = 'v4';
 var SHELL_CACHE  = 'wm-shell-' + VERSION;   // precached offline shell + icons
 var STATIC_CACHE = 'wm-static-' + VERSION;  // runtime-cached static assets + fonts
 var MSG_CACHE    = 'wm-msg-' + VERSION;     // already-read mail JSON (cleared on logout)
@@ -190,6 +190,12 @@ self.addEventListener('fetch', function (event) {
         );
         return;
     }
+
+    // Attachments carry their own Cache-Control (immutable per uid+section). Let the
+    // browser's HTTP cache handle them so re-opens are instant — don't route them
+    // through the API network-first path (which re-fetches every time and would fill
+    // the message cache with large binaries).
+    if (sameOrigin && /[?&]action=attachment(?:&|$)/.test(url.search)) return;
 
     if (sameOrigin && isReadApi(url)) {
         event.respondWith(networkFirstApi(request, url));

@@ -1305,17 +1305,21 @@
         const body = $('attachPreviewBody');
         body.innerHTML = '';
         if (type.indexOf('image/') === 0) {
-            const img = document.createElement('img');
-            img.src = prevUrl;
-            img.alt = name;
-            body.appendChild(img);
             setPreviewBodyClass(body, 'image');
+            body.innerHTML = '<div class="attach-preview-loading"><div class="spinner"></div><span>Loading…</span></div>';
+            const img = new Image();
+            img.alt = name;
+            img.onload = () => { body.innerHTML = ''; body.appendChild(img); };
+            img.onerror = () => renderFallbackPreview(body, name, type);
+            img.src = prevUrl;
         } else if (type === 'application/pdf' || ext === 'pdf') {
-            const f = document.createElement('iframe');
-            f.src = prevUrl;
-            f.title = name;
-            body.appendChild(f);
             setPreviewBodyClass(body, 'iframe');
+            body.innerHTML = '<div class="attach-preview-loading"><div class="spinner"></div><span>Loading…</span></div>';
+            const f = document.createElement('iframe');
+            f.title = name;
+            f.onload = () => { const l = body.querySelector('.attach-preview-loading'); if (l) l.remove(); };
+            body.appendChild(f);
+            f.src = prevUrl;
         } else if (isSpreadsheet) {
             setPreviewBodyClass(body, 'spreadsheet');
             renderSpreadsheetPreview(body, name, prevUrl);

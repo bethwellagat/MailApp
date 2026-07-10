@@ -1187,6 +1187,11 @@ if ($action === 'attachment') {
     header('Content-Disposition: ' . $disp
         . '; filename="' . str_replace('"', '\\"', $asciiName) . '"'
         . "; filename*=UTF-8''" . rawurlencode($name));
+    // Attachments are immutable for a given uid+section, so let the browser (and the
+    // service worker) cache them — re-opening one, or re-viewing an email's inline
+    // cid: images, is then instant instead of another IMAP round-trip. This overrides
+    // the no-store set at the top of the file (which still guards the error paths).
+    header('Cache-Control: private, max-age=86400, immutable');
     echo $data;
     exit;
 }
