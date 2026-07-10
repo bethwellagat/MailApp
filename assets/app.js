@@ -3717,24 +3717,25 @@
     async function pollForUpdates() {
         if (state.pollInflight) return;
         if (state.composeOpen) return;
-        const hidden = document.hidden;
-        // While hidden we keep polling ONLY if desktop notifications are on (to
-        // catch background mail); otherwise there's nothing to do until refocus.
-        if (hidden && !notifyEnabled()) return;
+        if (document.hidden) return;                          // pause entirely while backgrounded (saves host memory)
+        if (state.pollSkip > 0) { state.pollSkip--; return; } // exponential backoff after errors
         state.pollInflight = true;
         state.pollCount = (state.pollCount || 0) + 1;
         // Cost control on shared hosting: the frequent path is ONE cheap status
-        // probe (single imap_status). The heavy work — the four side-effect jobs
-        // plus the full per-folder `folders` refresh — runs only every Nth VISIBLE
-        // cycle (or when mail is detected). New mail is still caught every cycle.
+        // probe (single imap_status). The heavy side-effect jobs + the full
+        // per-folder refresh run only every Nth cycle (or when mail is detected),
+        // and the jobs are additionally throttled SERVER-side (poll_gate) so their
+        // IMAP work runs at most once every ~2 min across ALL open tabs.
         const HEAVY_EVERY = 3;
-        const doHeavy = !hidden && (state.pollCount % HEAVY_EVERY) === 1; // cycles 1, 4, 7, …
+        const doHeavy = (state.pollCount % HEAVY_EVERY) === 1; // cycles 1, 4, 7, …
+        let failed = false;
 
         try {
             const acct = viewAcct() || state.primaryAccount || '';
 
             if (doHeavy) {
                 // Independent side-effects; parallel to save round-trip latency.
+                // Each is a cheap no-op server-side unless its ~2 min window is due.
                 await Promise.all([
                     checkSnoozeWake(),
                     processOutbox(),
@@ -3744,18 +3745,15 @@
             }
 
             const prevInboxUnread = inboxUnreadCount();
-            // Probe INBOX while hidden (for notifications); the viewed folder while
-            // visible (for the silent list refresh). One IMAP round-trip either way.
-            const cur   = hidden ? 'INBOX' : (state.currentFolder || 'INBOX');
+            const cur   = state.currentFolder || 'INBOX';
             const probe = await apiGet('status', withAcct({ folder: cur }, acct));
+            if (probe && probe.error && probe.network) failed = true; // host unreachable → back off
             const prevCurrent = state.folders.find(f => f.name === state.currentFolder);
-            const grew     = !hidden && probe && !probe.error && prevCurrent && probe.total > prevCurrent.total;
-            const inboxGrew = hidden && probe && !probe.error && probe.unread > prevInboxUnread;
+            const grew = probe && !probe.error && prevCurrent && probe.total > prevCurrent.total;
 
             // Refresh all sidebar counts (also updates the tab title + app badge via
-            // renderFolders) on the heavy cycle, when the viewed folder grew, or when
-            // a hidden INBOX probe shows more unread.
-            if (doHeavy || grew || inboxGrew) {
+            // renderFolders) on the heavy cycle or when the viewed folder grew.
+            if (doHeavy || grew) {
                 const data = await apiGet('folders', withAcct({}, acct));
                 if (data && !data.error && Array.isArray(data.folders)) {
                     state.folders = data.folders;
@@ -3769,16 +3767,24 @@
             const newInboxUnread = inboxUnreadCount();
             maybeNotifyNewMail(newInboxUnread - prevInboxUnread, newInboxUnread);
 
-            // Visible + new mail in the folder we're viewing → silently refresh the
-            // list. Skip if mid-search or on an older page (we'd disrupt them and the
-            // new mail wouldn't appear there anyway).
+            // New mail in the folder we're viewing → silently refresh the list.
+            // Skip if mid-search or on an older page.
             if (grew && !state.searchQuery && state.currentPage === 1) {
                 await loadMessages({ keepReading: true, silent: true });
             }
         } catch (e) {
-            // silent — polling is best-effort
+            failed = true; // network/other error — back off
         } finally {
             state.pollInflight = false;
+            // Exponential backoff: after consecutive failures skip up to ~16 cycles
+            // so we don't hammer a struggling host; reset immediately on success.
+            if (failed) {
+                state.pollFail = Math.min((state.pollFail || 0) + 1, 4);
+                state.pollSkip = Math.pow(2, state.pollFail); // 2,4,8,16 cycles
+            } else {
+                state.pollFail = 0;
+                state.pollSkip = 0;
+            }
         }
     }
 
@@ -3788,9 +3794,9 @@
     }
 
     document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) pollForUpdates();
+        if (!document.hidden) { state.pollSkip = 0; pollForUpdates(); } // returning to the tab → poll now
     });
-    window.addEventListener('focus', pollForUpdates);
+    window.addEventListener('focus', () => { state.pollSkip = 0; pollForUpdates(); });
 
     /* ---------- Message context menu ---------- */
     let _msgCtxTarget = null; // { uids, single }

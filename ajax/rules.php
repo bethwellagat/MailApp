@@ -19,6 +19,7 @@ if (!function_exists('imap_open')) {
 require_once __DIR__ . '/../lib/rules.php';
 require_once __DIR__ . '/../lib/csrf.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
+@ini_set('memory_limit', '128M'); // cap this background endpoint; it never handles large attachments
 session_write_close(); // release the session lock early — avoids request serialization (see fetch.php)
 
 mb_internal_encoding('UTF-8');
@@ -245,6 +246,9 @@ if ($action === 'run_new' && $method === 'POST') {
     // Apply enabled rules to messages with UID > last_processed_uid in INBOX.
     $data = load_rules($email);
     if (empty($data['rules'])) ok_r(['ok' => true, 'count' => 0]);
+    // Cross-tab throttle: open INBOX and sweep at most once every ~2 min total,
+    // not once per tab per poll (the in-app cron). See poll_gate().
+    if (!poll_gate($email, 'rules', 120)) ok_r(['ok' => true, 'count' => 0, 'throttled' => true]);
 
     // Serialize concurrent sweeps (two polls / two tabs): without this, both can
     // read the same last_processed_uid and apply every rule to the same new

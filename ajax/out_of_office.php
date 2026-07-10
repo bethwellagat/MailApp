@@ -20,7 +20,9 @@ require_once __DIR__ . '/../lib/out_of_office.php';
 require_once __DIR__ . '/../lib/mailer.php';
 require_once __DIR__ . '/../lib/prefs.php';
 require_once __DIR__ . '/../lib/csrf.php';
+require_once __DIR__ . '/../lib/util.php'; // poll_gate()
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
+@ini_set('memory_limit', '128M'); // cap this background endpoint; it never handles large attachments
 session_write_close(); // release the session lock early — avoids request serialization (see fetch.php)
 
 mb_internal_encoding('UTF-8');
@@ -102,6 +104,9 @@ if ($action === 'process' && $method === 'POST') {
     $data = load_ooo($email);
     $cfg  = $data['config'];
     if (!ooo_is_active($cfg)) ok_o(['ok' => true, 'replied' => 0, 'inactive' => true]);
+    // Cross-tab throttle: open INBOX and sweep at most once every ~2 min total,
+    // not once per tab per poll (the in-app cron). See poll_gate().
+    if (!poll_gate($email, 'ooo', 120)) ok_o(['ok' => true, 'replied' => 0, 'throttled' => true]);
 
     // Serialize concurrent sweeps: without this, two polls can read the same
     // last_processed_uid and cooldown log and both fire auto-replies to the

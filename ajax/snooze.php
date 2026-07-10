@@ -19,6 +19,7 @@ if (!function_exists('imap_open')) {
 require_once __DIR__ . '/../lib/snooze.php';
 require_once __DIR__ . '/../lib/csrf.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
+@ini_set('memory_limit', '128M'); // cap this background endpoint; it never handles large attachments
 session_write_close(); // release the session lock early — avoids request serialization (see fetch.php)
 
 mb_internal_encoding('UTF-8');
@@ -219,6 +220,9 @@ if ($action === 'cancel' && $method === 'POST') {
 }
 
 if ($action === 'wake' && $method === 'POST') {
+    // Cross-tab throttle: the wake sweep + its IMAP work runs at most once every
+    // ~2 min total, not once per tab per poll (the in-app cron). See poll_gate().
+    if (!poll_gate($email, 'snooze', 120)) ok_snz(['ok' => true, 'count' => 0, 'throttled' => true]);
     // Process due snoozes and move them back to their original folder.
     // A due entry is dropped from the list only when it is resolved: either
     // moved back successfully, or no longer present in the Later folder. Entries
