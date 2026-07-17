@@ -72,6 +72,9 @@ $prefs        = load_prefs($email);
     <symbol id="ic-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
     </symbol>
+    <symbol id="ic-outbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 15v3a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-3"/><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="16"/>
+    </symbol>
     <symbol id="ic-draft" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
     </symbol>

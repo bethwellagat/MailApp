@@ -26,6 +26,7 @@ function default_prefs() {
         'density'             => 'compact', // comfortable | cozy | compact
         'theme'               => 'system',  // system | light | dark
         'notifications'       => false,     // desktop new-mail notifications
+        'display_name'        => '',        // From-name override, editable in Settings (empty = use login value)
     ];
 }
 

@@ -74,6 +74,30 @@ if (isset($_POST['notifications'])) {
     $updates['notifications'] = filter_var($_POST['notifications'], FILTER_VALIDATE_BOOLEAN);
 }
 
+if (isset($_POST['display_name'])) {
+    // This becomes the From-name on every message the user sends, so it must not
+    // carry CR/LF (header injection) or control characters. Collapse whitespace,
+    // trim, and cap the length. Empty is allowed — it means "send with the bare
+    // address" (send.php falls back to the address when the name is blank).
+    $dn = (string)$_POST['display_name'];
+    $dn = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', $dn); // strip CR/LF/TAB/other control
+    $dn = trim(preg_replace('/\s+/', ' ', $dn));
+    $dn = mb_substr($dn, 0, 100);
+    $updates['display_name'] = $dn;
+
+    // Mirror into the live session so the next Send uses the new name without a
+    // re-login. prefs.php closed the session early for concurrency (line 18);
+    // reopen just long enough to write the effective account's name, then release.
+    if (@session_start()) {
+        $effId = account_effective_id();
+        if ($effId !== null && isset($_SESSION['accounts'][$effId]) && is_array($_SESSION['accounts'][$effId])) {
+            $_SESSION['accounts'][$effId]['display_name'] = $dn;
+        }
+        $_SESSION['display_name'] = $dn;
+        session_write_close();
+    }
+}
+
 if (isset($_POST['workspace_logo'])) {
     $rawLogo = (string)$_POST['workspace_logo'];
     if (strlen($rawLogo) > LOGO_MAX_BYTES) {

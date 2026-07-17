@@ -191,8 +191,18 @@ if ('serviceWorker' in navigator) {
                     <div class="settings-row-value mono"><?= h($email) ?></div>
                 </div>
                 <div class="settings-row">
-                    <div class="settings-row-label">Display name</div>
-                    <div class="settings-row-value"><?= h($display_name) ?></div>
+                    <div class="settings-row-label">
+                        <label for="displayNameInput">Display name</label>
+                    </div>
+                    <div class="settings-row-value">
+                        <div class="settings-inline-edit">
+                            <input type="text" id="displayNameInput" class="settings-inline-input" maxlength="100"
+                                   value="<?= h($display_name) ?>" autocomplete="off" spellcheck="false">
+                            <button type="button" id="displayNameSave" class="settings-inline-save">Save</button>
+                            <span id="displayNameStatus" class="settings-status" role="status" aria-live="polite"></span>
+                        </div>
+                        <p class="settings-inline-hint">The name people see in the “From” line of messages you send.</p>
+                    </div>
                 </div>
                 <div class="settings-row">
                     <div class="settings-row-label">Workspace</div>
@@ -826,6 +836,41 @@ if ('serviceWorker' in navigator) {
             applyBtn.hidden = true;
             setTimeout(() => location.reload(), 1500);
         });
+    })();
+
+    /* ---------- Display name ---------- */
+    (function () {
+        const input = $('displayNameInput'), btn = $('displayNameSave'), status = $('displayNameStatus');
+        if (!input || !btn) return;
+        let saved = input.value;
+        async function save() {
+            const val = input.value.trim();
+            if (val === saved) { status.textContent = ''; return; }
+            btn.disabled = true; status.textContent = ''; status.className = 'settings-status';
+            try {
+                const r = await fetch('ajax/prefs.php', {
+                    method: 'POST', credentials: 'same-origin',
+                    headers: { 'X-CSRF-Token': window.__CSRF__ },
+                    body: new URLSearchParams({ display_name: val }),
+                });
+                if (r.status === 401) { window.location = 'index'; return; }
+                const d = await r.json();
+                if (d.error) { status.textContent = d.error; status.className = 'settings-status error'; }
+                else {
+                    saved = val; input.value = val;
+                    status.textContent = 'Saved'; status.className = 'settings-status success';
+                    // Reflect the new name in the top-bar chip without a reload.
+                    const chip = document.querySelector('.topbar-user-name');
+                    if (chip) chip.textContent = val || <?= js($email) ?>;
+                    setTimeout(() => { status.textContent = ''; }, 2200);
+                }
+            } catch (e) {
+                status.textContent = 'Save failed: ' + e.message; status.className = 'settings-status error';
+            }
+            btn.disabled = false;
+        }
+        btn.addEventListener('click', save);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
     })();
 
     $('saveSignature').addEventListener('click', async () => {

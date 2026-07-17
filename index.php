@@ -91,6 +91,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['login_time']   = time();
             $_SESSION['last_seen']    = time();
 
+            // A display name saved in Settings is the source of truth: prefer it
+            // over whatever was typed on the login form, so the choice survives
+            // logout/login. (The login field only seeds the very first sign-in,
+            // before any preference exists.)
+            require_once __DIR__ . '/lib/prefs.php';
+            $savedPrefs = load_prefs($email);
+            if (!empty($savedPrefs['display_name'])) {
+                $_SESSION['display_name'] = $savedPrefs['display_name'];
+            }
+
             header('Location: inbox');
             exit;
         }

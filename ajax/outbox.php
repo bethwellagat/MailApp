@@ -42,6 +42,22 @@ if ($action === 'cancel' && $method === 'POST') {
     ok_ob(['ok' => true]);
 }
 
+if ($action === 'retry' && $method === 'POST') {
+    // Re-queue a failed / stuck message: clear the failure flags and make it due
+    // immediately so the next process sweep sends it. Used by the Outbox folder's
+    // "Retry" button. (The caller typically follows this with action=process.)
+    $body = input_json_ob();
+    $id = $body['id'] ?? '';
+    if (!$id) fail_ob('id required', 400);
+    $rec = load_outbox_message($email, $id);
+    if (!$rec) fail_ob('Not found', 404);
+    unset($rec['failed'], $rec['next_attempt_at'], $rec['last_error']);
+    $rec['attempts'] = 0;
+    $rec['send_at']  = gmdate('c'); // due now
+    if (!save_outbox_message($email, $rec)) fail_ob('Could not re-queue message', 500);
+    ok_ob(['ok' => true]);
+}
+
 if ($action === 'process' && $method === 'POST') {
     // Guard against concurrent sweeps double-sending the same queued message
     // (e.g. the 60s poll firing while an Undo-commit also triggers a process,

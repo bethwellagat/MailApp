@@ -23,6 +23,7 @@
         currentMsgAcct: '',
         expandedAccounts: new Set(),
         accountFolders: {},
+        accountOutbox: {}, // acctId -> { messages, count, loaded } — the client-side Outbox folder
         bgAcctCursor: 0,   // rotates non-focused accounts through the poll cycle
         attachFlags: {},          // uid -> true, filled lazily after the list renders
         attachChecked: new Set(), // uids already probed (avoids re-asking on poll)
@@ -170,6 +171,163 @@
         return tmp.textContent.replace(/\s+/g, ' ').trim().slice(0, 140);
     }
 
+    /* ---------- Outbox (client-side virtual folder) ----------
+     * The outbox (data/outbox/, per account) holds messages waiting to go out:
+     * the brief Undo-Send hold, Scheduled sends, and anything that failed and is
+     * retrying — or gave up. It is NOT an IMAP folder, so it uses a sentinel id
+     * and a bespoke renderer, and is never routed through the IMAP list/status
+     * code paths (see the guards in loadMessages / the poll / drag-drop).
+     */
+    const OUTBOX_FOLDER = '__outbox__';
+
+    async function loadOutbox(acctId) {
+        let msgs = null;
+        try {
+            const r = await fetch('ajax/outbox.php?action=list' + acctParam(acctId), { credentials: 'same-origin' });
+            if (r.status === 401) return;
+            const d = await r.json();
+            if (d && !d.error && Array.isArray(d.messages)) msgs = d.messages;
+        } catch (e) { return; } // best-effort; keep whatever was cached
+        if (msgs === null) return;
+        const prev = state.accountOutbox[acctId];
+        const changed = !prev || prev.count !== msgs.length;
+        state.accountOutbox[acctId] = { messages: msgs, count: msgs.length, loaded: true };
+        // Only rebuild the sidebar when the count actually moved — the poll calls
+        // this every cycle and an unchanged count is the common case.
+        if (changed) renderSidebar();
+        if (state.currentFolder === OUTBOX_FOLDER && viewAcct() === acctId) renderOutboxList(acctId);
+    }
+
+    // The Outbox entry shown inside an expanded account group. Always present (so
+    // the user knows where in-progress sends live), with a count badge when it
+    // holds anything.
+    function outboxItemHtml(acctId) {
+        const ob = state.accountOutbox[acctId];
+        const count = ob ? ob.count : 0;
+        const isActive = !state.searchActive && acctId === state.currentAccount && state.currentFolder === OUTBOX_FOLDER;
+        const badge = count > 0 ? '<span class="folder-badge folder-badge-outbox">' + count + '</span>' : '';
+        return (
+            '<button class="folder-item' + (isActive ? ' active' : '') + '" data-folder="' + OUTBOX_FOLDER + '" data-acct="' + escapeAttr(acctId) + '" data-folder-type="outbox" style="padding-left:30px">' +
+                '<svg class="icon folder-icon"><use href="#ic-outbox"/></svg>' +
+                '<span class="folder-label">Outbox</span>' +
+                badge +
+            '</button>'
+        );
+    }
+
+    function fmtOutboxWhen(iso) {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        const now = new Date();
+        return d.toDateString() === now.toDateString()
+            ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+            : d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    // Classify a queued message into a user-facing status from its outbox record.
+    function outboxStatus(m) {
+        const now = Date.now();
+        const sendAt = m.send_at ? Date.parse(m.send_at) : 0;
+        if (m.failed) {
+            return { key: 'failed', label: 'Failed',
+                     detail: m.last_error ? ('Couldn’t send — ' + m.last_error) : 'Could not be sent', retry: true };
+        }
+        if (m.attempts > 0) {
+            const next = m.next_attempt_at ? (' · next try ' + fmtOutboxWhen(m.next_attempt_at)) : '';
+            return { key: 'retrying', label: 'Retrying', detail: 'Attempt ' + m.attempts + ' didn’t go through' + next, retry: true };
+        }
+        if (sendAt && (sendAt - now) > 45000) {
+            return { key: 'scheduled', label: 'Scheduled', detail: 'Sends ' + fmtOutboxWhen(m.send_at), retry: false };
+        }
+        return { key: 'sending', label: 'Sending', detail: 'Going out in a few seconds…', retry: false };
+    }
+
+    function renderOutboxList(acctId) {
+        const ob = state.accountOutbox[acctId];
+        const msgs = (ob && ob.messages) || [];
+        const listEl = $('messageList');
+        if (!listEl) return;
+        if (!msgs.length) {
+            listEl.innerHTML =
+                '<div class="list-empty outbox-empty">' +
+                    '<svg class="icon outbox-empty-icon"><use href="#ic-outbox"/></svg>' +
+                    '<p class="outbox-empty-title">Your Outbox is empty</p>' +
+                    '<p class="outbox-empty-sub">Messages waiting to be sent — scheduled sends, or any that couldn’t go out — show up here.</p>' +
+                '</div>';
+            return;
+        }
+        const rows = msgs.map(function (m) {
+            const st = outboxStatus(m);
+            const to = escapeHtml(m.to || (Array.isArray(m.rcpts) ? m.rcpts.join(', ') : '') || '(no recipient)');
+            const subj = escapeHtml(m.subject || '(no subject)');
+            const retryBtn = st.retry
+                ? '<button class="outbox-btn outbox-btn-retry" data-outbox-retry="' + escapeAttr(m.id) + '">Retry</button>'
+                : '';
+            const cancelLabel = (st.key === 'scheduled' || st.key === 'sending') ? 'Cancel' : 'Delete';
+            return (
+                '<div class="outbox-item outbox-' + st.key + '" data-outbox-id="' + escapeAttr(m.id) + '">' +
+                    '<div class="outbox-item-main">' +
+                        '<div class="outbox-item-top">' +
+                            '<span class="outbox-pill outbox-pill-' + st.key + '">' + escapeHtml(st.label) + '</span>' +
+                            '<span class="outbox-to">To: ' + to + '</span>' +
+                        '</div>' +
+                        '<div class="outbox-subject">' + subj + '</div>' +
+                        '<div class="outbox-detail">' + escapeHtml(st.detail) + '</div>' +
+                    '</div>' +
+                    '<div class="outbox-item-actions">' +
+                        retryBtn +
+                        '<button class="outbox-btn outbox-btn-cancel" data-outbox-cancel="' + escapeAttr(m.id) + '">' + cancelLabel + '</button>' +
+                    '</div>' +
+                '</div>'
+            );
+        }).join('');
+        listEl.innerHTML = '<div class="outbox-list">' + rows + '</div>';
+    }
+
+    async function renderOutboxView(opts) {
+        opts = opts || {};
+        const acctId = viewAcct();
+        if ($('listFolderName')) $('listFolderName').textContent = 'Outbox';
+        if ($('pagination')) $('pagination').hidden = true;
+        const ob = state.accountOutbox[acctId];
+        if (!opts.silent && !(ob && ob.loaded)) {
+            $('messageList').innerHTML = '<div class="list-loading">Loading…</div>';
+        }
+        await loadOutbox(acctId);
+        // loadOutbox renders on success; render again (from cache/empty) so an
+        // offline refresh still shows something rather than a stuck spinner.
+        if (state.currentFolder === OUTBOX_FOLDER && viewAcct() === acctId) renderOutboxList(acctId);
+    }
+
+    async function cancelOutbox(acctId, id) {
+        if (!id) return;
+        try {
+            await fetch('ajax/outbox.php?action=cancel' + acctParam(acctId), {
+                method: 'POST', credentials: 'same-origin',
+                headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ id: id }),
+            });
+        } catch (e) { /* best-effort */ }
+        await loadOutbox(acctId);
+    }
+
+    async function retryOutbox(acctId, id) {
+        if (!id) return;
+        try {
+            await fetch('ajax/outbox.php?action=retry' + acctParam(acctId), {
+                method: 'POST', credentials: 'same-origin',
+                headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({ id: id }),
+            });
+            // Try to flush it right away rather than waiting for the next sweep.
+            await fetch('ajax/outbox.php?action=process' + acctParam(acctId), {
+                method: 'POST', credentials: 'same-origin', headers: csrfHeaders(),
+            });
+        } catch (e) { /* best-effort */ }
+        await loadOutbox(acctId);
+    }
+
     /* ---------- API ---------- */
     // A transient network failure (offline, server restart, mobile handoff)
     // makes fetch() reject. Without a catch that rejection is swallowed and the
@@ -293,6 +451,7 @@
         if (acct) state.accountFolders[acct] = state.folders;
         renderSidebar();
         renderMoveDropdown();
+        loadOutbox(acct); // refresh the Outbox badge (best-effort; local file read, no IMAP)
     }
 
     // Lazily fetch one account's folders when its group is first expanded.
@@ -305,6 +464,7 @@
             renderMoveDropdown();
         }
         renderSidebar();
+        loadOutbox(acctId); // show this account's Outbox badge once its group is expanded
     }
 
     function folderDepth(name) {
@@ -384,6 +544,7 @@
                 } else {
                     html += folders.map(f => folderItemHtml(f, a.id)).join('');
                 }
+                html += outboxItemHtml(a.id); // virtual Outbox folder (waiting/failed sends)
                 html += '</div>';
             }
             html += '</div>';
@@ -666,6 +827,10 @@
 
     async function loadMessages(opts) {
         opts = opts || {};
+        // The Outbox is a virtual folder backed by data/outbox/, not IMAP — render
+        // it here so every existing caller (folder switch, poll, refresh) does the
+        // right thing without touching the mail server.
+        if (state.currentFolder === OUTBOX_FOLDER) { await renderOutboxView(opts); return; }
         const keepReading = !!opts.keepReading;
         const silent = !!opts.silent;
         const seq = ++loadMessagesSeq;
@@ -2984,6 +3149,7 @@
         folderList.addEventListener('dragover', (e) => {
             const target = e.target.closest('.folder-item');
             if (!target || !target.dataset.folder) return;
+            if (target.dataset.folder === OUTBOX_FOLDER) return; // can't move mail into the Outbox
             if (target.dataset.folder === state.currentFolder) return;
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
@@ -3003,6 +3169,7 @@
             e.preventDefault();
             target.classList.remove('drop-target');
             const folderName = target.dataset.folder;
+            if (folderName === OUTBOX_FOLDER) return; // not a real mailbox
             const targetAcct = target.dataset.acct || '';
             const uids = _dragUids || [];
             _dragUids = null;
@@ -3189,6 +3356,15 @@
         });
 
         $('messageList').addEventListener('click', (e) => {
+            // Outbox view: rows are queued sends, not messages — handle Cancel/Retry
+            // and swallow other clicks (nothing to open).
+            if (state.currentFolder === OUTBOX_FOLDER) {
+                const cancelEl = e.target.closest('[data-outbox-cancel]');
+                if (cancelEl) { cancelOutbox(viewAcct(), cancelEl.dataset.outboxCancel); return; }
+                const retryEl = e.target.closest('[data-outbox-retry]');
+                if (retryEl) { retryOutbox(viewAcct(), retryEl.dataset.outboxRetry); return; }
+                return;
+            }
             // "Search full message text" affordance shown after a fast header search.
             if (e.target.closest('[data-full-search]')) {
                 if (state.searchQuery) runServerSearch(state.searchQuery, 'full');
@@ -3648,6 +3824,7 @@
         $('folderList').addEventListener('contextmenu', (e) => {
             const btn = e.target.closest('.folder-item');
             if (!btn || !btn.dataset.folder) return;
+            if (btn.dataset.folder === OUTBOX_FOLDER) return; // no rename/delete/mark-read on the virtual Outbox
             e.preventDefault();
             showFolderCtx(btn.dataset.folder, e.clientX, e.clientY);
         });
@@ -3748,8 +3925,15 @@
                 ]);
             }
 
+            // Keep the Outbox badge (and the open Outbox view) current: after the
+            // heavy cycle that may have flushed/failed queued mail, or any cycle
+            // while the Outbox is on screen. Cheap local file read, no IMAP.
+            if (doHeavy || state.currentFolder === OUTBOX_FOLDER) loadOutbox(acct);
+
             const prevInboxUnread = inboxUnreadCount();
-            const cur   = state.currentFolder || 'INBOX';
+            // Never probe the virtual Outbox against IMAP — fall back to INBOX so
+            // new-mail detection keeps working while the Outbox is on screen.
+            const cur   = (state.currentFolder && state.currentFolder !== OUTBOX_FOLDER) ? state.currentFolder : 'INBOX';
             const probe = await apiGet('status', withAcct({ folder: cur }, acct));
             if (probe && probe.error && probe.network) failed = true; // host unreachable → back off
             const prevCurrent = state.folders.find(f => f.name === state.currentFolder);
