@@ -3,6 +3,27 @@
  * Small shared helpers used across the lib/ modules.
  */
 
+if (!function_exists('ini_bytes')) {
+    /**
+     * Parse a PHP ini shorthand size ("2M", "512K", "1G", or a plain byte count)
+     * into an integer number of bytes. Returns 0 for empty / "-1" (unlimited) /
+     * unparseable input, so callers can treat 0 as "no known limit". Mirrors PHP's
+     * own K/M/G shorthand (binary — powers of 1024).
+     */
+    function ini_bytes($val) {
+        $val = trim((string)$val);
+        if ($val === '' || $val === '-1') return 0;
+        if (!preg_match('/^(\d+(?:\.\d+)?)\s*([KMG]?)/i', $val, $m)) return 0;
+        $n = (float)$m[1];
+        switch (strtoupper($m[2])) {
+            case 'G': $n *= 1024; // fall through
+            case 'M': $n *= 1024; // fall through
+            case 'K': $n *= 1024;
+        }
+        return (int)$n;
+    }
+}
+
 if (!function_exists('poll_gate')) {
     /**
      * Shared cross-tab/-request throttle for background poll jobs — the in-app

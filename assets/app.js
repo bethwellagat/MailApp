@@ -57,6 +57,16 @@
 
     const ATTACH_MAX_PER_FILE = 25 * 1024 * 1024;  // 25 MB
     const ATTACH_MAX_TOTAL    = 25 * 1024 * 1024;
+    // Effective caps = the app's own 25 MB limit ∩ whatever THIS server's PHP
+    // config actually allows (exposed via window.__LIMITS__). This is what makes
+    // compose reject an oversized file up front, instead of the user waiting out
+    // an upload the server rejects with "PHP error code 1". 0/absent = unknown →
+    // fall back to the app cap. Leave headroom under post_max for the form fields
+    // + multipart boundaries that also ride in the request.
+    const _SRV_LIMITS   = (window.__LIMITS__ || {});
+    const EFF_PER_FILE  = Math.min(ATTACH_MAX_PER_FILE, _SRV_LIMITS.upload_max > 0 ? _SRV_LIMITS.upload_max : Infinity);
+    const EFF_TOTAL     = Math.min(ATTACH_MAX_TOTAL,    _SRV_LIMITS.post_max   > 0 ? Math.floor(_SRV_LIMITS.post_max * 0.9) : Infinity);
+    const EFF_MAX_FILES = _SRV_LIMITS.max_files > 0 ? _SRV_LIMITS.max_files : Infinity;
 
     const AVATAR_COLORS = [
         '#2c5e9e', '#6b4c93', '#2a7a7a', '#b3464a',
@@ -1783,13 +1793,22 @@
     }
     function addAttachment(file) {
         if (!file) return;
-        if (file.size > ATTACH_MAX_PER_FILE) {
-            alert('"' + file.name + '" is over 25 MB and was not attached.');
+        if (file.size > EFF_PER_FILE) {
+            const serverBound = EFF_PER_FILE < ATTACH_MAX_PER_FILE;
+            alert('"' + file.name + '" (' + formatBytes(file.size) + ') is larger than the ' +
+                  formatBytes(EFF_PER_FILE) + ' per-file limit' + (serverBound ? ' this server allows' : '') +
+                  ', so it wasn’t attached.' +
+                  (serverBound ? ' Your host can raise upload_max_filesize to allow bigger files.' : ''));
+            return;
+        }
+        if (state.composeAttachments.length >= EFF_MAX_FILES) {
+            alert('You can attach at most ' + EFF_MAX_FILES + ' files per message on this server.');
             return;
         }
         const total = state.composeAttachments.reduce((s, a) => s + a.size, 0) + file.size;
-        if (total > ATTACH_MAX_TOTAL) {
-            alert('Total attachments would exceed 25 MB. "' + file.name + '" not added.');
+        if (total > EFF_TOTAL) {
+            alert('Total attachments would exceed the ' + formatBytes(EFF_TOTAL) +
+                  ' per-message limit on this server. "' + file.name + '" not added.');
             return;
         }
         state.composeAttachments.push(file);

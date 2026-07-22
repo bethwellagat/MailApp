@@ -15,6 +15,7 @@ if (empty($_SESSION['email']) || empty($_SESSION['imap_host'])) {
 require_once __DIR__ . '/lib/prefs.php';
 require_once __DIR__ . '/lib/brand.php';
 require_once __DIR__ . '/lib/csrf.php';
+require_once __DIR__ . '/lib/util.php';
 
 function h($s) { return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 // Encode a value for safe embedding inside a <script> block: the JSON_HEX_*
@@ -810,6 +811,14 @@ window.__PREFS__ = <?= js($prefs) ?>;
 window.__ACCOUNTS__ = <?= js(account_list()) ?>;
 window.__ACTIVE_ACCOUNT__ = <?= js(account_active_id()) ?>;
 window.__PRIMARY_ACCOUNT__ = <?= js($_SESSION['primary_account'] ?? '') ?>;
+// This server's real PHP upload limits, so compose can reject an oversized file
+// up front instead of after a failed upload. 0 = limit unknown (treat as none).
+window.__LIMITS__ = <?= js([
+    'upload_max'       => ini_bytes(ini_get('upload_max_filesize')),
+    'post_max'         => ini_bytes(ini_get('post_max_size')),
+    'max_files'        => (int)ini_get('max_file_uploads'),
+    'upload_max_label' => (string)ini_get('upload_max_filesize'),
+]) ?>;
 </script>
 <script src="assets/app.js?v=<?= @filemtime(__DIR__.'/assets/app.js') ?>"></script>
 </body>

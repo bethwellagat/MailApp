@@ -26,6 +26,48 @@ session_write_close(); // release the session lock early — a slow SMTP send mu
 
 mb_internal_encoding('UTF-8');
 
+// If the whole multipart request blew past post_max_size, PHP has ALREADY dropped
+// $_POST and $_FILES — the body arrives empty and every check below would look
+// like a missing field ("Recipient required"). Detect that here and return a
+// precise error. CSRF was still validated above via the X-CSRF-Token header,
+// which survives the truncation, so this is safe to report before touching state.
+$postMax = ini_bytes(ini_get('post_max_size'));
+$clen    = (int)($_SERVER['CONTENT_LENGTH'] ?? 0);
+if ($postMax > 0 && $clen > $postMax && empty($_POST) && empty($_FILES)) {
+    http_response_code(413);
+    echo json_encode(['error' =>
+        'These attachments are too large for this server (about ' . round($clen / 1048576, 1) .
+        ' MB total; this server accepts at most ' . ini_get('post_max_size') .
+        ' per message). Attach fewer or smaller files, or ask your host to raise post_max_size.']);
+    exit;
+}
+
+/** Human-readable message for a PHP $_FILES upload error code. */
+function upload_err_message($code, $name, $size) {
+    $name = basename((string)$name);
+    $umax = ini_get('upload_max_filesize');
+    $pmax = ini_get('post_max_size');
+    $sz   = $size > 0 ? (round($size / 1048576, 1) . ' MB') : 'that file';
+    switch ($code) {
+        case UPLOAD_ERR_INI_SIZE:   // 1
+            return '"' . $name . '" (' . $sz . ') is larger than this server\'s per-file upload limit of ' . $umax .
+                   '. Attach a smaller file, or ask your host to raise upload_max_filesize.';
+        case UPLOAD_ERR_FORM_SIZE:  // 2
+            return '"' . $name . '" is too large to upload.';
+        case UPLOAD_ERR_PARTIAL:    // 3
+            return '"' . $name . '" was only partially uploaded — please try again.';
+        case UPLOAD_ERR_NO_TMP_DIR: // 6
+            return 'The server has no temporary folder for uploads (upload_tmp_dir). Ask your host to configure it.';
+        case UPLOAD_ERR_CANT_WRITE: // 7
+            return 'The server could not write "' . $name . '" to disk. Ask your host to check the upload temp folder.';
+        case UPLOAD_ERR_EXTENSION:  // 8
+            return '"' . $name . '" was blocked by a server-side upload extension.';
+        default:
+            return 'Upload error for "' . $name . '" (code ' . (int)$code . '). It may exceed this server\'s limits (' .
+                   $umax . ' per file, ' . $pmax . ' per message).';
+    }
+}
+
 $to          = trim($_POST['to']          ?? '');
 $cc          = trim($_POST['cc']          ?? '');
 $bcc         = trim($_POST['bcc']         ?? '');
@@ -115,7 +157,7 @@ if (!empty($_FILES['attachments']) && is_array($_FILES['attachments']['name'])) 
         $name = (string)($_FILES['attachments']['name'][$i] ?? '');
         if ($err !== UPLOAD_ERR_OK) {
             http_response_code(400);
-            echo json_encode(['error' => 'Upload error for "' . $name . '" (PHP error code ' . $err . '). Likely server upload limit — ask your host to raise post_max_size / upload_max_filesize.']);
+            echo json_encode(['error' => upload_err_message($err, $name, $_FILES['attachments']['size'][$i] ?? 0)]);
             exit;
         }
         $tmp = $_FILES['attachments']['tmp_name'][$i] ?? '';
