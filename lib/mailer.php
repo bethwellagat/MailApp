@@ -53,20 +53,32 @@ if (!function_exists('smtp_send')) {
         if ($r2['ok']) return $r2;
 
         if ($verify && (smtp_is_tls_error($errSsl) || smtp_is_tls_error($r2['error']))) {
-            tls_remember_relaxed($host);
+            // Remember the host ONLY once the relaxed attempt has actually
+            // succeeded. Recording it up-front meant a host that was simply down,
+            // or refusing STARTTLS, got permanently marked as needing relaxed TLS
+            // — silently disabling certificate verification for IMAP too, since
+            // both protocols read the same data/tls.json.
             $r3 = smtp_attempt('ssl://' . $host . ':465', $host, $from, $rcpts, $message, $user, $pass, false, false);
-            if ($r3['ok']) return $r3;
+            if ($r3['ok']) { tls_remember_relaxed($host); return $r3; }
             $r4 = smtp_attempt('tcp://' . $host . ':587', $host, $from, $rcpts, $message, $user, $pass, true, false);
-            if ($r4['ok']) return $r4;
+            if ($r4['ok']) { tls_remember_relaxed($host); return $r4; }
         }
         return ['ok' => false, 'error' => "ssl/465: $errSsl ; starttls/587: " . $r2['error']];
     }
 }
 
 if (!function_exists('smtp_is_tls_error')) {
-    /** Does this failure look like certificate verification rather than auth/refusal? */
+    /**
+     * Does this failure look like CERTIFICATE VERIFICATION specifically?
+     *
+     * Deliberately narrow. Matching bare "ssl"/"tls" also matched this file's own
+     * "STARTTLS 502" and "TLS upgrade failed" — a server that merely doesn't offer
+     * usable STARTTLS would then be recorded as needing relaxed TLS, turning
+     * verification off install-wide for both protocols. A server we cannot reach
+     * should fail, not silently downgrade everyone's security.
+     */
     function smtp_is_tls_error($err) {
-        return (bool)preg_match('#certificate|ssl|tls|verify|self[ -]?signed#i', (string)$err);
+        return (bool)preg_match('#certificate|self[ -]?signed|verify failed|unable to get local issuer|CN.{0,12}mismatch#i', (string)$err);
     }
 }
 
@@ -170,7 +182,8 @@ if (!function_exists('append_to_sent')) {
         $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
         $ref   = '{' . $host . ':' . $port . $flags . '}';
 
-        $mbox = @imap_open($ref . 'INBOX', $_SESSION['email'], $_SESSION['password'], OP_HALFOPEN, 1);
+        $mbox = imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                              'INBOX', $_SESSION['email'], $_SESSION['password'], OP_HALFOPEN, 1);
         if (!$mbox) { @imap_errors(); @imap_alerts(); return false; }
 
         $list = @imap_list($mbox, $ref, '*');

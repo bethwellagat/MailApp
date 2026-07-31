@@ -32,7 +32,8 @@ function imap_ref_r() {
     return '{' . $host . ':' . $port . $flags . '}';
 }
 function open_box_r($folder = 'INBOX', $opts = 0) {
-    return @imap_open(imap_ref_r() . $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
+    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
 }
 function fail_r($msg, $code = 500) { http_response_code($code); echo json_encode(['error' => $msg]); exit; }
 function ok_r($data) { echo json_encode($data); exit; }
@@ -319,7 +320,10 @@ if ($action === 'run_new' && $method === 'POST') {
     // deleted in Settings while the sweep ran. Same discipline as the snooze-wake
     // reconcile in ajax/snooze.php.
     $fresh = load_rules($email);
-    $fresh['last_processed_uid'] = $highUid;
+    // Monotonic. An empty INBOX at sweep time leaves $highUid at 0, and assigning
+    // that would reset the watermark — the next sweep would then take the
+    // first-run branch and silently skip filtering a whole batch of new mail.
+    $fresh['last_processed_uid'] = max((int)$fresh['last_processed_uid'], (int)$highUid);
     save_rules($email, $fresh);
     @imap_close($mbox);
     ok_r(['ok' => true, 'count' => $totalApplied]);

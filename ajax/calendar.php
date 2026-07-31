@@ -63,7 +63,8 @@ function _cal_open_box($folder) {
     // Reject c-client metacharacters / control chars so a folder value cannot
     // rewrite the {host:port} ref and redirect the IMAP connection.
     if (!is_string($folder) || $folder === '' || preg_match('/[{}\x00-\x1F\x7F]/', $folder)) return false;
-    return @imap_open(_cal_imap_ref() . $folder, $_SESSION['email'], $_SESSION['password'], OP_READONLY, 1);
+    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                         $folder, $_SESSION['email'], $_SESSION['password'], OP_READONLY, 1);
 }
 
 /** Recursively locate the first text/calendar part: returns ['part','section'] or null. */

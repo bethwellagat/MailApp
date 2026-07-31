@@ -61,7 +61,8 @@ function valid_mailbox_name($name) {
 
 function open_box($folder = 'INBOX', $opts = 0) {
     if (!valid_mailbox_name($folder)) return false;
-    return @imap_open(imap_ref() . $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
+    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
 }
 
 function fail($msg, $code = 500) {
@@ -678,15 +679,13 @@ function sanitize_html($html) {
     // bypass of a whitespace-only anchor, and browsers do parse and run it. The
     // boundary character is captured and restored so the preceding attribute (and
     // its closing quote) survives intact.
-    $stripHandlers = function ($tag) {
-        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*"[^"]*"#i',   '$1', $tag);
-        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*\'[^\']*\'#i', '$1', $tag);
-        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*[^\s>]*#i',    '$1', $tag);
-        return $tag;
-    };
+    $stripHandlers = 'strip_event_handlers';
     // Possessive quantifiers: no backtracking, so a pathological body can't stall
-    // this. The quoted alternatives let an attribute value legitimately contain '>'.
-    $tagRe = '#<[a-z][a-z0-9:-]*(?:[^>"\']++|"[^"]*+"|\'[^\']*+\')*+>#i';
+    // this. The quoted alternatives let an attribute value legitimately contain
+    // '>'; the trailing ["'] alternative consumes a LONE unbalanced quote, without
+    // which a tag like <img src=x" onerror=…> failed to match at all and its
+    // handler was left untouched.
+    $tagRe = TAG_MATCH_RE;
 
     $pass = 0;
     do {
@@ -698,7 +697,11 @@ function sanitize_html($html) {
         $html = preg_replace('#<\s*/?\s*(link|meta|base|param|form|input|button)\b[^>]*>#i', '', $html);
         // Inside the fixed-point loop so a handler revealed by removing a tag, and
         // chained handlers (`"onerror="a()"onload=b()`), are peeled off on later passes.
-        $html = preg_replace_callback($tagRe, fn($m) => $stripHandlers($m[0]), $html);
+        // Never assign a possibly-NULL preg result straight onto $html: on a PCRE
+        // limit that would blank the entire message body (and, in prefs, SAVE an
+        // empty signature). Keep the last good value instead.
+        $stripped = preg_replace_callback($tagRe, fn($m) => $stripHandlers($m[0]), $html);
+        if ($stripped !== null) $html = $stripped;
     } while ($html !== $before && ++$pass < 30);
     // Unwrap document-structure tags but keep their inner content. Also drop any
     // stray <!doctype …> — harmless when rendered, but a doctype node at the start

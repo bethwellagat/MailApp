@@ -32,7 +32,8 @@ function _d_ref() {
 function _d_valid($name) { return is_string($name) && $name !== '' && !preg_match('/[{}\x00-\x1F\x7F]/', $name); }
 function _d_open($folder = 'INBOX', $opts = 0) {
     if (!_d_valid($folder)) return false;
-    return @imap_open(_d_ref() . $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
+    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
 }
 function _d_find_drafts($mbox) {
     $list = @imap_list($mbox, _d_ref(), '*');

@@ -38,7 +38,8 @@ function open_box_o($folder = 'INBOX', $opts = 0) {
     // Reject c-client metacharacters / control chars so a folder value cannot
     // rewrite the {host:port} ref and redirect the IMAP connection.
     if (!is_string($folder) || $folder === '' || preg_match('/[{}\x00-\x1F\x7F]/', $folder)) return false;
-    return @imap_open(imap_ref_o() . $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
+    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
 }
 function fail_o($msg, $code = 500) { http_response_code($code); echo json_encode(['error' => $msg]); exit; }
 function ok_o($d) { echo json_encode($d); exit; }

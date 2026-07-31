@@ -4280,9 +4280,15 @@ textarea.cal-field-input { resize: vertical; min-height: 60px; }
   left: auto;
   bottom: auto;
   transform: translateY(8px);
-  pointer-events: auto;
 }
 .app-toast-stack .app-toast-undo.visible { transform: translateY(0); }
+
+/* Any toast carrying an Undo button must be clickable — .app-toast sets
+   pointer-events:none so a faded-out toast can't swallow clicks, which also made
+   the Trash/Archive/Move Undo button (#appToastAction, appended straight to
+   body) impossible to press. Re-enable only while visible, so a hidden toast
+   still intercepts nothing. */
+.app-toast-undo.visible { pointer-events: auto; }
 
 .app-toast-action {
   background: transparent;

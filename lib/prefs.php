@@ -106,13 +106,8 @@ function sanitize_signature_html($html) {
     // and stops the filter eating ordinary prose. The boundary character is
     // captured and restored so the preceding attribute stays intact. Mirrors
     // sanitize_html() in ajax/fetch.php — keep the two in step.
-    $stripHandlers = function ($tag) {
-        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*"[^"]*"#i',   '$1', $tag);
-        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*\'[^\']*\'#i', '$1', $tag);
-        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*[^\s>]*#i',    '$1', $tag);
-        return $tag;
-    };
-    $tagRe = '#<[a-z][a-z0-9:-]*(?:[^>"\']++|"[^"]*+"|\'[^\']*+\')*+>#i';
+    $stripHandlers = 'strip_event_handlers'; // shared with sanitize_html — see lib/util.php
+    $tagRe = TAG_MATCH_RE;
 
     $pass = 0;
     do {
@@ -124,7 +119,11 @@ function sanitize_signature_html($html) {
         $html = preg_replace('#<\s*/?\s*(link|meta|base|param|form|input|button)\b[^>]*>#i', '', $html);
         // In-loop so a handler revealed by tag removal, and chained handlers, are
         // peeled off on later passes.
-        $html = preg_replace_callback($tagRe, fn($m) => $stripHandlers($m[0]), $html);
+        // Never assign a possibly-NULL preg result straight onto $html: on a PCRE
+        // limit that would blank the entire message body (and, in prefs, SAVE an
+        // empty signature). Keep the last good value instead.
+        $stripped = preg_replace_callback($tagRe, fn($m) => $stripHandlers($m[0]), $html);
+        if ($stripped !== null) $html = $stripped;
     } while ($html !== $before && ++$pass < 30);
 
     // 4) Neutralize dangerous URL schemes on attributes that navigate or load.

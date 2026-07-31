@@ -90,6 +90,89 @@ if (!function_exists('atomic_write_json')) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * Inline event-handler removal for sanitized HTML.
+ *
+ * Shared by sanitize_html() (inbound mail) and sanitize_signature_html() so the
+ * two can never drift apart.
+ * ------------------------------------------------------------------------- */
+
+if (!defined('TAG_MATCH_RE')) {
+    /**
+     * Matches one HTML start tag. Quoted alternatives come first so an attribute
+     * value may legitimately contain '>'; the final ["'] alternative consumes a
+     * LONE unbalanced quote — without it a tag like `<img src=x" onerror=…>`
+     * matched nothing at all and its handler survived untouched. Possessive
+     * throughout, so no input can cause catastrophic backtracking.
+     */
+    define('TAG_MATCH_RE', '#<[a-z][a-z0-9:-]*+(?:"[^"]*+"|\'[^\']*+\'|[^>"\']++|["\'])*+>#i');
+}
+
+if (!function_exists('strip_event_handlers')) {
+    /**
+     * Remove on*= attributes from a single start tag.
+     *
+     * This PARSES the tag's attributes rather than pattern-matching them. A regex
+     * cannot tell an attribute's OPENING quote from a CLOSING one, so anchoring on
+     * a quote character destroyed ordinary markup: `<a href="online=1">` lost its
+     * href entirely, because the opening quote plus `on` + `line=` looked exactly
+     * like a handler starting after a closed attribute.
+     *
+     * Walking name / '=' / value the way a parser does removes that ambiguity: an
+     * attribute is dropped only when its NAME really is a handler, and every other
+     * attribute is re-emitted exactly as written.
+     */
+    function strip_event_handlers($tag) {
+        if (!preg_match('#^<([a-z][a-z0-9:-]*)#i', $tag, $m)) return $tag;
+        $len       = strlen($tag);
+        $i         = strlen($m[0]);
+        $out       = '<' . $m[1];
+        $selfClose = false;
+
+        while ($i < $len) {
+            while ($i < $len && (ctype_space($tag[$i]) || $tag[$i] === '/')) {
+                if ($tag[$i] === '/') $selfClose = true;
+                $i++;
+            }
+            if ($i >= $len || $tag[$i] === '>') break;
+
+            $start = $i;
+            while ($i < $len && !ctype_space($tag[$i]) && $tag[$i] !== '=' && $tag[$i] !== '>' && $tag[$i] !== '/') $i++;
+            $attr = substr($tag, $start, $i - $start);
+            if ($attr === '') { $i++; continue; }
+
+            $value = null;
+            $quote = '';
+            $j = $i;
+            while ($j < $len && ctype_space($tag[$j])) $j++;
+            if ($j < $len && $tag[$j] === '=') {
+                $j++;
+                while ($j < $len && ctype_space($tag[$j])) $j++;
+                if ($j < $len && ($tag[$j] === '"' || $tag[$j] === "'")) {
+                    $quote = $tag[$j];
+                    $j++;
+                    $vs = $j;
+                    while ($j < $len && $tag[$j] !== $quote) $j++;
+                    $value = substr($tag, $vs, $j - $vs);
+                    if ($j < $len) $j++;             // consume the closing quote
+                } else {
+                    $vs = $j;
+                    while ($j < $len && !ctype_space($tag[$j]) && $tag[$j] !== '>') $j++;
+                    $value = substr($tag, $vs, $j - $vs);
+                }
+                $i = $j;
+            }
+
+            // The only thing dropped: an attribute actually NAMED like a handler.
+            if (preg_match('#^on[a-z0-9_.:-]*$#i', $attr)) continue;
+
+            $out .= ' ' . $attr;
+            if ($value !== null) $out .= '=' . ($quote !== '' ? $quote . $value . $quote : $value);
+        }
+        return $out . ($selfClose ? ' /' : '') . '>';
+    }
+}
+
 if (!function_exists('expunge_only')) {
     /**
      * Expunge ONLY the messages this request flagged \Deleted.
@@ -109,16 +192,25 @@ if (!function_exists('expunge_only')) {
      */
     function expunge_only($mbox, array $ourUids) {
         if (!$mbox) return;
-        if (!function_exists('imap_search') || !function_exists('imap_clearflag_full')) {
-            @imap_expunge($mbox);
-            return;
-        }
-        $all = @imap_search($mbox, 'DELETED', SE_UID);
-        $all = is_array($all) ? array_map('intval', $all) : [];
-        $ours = array_map('intval', $ourUids);
-        $foreign = array_values(array_diff($all, $ours));
+        // Nothing of ours to purge — never run a blanket expunge "just in case".
+        if (!$ourUids) return;
+        if (!function_exists('imap_search') || !function_exists('imap_clearflag_full')) return;
 
-        if ($foreign) @imap_clearflag_full($mbox, implode(',', $foreign), '\\Deleted', ST_UID);
+        $all = @imap_search($mbox, 'DELETED', SE_UID);
+        // FAIL CLOSED. imap_search returns false both on error and on "no match",
+        // and we cannot tell them apart — so we cannot know whether another client
+        // has messages flagged here. Expunging anyway would be exactly the
+        // destructive behaviour this function exists to prevent. Skipping leaves
+        // our own messages flagged \Deleted; the next operation cleans them up.
+        if (!is_array($all)) return;
+
+        $ours    = array_map('intval', $ourUids);
+        $foreign = array_values(array_diff(array_map('intval', $all), $ours));
+
+        if ($foreign) {
+            // If we can't lift their flags, don't expunge — same reasoning.
+            if (!@imap_clearflag_full($mbox, implode(',', $foreign), '\\Deleted', ST_UID)) return;
+        }
         @imap_expunge($mbox);
         if ($foreign) @imap_setflag_full($mbox, implode(',', $foreign), '\\Deleted', ST_UID);
     }
@@ -192,6 +284,40 @@ if (!function_exists('tls_relaxed_hosts')) {
     function imap_tls_flags($host, $ssl) {
         if (!$ssl) return '/imap/notls';
         return tls_verify_enabled($host) ? '/imap/ssl' : '/imap/ssl/novalidate-cert';
+    }
+
+    /**
+     * Open a mailbox, healing a certificate failure once.
+     *
+     * EVERY endpoint must go through this, not just the login screen. The
+     * relaxed-TLS decision used to be made only when signing in, so a session that
+     * was ALREADY open when verification was switched on — e.g. the user pressed
+     * "Update now", which reloads the page but keeps the session — would hit a
+     * self-signed host and simply fail: no inbox, no send, no drafts, for up to
+     * the 12-hour session cap, with nothing in the UI hinting at a fix.
+     *
+     * On a verified-open failure that looks like a certificate problem, retry once
+     * without verification; if that works, remember the host so later requests go
+     * straight there (the retry then never happens again).
+     */
+    function imap_open_tls($host, $port, $ssl, $mailbox, $user, $pass, $opts = 0, $retries = 1) {
+        $ref  = '{' . $host . ':' . (int)$port . imap_tls_flags($host, $ssl) . '}';
+        $mbox = @imap_open($ref . $mailbox, $user, $pass, $opts, $retries);
+        if ($mbox !== false || !$ssl || !tls_verify_enabled($host)) return $mbox;
+
+        $certish = false;
+        foreach ((@imap_errors() ?: []) as $e) {
+            if (preg_match('#certificate|self[ -]?signed|verify|SSL#i', (string)$e)) { $certish = true; break; }
+        }
+        if (!$certish) return false;
+
+        $relaxed = '{' . $host . ':' . (int)$port . '/imap/ssl/novalidate-cert}';
+        $mbox = @imap_open($relaxed . $mailbox, $user, $pass, $opts, $retries);
+        if ($mbox !== false) {
+            tls_remember_relaxed($host);
+            @imap_errors(); // drain the first attempt's noise
+        }
+        return $mbox;
     }
 }
 

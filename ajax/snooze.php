@@ -35,7 +35,8 @@ function open_box_snz($folder = 'INBOX', $opts = 0) {
     // Reject c-client metacharacters / control chars so a folder value cannot
     // rewrite the {host:port} ref and redirect the IMAP connection.
     if (!is_string($folder) || $folder === '' || preg_match('/[{}\x00-\x1F\x7F]/', $folder)) return false;
-    return @imap_open(imap_ref_snz() . $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
+    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
+                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
 }
 
 function fail_snz($msg, $code = 500) {
