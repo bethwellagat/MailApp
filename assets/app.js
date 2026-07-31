@@ -3071,6 +3071,14 @@
             body: JSON.stringify({ uids, folder: state.currentFolder, wake_at: wakeAt }),
         }).then(r => r.json());
         if (r.error) { alert(r.error); return; }
+        // Messages with no Message-ID can't be tracked back out of Later, so the
+        // server leaves them in place rather than stranding them. Say so — a
+        // silently-partial snooze would look like mail had gone missing.
+        if (r.skipped > 0) {
+            showToast(r.skipped === 1
+                ? '1 message couldn’t be snoozed (no Message-ID) and was left in place.'
+                : r.skipped + ' messages couldn’t be snoozed (no Message-ID) and were left in place.', 6000);
+        }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
         clearSelection();
         await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);

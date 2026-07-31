@@ -130,11 +130,28 @@ if ($action === 'add' && $method === 'POST') {
         fail_snz('Could not create or find a "Later" folder', 500);
     }
 
-    // Capture message-ids before moving
-    $msgIds = fetch_message_ids($mbox, $uids);
+    // Capture message-ids before moving.
+    //
+    // A wake record is keyed ONLY by Message-ID — that is the sole handle the wake
+    // sweep has for finding the message again in Later (find_uids_by_message_id).
+    // So a message whose Message-ID we can't read must NOT be moved: it would land
+    // in the hidden Later folder with no wake record and could never be brought
+    // back — silently lost from the visible mailbox. Move exactly the set we can
+    // track, and tell the caller about any we had to leave behind.
+    $msgIds    = fetch_message_ids($mbox, $uids);
+    $trackable = array_keys($msgIds);
+    $skipped   = count($uids) - count($trackable);
 
-    // Move to Later
-    $set = implode(',', $uids);
+    if (!$trackable) {
+        @imap_close($mbox);
+        fail_snz(count($uids) === 1
+            ? 'This message has no Message-ID, so it can’t be scheduled to come back. It was left where it is.'
+            : 'These messages have no Message-ID, so they can’t be scheduled to come back. They were left where they are.',
+            422);
+    }
+
+    // Move to Later (only the trackable ones)
+    $set = implode(',', $trackable);
     $moved = @imap_mail_move($mbox, $set, $later, CP_UID);
     @imap_expunge($mbox);
     @imap_close($mbox);
@@ -144,8 +161,9 @@ if ($action === 'add' && $method === 'POST') {
     // wake can't clobber the file and lose these records (see lib/snooze.php).
     $lock = snooze_lock($email);
     $data = load_snoozes($email);
-    foreach ($uids as $uid) {
-        if (!isset($msgIds[$uid])) continue;
+    // Iterate the SAME set we moved, so the moved set and the recorded set can
+    // never diverge (that divergence is exactly what stranded messages before).
+    foreach ($trackable as $uid) {
         $data['snoozes'][] = [
             'id'              => snooze_uuid(),
             'message_id'      => $msgIds[$uid],
@@ -176,7 +194,13 @@ if ($action === 'add' && $method === 'POST') {
         fail_snz('Could not save the snooze — no messages were moved. Please try again.', 500);
     }
 
-    ok_snz(['ok' => true, 'count' => count($uids), 'wake_at' => $wakeAt, 'later_folder' => $later]);
+    ok_snz([
+        'ok'           => true,
+        'count'        => count($trackable), // what was actually snoozed, not what was asked for
+        'skipped'      => $skipped,          // left in place (no Message-ID to track them by)
+        'wake_at'      => $wakeAt,
+        'later_folder' => $later,
+    ]);
 }
 
 if ($action === 'list' && $method === 'GET') {
