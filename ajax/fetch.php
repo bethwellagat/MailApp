@@ -717,12 +717,36 @@ function sanitize_html($html) {
     $html = preg_replace('#(\b(?:' . $urlAttrs . ')\s*=\s*)("|\')\s*data\s*:\s*(?!image/(?:png|jpeg|gif|webp)\b)[^"\']*\2#i', '$1$2#$2', $html);
     $html = preg_replace('#(\b(?:' . $urlAttrs . ')\s*=\s*)data\s*:\s*(?!image/(?:png|jpeg|gif|webp)\b)[^\s>]*#i', '$1#', $html);
 
-    // 5) Defuse CSS-based vectors inside style="" / style=''.
+    // 5) Defuse CSS-based vectors inside inline styles.
     $defuseCss = function ($css) {
-        return preg_replace('#(expression|behavio[u]?r|javascript|vbscript|@import)\s*[:(]#i', 'blocked-', $css);
+        // Comments first: a CSS parser drops them, so `expr/**/ession(` and
+        // `position:/**/fixed` would otherwise walk straight past every rule below.
+        $css = preg_replace('#/\*.*?\*/#s', '', $css);
+        // Hex escapes (`\66 ixed` resolves to `fixed`) exist here only to obfuscate;
+        // real mail never needs a backslash in an inline style. Dropping them turns
+        // an escaped keyword into an invalid value instead of a live one.
+        $css = str_replace('\\', '', $css);
+        // Script-ish and stylesheet-import vectors.
+        $css = preg_replace('#(expression|behavio[u]?r|javascript|vbscript|@import)\s*[:(]#i', 'blocked-', $css);
+        // Positioning escape: `fixed`/`sticky` lift the element out of the message
+        // and pin it to the viewport, so a message can paint a full-screen overlay
+        // across the authenticated UI — a working phishing prompt needing no script
+        // at all. Neither is legitimate in email. (`absolute` is left alone: it is
+        // occasionally used for real layout and is contained by the paint
+        // containment on .thread-msg-body.)
+        $css = preg_replace('#position\s*:\s*(?:fixed|sticky)#i', 'position:static', $css);
+        // Stacking escape: genuine mail layers with single digits; larger values
+        // exist to sit on top of the app's own chrome.
+        $css = preg_replace_callback('#z-index\s*:\s*(-?\d+)#i',
+            fn($m) => abs((int)$m[1]) > 9 ? 'z-index:0' : $m[0], $css);
+        return $css;
     };
     $html = preg_replace_callback('#(\sstyle\s*=\s*")([^"]*)(")#i', fn($m) => $m[1] . $defuseCss($m[2]) . $m[3], $html);
     $html = preg_replace_callback("#(\sstyle\s*=\s*')([^']*)(')#i", fn($m) => $m[1] . $defuseCss($m[2]) . $m[3], $html);
+    // Unquoted form: `style=position:fixed;z-index:9999` is valid HTML (an unquoted
+    // value simply runs to the next space or '>'), and the two callbacks above only
+    // see quoted values — so without this the whole defuser is trivially bypassed.
+    $html = preg_replace_callback('#(\sstyle\s*=\s*)([^"\'\s>][^\s>]*)#i', fn($m) => $m[1] . $defuseCss($m[2]), $html);
 
     // 6) Force external links to open safely in a new tab.
     $html = preg_replace('#<a\b([^>]*)>#i', '<a$1 target="_blank" rel="noopener noreferrer">', $html);

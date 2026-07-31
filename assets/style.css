@@ -1645,6 +1645,15 @@ html.theme-dark #themeToggle .theme-ic-to-light { display: block; }
   overflow: hidden;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  /* Message HTML is sender-controlled, so pen it inside its own box. Paint
+     containment makes this element the containing block for any positioned
+     descendant AND its own stacking context, so a message cannot escape to cover
+     the app's UI with a fake prompt — covering transform/absolute tricks as well
+     as the position:fixed the sanitizer already neutralizes. Layout is unaffected
+     (this is paint-only, and overflow was already hidden), so legitimate mail
+     renders exactly as before. Ignored by browsers without support, which is why
+     the sanitizer remains the primary defense rather than this. */
+  contain: paint;
 }
 .thread-msg.expanded .thread-msg-body {
   max-height: none;
