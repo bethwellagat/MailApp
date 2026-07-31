@@ -38,10 +38,25 @@ if ($cfg && $cfg['admin_email'] !== '' && strtolower((string)$_SESSION['email'])
 }
 
 if ($action === 'check') {
-    echo json_encode(update_check());
+    echo json_encode(update_check()); // read-only: safe for any signed-in user
     exit;
 }
 if ($action === 'apply') {
+    // Installing an update replaces the application for EVERYONE on this install,
+    // so it is restricted to the account this browser session signed in with.
+    // Extra mailboxes added to a session belong to other people and must not be
+    // able to overwrite the app.
+    //
+    // Deliberately NOT deny-until-configured: updates must keep working with zero
+    // per-site setup. On a multi-user install, set "admin_email" in
+    // data/update.json to limit updating to one person (enforced above).
+    $primary = (string)($_SESSION['primary_account'] ?? '');
+    $acting  = (string)(account_effective_id() ?? '');
+    if ($primary !== '' && $acting !== '' && $acting !== $primary) {
+        http_response_code(403);
+        echo json_encode(['error' => 'Only the account this session signed in with can install updates.']);
+        exit;
+    }
     echo json_encode(update_apply());
     exit;
 }

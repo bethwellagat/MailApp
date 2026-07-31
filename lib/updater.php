@@ -244,6 +244,19 @@ function update_apply() {
     if (!$cfg) return ['error' => 'Updates are not configured on this server.'];
     if (!class_exists('ZipArchive')) return ['error' => 'The PHP ZipArchive extension is required for updates.'];
 
+    // Only one apply may run at a time. Two concurrent updates would interleave
+    // writes to the same files and could tangle each other's backups, leaving a
+    // tree neither of them can roll back. A non-blocking lock lets the second
+    // caller be told to wait instead of racing. The lock lives OUTSIDE the
+    // workspace directory, which gets deleted and recreated on every run. It is
+    // released when this handle goes out of scope (or the script ends).
+    $lockPath = __DIR__ . '/../data/.update.lock';
+    $applyLock = @fopen($lockPath, 'c');
+    if (!$applyLock || !@flock($applyLock, LOCK_EX | LOCK_NB)) {
+        if ($applyLock) @fclose($applyLock);
+        return ['error' => 'An update is already running on this server. Please wait for it to finish, then check again.'];
+    }
+
     // Fail fast if PHP plainly cannot write the app directory — better to say so
     // now than to download the whole release and discover it on the first file.
     $probe = _app_root() . '/.update-write-probe-' . bin2hex(random_bytes(4));
@@ -261,8 +274,12 @@ function update_apply() {
     _update_rrmdir($work);
     if (!@mkdir($work, 0700, true)) return ['error' => 'Could not create the update workspace — is data/ writable?'];
 
-    // 1) Download the zipball.
-    $url = 'https://api.github.com/repos/' . $cfg['repo'] . '/zipball/' . rawurlencode($cfg['branch']);
+    // 1) Download the zipball BY COMMIT SHA, not by branch name. Resolving the tip
+    //    and then fetching "the branch" are two separate requests: if the branch
+    //    moves in between, we would install code we never checked and then record
+    //    the sha we did check — a version label that does not match what is on
+    //    disk. Pinning to $targetSha makes the download exactly what was verified.
+    $url = 'https://api.github.com/repos/' . $cfg['repo'] . '/zipball/' . rawurlencode($targetSha);
     [$zipData, $code, $err] = _update_api_get($url, $cfg['token']);
     if ($err)          { _update_rrmdir($work); return ['error' => 'Download failed: ' . $err]; }
     if ($code !== 200) { _update_rrmdir($work); return ['error' => 'GitHub returned HTTP ' . $code . ' for the download.']; }
