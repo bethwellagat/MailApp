@@ -98,6 +98,21 @@ function sanitize_signature_html($html) {
     //       caught on a later pass. Bounded to avoid pathological inputs.
     $withContent = ['script','style','iframe','object','embed','applet',
                     'svg','math','template','noscript','frame','frameset','title'];
+
+    // Inline event handlers are stripped INSIDE tag markup only — scoping it to
+    // tags closes the `<img src="x"onerror=…>` bypass (an attribute can start
+    // right after the quote that closed the previous value, and browsers run it)
+    // and stops the filter eating ordinary prose. The boundary character is
+    // captured and restored so the preceding attribute stays intact. Mirrors
+    // sanitize_html() in ajax/fetch.php — keep the two in step.
+    $stripHandlers = function ($tag) {
+        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*"[^"]*"#i',   '$1', $tag);
+        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*\'[^\']*\'#i', '$1', $tag);
+        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*[^\s>]*#i',    '$1', $tag);
+        return $tag;
+    };
+    $tagRe = '#<[a-z][a-z0-9:-]*(?:[^>"\']++|"[^"]*+"|\'[^\']*+\')*+>#i';
+
     $pass = 0;
     do {
         $before = $html;
@@ -106,14 +121,10 @@ function sanitize_signature_html($html) {
             $html = preg_replace('#</?' . $tag . '\b[^>]*>#i', '', $html); // stray open/close
         }
         $html = preg_replace('#<\s*/?\s*(link|meta|base|param|form|input|button)\b[^>]*>#i', '', $html);
+        // In-loop so a handler revealed by tag removal, and chained handlers, are
+        // peeled off on later passes.
+        $html = preg_replace_callback($tagRe, fn($m) => $stripHandlers($m[0]), $html);
     } while ($html !== $before && ++$pass < 30);
-
-    // 3) Strip inline event handlers (onclick=, onerror=, …) in any quoting
-    //    style. Anchor on whitespace OR '/', so a slash-separated handler in a
-    //    compact tag (e.g. <img src=x/onerror=…>) cannot slip past the filter.
-    $html = preg_replace('#[\s/]on[a-z0-9_-]+\s*=\s*"[^"]*"#i', '', $html);
-    $html = preg_replace("#[\s/]on[a-z0-9_-]+\s*=\s*'[^']*'#i", '', $html);
-    $html = preg_replace('#[\s/]on[a-z0-9_-]+\s*=\s*[^\s>]+#i', '', $html);
 
     // 4) Neutralize dangerous URL schemes on attributes that navigate or load.
     $urlAttrs = 'href|src|xlink:href|action|formaction|background|poster|cite|longdesc|dynsrc|lowsrc';

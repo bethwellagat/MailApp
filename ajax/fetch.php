@@ -667,6 +667,27 @@ function sanitize_html($html) {
     //       caught on a later pass. Bounded to avoid pathological inputs.
     $withContent = ['script','style','iframe','object','embed','applet',
                     'svg','math','template','noscript','frame','frameset','title'];
+
+    // Inline event handlers (onclick=, onerror=, …) are stripped INSIDE tag markup
+    // only. A handler is executable solely as an attribute, so scoping it to tags
+    // both closes a bypass and stops the filter eating ordinary prose — an email
+    // reading "set once=true and only=false" previously lost those words.
+    //
+    // Within a tag an attribute may begin after whitespace, '/', OR the quote that
+    // closed the previous value: `<img src="x"onerror=alert(1)>` is the classic
+    // bypass of a whitespace-only anchor, and browsers do parse and run it. The
+    // boundary character is captured and restored so the preceding attribute (and
+    // its closing quote) survives intact.
+    $stripHandlers = function ($tag) {
+        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*"[^"]*"#i',   '$1', $tag);
+        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*\'[^\']*\'#i', '$1', $tag);
+        $tag = preg_replace('#([\s/"\'])on[a-z0-9_.:-]+\s*=\s*[^\s>]*#i',    '$1', $tag);
+        return $tag;
+    };
+    // Possessive quantifiers: no backtracking, so a pathological body can't stall
+    // this. The quoted alternatives let an attribute value legitimately contain '>'.
+    $tagRe = '#<[a-z][a-z0-9:-]*(?:[^>"\']++|"[^"]*+"|\'[^\']*+\')*+>#i';
+
     $pass = 0;
     do {
         $before = $html;
@@ -675,6 +696,9 @@ function sanitize_html($html) {
             $html = preg_replace('#</?' . $tag . '\b[^>]*>#i', '', $html); // stray open/close
         }
         $html = preg_replace('#<\s*/?\s*(link|meta|base|param|form|input|button)\b[^>]*>#i', '', $html);
+        // Inside the fixed-point loop so a handler revealed by removing a tag, and
+        // chained handlers (`"onerror="a()"onload=b()`), are peeled off on later passes.
+        $html = preg_replace_callback($tagRe, fn($m) => $stripHandlers($m[0]), $html);
     } while ($html !== $before && ++$pass < 30);
     // Unwrap document-structure tags but keep their inner content. Also drop any
     // stray <!doctype …> — harmless when rendered, but a doctype node at the start
@@ -682,12 +706,7 @@ function sanitize_html($html) {
     $html = preg_replace('#</?(html|head|body)\b[^>]*>#i', '', $html);
     $html = preg_replace('#<!doctype[^>]*>#i', '', $html);
 
-    // 3) Strip inline event handlers (onclick=, onerror=, …) in any quoting
-    //    style. Anchor on whitespace OR '/', so a slash-separated handler in a
-    //    compact tag (e.g. <img src=x/onerror=…>) cannot slip past the filter.
-    $html = preg_replace('#[\s/]on[a-z0-9_-]+\s*=\s*"[^"]*"#i', '', $html);
-    $html = preg_replace("#[\s/]on[a-z0-9_-]+\s*=\s*'[^']*'#i", '', $html);
-    $html = preg_replace('#[\s/]on[a-z0-9_-]+\s*=\s*[^\s>]+#i', '', $html);
+    // (3) Inline event handlers are stripped inside the fixed-point loop above.
 
     // 4) Neutralize dangerous URL schemes on attributes that navigate or load.
     $urlAttrs = 'href|src|xlink:href|action|formaction|background|poster|cite|longdesc|dynsrc|lowsrc';
