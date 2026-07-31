@@ -25,13 +25,7 @@ function outbox_uuid() { return gen_uuid(); }
 function save_outbox_message($email, $rec) {
     if (!$email || !is_array($rec) || empty($rec['id'])) return false;
     $dir  = _outbox_dir($email);
-    $file = $dir . '/' . $rec['id'] . '.json';
-    $tmp  = $file . '.tmp';
-    $json = json_encode($rec, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) return false;
-    if (@file_put_contents($tmp, $json, LOCK_EX) === false) return false;
-    @chmod($tmp, 0600);
-    return @rename($tmp, $file);
+    return atomic_write_json($dir . '/' . $rec['id'] . '.json', $rec);
 }
 
 function load_outbox_message($email, $id) {

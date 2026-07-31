@@ -141,9 +141,15 @@ if ($action === 'add' && $method === 'POST') {
     $clean = sanitize_rule($body);
     if (!$clean) fail_r('A rule needs at least one match criterion and one action.', 400);
     $clean['id'] = rule_uuid();
+    // Serialize the load→modify→save so a concurrent save (another tab, or the
+    // background sweep) can't lose this rule. Released before the slow IMAP work
+    // below so "apply to existing" never holds it across the network.
+    $lk   = store_lock(_rules_file($email));
     $data = load_rules($email);
     $data['rules'][] = $clean;
-    if (!save_rules($email, $data)) fail_r('Could not save rule', 500);
+    $saved = save_rules($email, $data);
+    store_unlock($lk);
+    if (!$saved) fail_r('Could not save rule', 500);
 
     // If "apply to existing" is requested, run this rule on Inbox now.
     $appliedCount = 0;
@@ -168,6 +174,7 @@ if ($action === 'update' && $method === 'POST') {
     $clean = sanitize_rule($body);
     if (!$clean) fail_r('A rule needs at least one match criterion and one action.', 400);
     $clean['id'] = $id;
+    $lk   = store_lock(_rules_file($email));
     $data = load_rules($email);
     $found = false;
     foreach ($data['rules'] as $i => $r) {
@@ -178,8 +185,10 @@ if ($action === 'update' && $method === 'POST') {
             break;
         }
     }
-    if (!$found) fail_r('Rule not found', 404);
-    if (!save_rules($email, $data)) fail_r('Could not save', 500);
+    if (!$found) { store_unlock($lk); fail_r('Rule not found', 404); }
+    $saved = save_rules($email, $data);
+    store_unlock($lk);
+    if (!$saved) fail_r('Could not save', 500);
     ok_r(['rule' => $clean]);
 }
 
@@ -188,6 +197,7 @@ if ($action === 'toggle' && $method === 'POST') {
     $id = $body['id'] ?? '';
     $enabled = !empty($body['enabled']);
     if (!$id) fail_r('id required', 400);
+    $lk   = store_lock(_rules_file($email));
     $data = load_rules($email);
     $found = false;
     foreach ($data['rules'] as $i => $r) {
@@ -196,8 +206,10 @@ if ($action === 'toggle' && $method === 'POST') {
             $found = true; break;
         }
     }
-    if (!$found) fail_r('Rule not found', 404);
-    if (!save_rules($email, $data)) fail_r('Could not save', 500);
+    if (!$found) { store_unlock($lk); fail_r('Rule not found', 404); }
+    $saved = save_rules($email, $data);
+    store_unlock($lk);
+    if (!$saved) fail_r('Could not save', 500);
     ok_r(['ok' => true]);
 }
 
@@ -205,11 +217,14 @@ if ($action === 'delete' && $method === 'POST') {
     $body = input_json_r();
     $id = $body['id'] ?? '';
     if (!$id) fail_r('id required', 400);
+    $lk   = store_lock(_rules_file($email));
     $data = load_rules($email);
     $before = count($data['rules']);
     $data['rules'] = array_values(array_filter($data['rules'], fn($r) => ($r['id'] ?? '') !== $id));
-    if (count($data['rules']) === $before) fail_r('Rule not found', 404);
-    if (!save_rules($email, $data)) fail_r('Could not save', 500);
+    if (count($data['rules']) === $before) { store_unlock($lk); fail_r('Rule not found', 404); }
+    $saved = save_rules($email, $data);
+    store_unlock($lk);
+    if (!$saved) fail_r('Could not save', 500);
     ok_r(['ok' => true]);
 }
 
@@ -275,8 +290,9 @@ if ($action === 'run_new' && $method === 'POST') {
         // First-ever run on this account: don't sweep the whole inbox; just
         // mark current high-water and bail. Rules will start firing from the
         // next message that arrives.
-        $data['last_processed_uid'] = $highUid;
-        save_rules($email, $data);
+        $fresh = load_rules($email); // reconcile — never persist our pre-IMAP rules snapshot
+        $fresh['last_processed_uid'] = $highUid;
+        save_rules($email, $fresh);
         @imap_close($mbox);
         ok_r(['ok' => true, 'count' => 0, 'first_run' => true]);
     }
@@ -297,8 +313,14 @@ if ($action === 'run_new' && $method === 'POST') {
         }
     }
 
-    $data['last_processed_uid'] = $highUid;
-    save_rules($email, $data);
+    // Reconcile instead of overwriting: re-read and write back ONLY the field this
+    // sweep owns (the watermark). $data was loaded before the slow IMAP work above,
+    // so persisting the whole blob would revert any rule the user added, edited, or
+    // deleted in Settings while the sweep ran. Same discipline as the snooze-wake
+    // reconcile in ajax/snooze.php.
+    $fresh = load_rules($email);
+    $fresh['last_processed_uid'] = $highUid;
+    save_rules($email, $fresh);
     @imap_close($mbox);
     ok_r(['ok' => true, 'count' => $totalApplied]);
 }

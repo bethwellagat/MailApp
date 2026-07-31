@@ -51,12 +51,74 @@ if (!function_exists('poll_gate')) {
         $due = ($now - (int) ($data[$job] ?? 0)) >= (int) $seconds;
         if ($due) {
             $data[$job] = $now;
-            @file_put_contents($file, json_encode($data), LOCK_EX);
-            @chmod($file, 0600);
+            atomic_write_json($file, $data); // the last non-atomic data/ writer — now tmp+rename like the rest
         }
         @flock($lock, LOCK_UN);
         @fclose($lock);
         return $due;
+    }
+}
+
+if (!function_exists('atomic_write_json')) {
+    /**
+     * Write $data as JSON to $file atomically. Returns true on success.
+     *
+     * Every per-user store under data/ funnels through here so the same guarantee
+     * holds everywhere. The temp file name is UNIQUE PER WRITER, which is the
+     * whole point: a fixed "<file>.tmp" is shared by every concurrent writer of
+     * the same file, and file_put_contents() TRUNCATES the temp at open BEFORE it
+     * can take LOCK_EX. So writer B could blank writer A's temp inside A's
+     * write→rename window, and A would then publish an empty/partial file over
+     * live user state — silently wiping saved filters, vacation config, or
+     * contacts (load_*() sees a non-array and hands back empty defaults).
+     * A per-writer temp makes that collision impossible.
+     *
+     * The rename() itself is the atomic publish step: readers see either the old
+     * file or the new one, never a half-written one. No lock is taken on the temp
+     * (it is private to this writer); callers that need load→modify→save to be
+     * serialized must still hold their own lock around the whole sequence.
+     */
+    function atomic_write_json($file, $data) {
+        $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($json === false) return false;
+        $tmp = $file . '.' . getmypid() . '-' . bin2hex(random_bytes(4)) . '.tmp';
+        if (@file_put_contents($tmp, $json) === false) return false;
+        @chmod($tmp, 0600);
+        if (@rename($tmp, $file)) return true;
+        @unlink($tmp); // rename failed (disk full / permissions) — don't leave an orphan
+        return false;
+    }
+}
+
+if (!function_exists('store_lock')) {
+    /**
+     * Bounded exclusive lock for a load→modify→save sequence on a data/ store,
+     * using the same "<file>.lock" the background sweeps take, so an interactive
+     * save and a sweep serialize against each other.
+     *
+     * The wait is BOUNDED (and we proceed without the lock if it expires) because
+     * the sweeps hold this lock across slow IMAP/SMTP work — a plain blocking
+     * flock() here would freeze the user's "Save" button for seconds. Proceeding
+     * unlocked is safe: the sweeps reconcile against a fresh read before writing,
+     * so they can no longer clobber a user-owned field. The lock just collapses
+     * the remaining narrow window between two concurrent interactive saves.
+     *
+     * Returns a handle for store_unlock(), or false if the lock wasn't acquired
+     * (PHP also releases any held lock automatically when the script exits).
+     */
+    function store_lock($file, $maxWaitMs = 1000) {
+        $h = @fopen($file . '.lock', 'c');
+        if (!$h) return false;
+        $deadline = microtime(true) + ($maxWaitMs / 1000);
+        do {
+            if (@flock($h, LOCK_EX | LOCK_NB)) return $h;
+            usleep(25000); // 25ms
+        } while (microtime(true) < $deadline);
+        @fclose($h);
+        return false;
+    }
+    function store_unlock($h) {
+        if ($h) { @flock($h, LOCK_UN); @fclose($h); }
     }
 }
 

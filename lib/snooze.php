@@ -37,13 +37,7 @@ function load_snoozes($email) {
 
 function save_snoozes($email, $data) {
     if (!$email || !is_array($data)) return false;
-    $file = _snooze_file($email);
-    $tmp  = $file . '.tmp';
-    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) return false;
-    if (@file_put_contents($tmp, $json, LOCK_EX) === false) return false;
-    @chmod($tmp, 0600);
-    return @rename($tmp, $file);
+    return atomic_write_json(_snooze_file($email), $data);
 }
 
 function snooze_uuid() { return gen_uuid(); }

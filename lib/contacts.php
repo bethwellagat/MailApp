@@ -36,15 +36,11 @@ function load_contacts($email) {
     return $data;
 }
 
+require_once __DIR__ . '/util.php'; // atomic_write_json()
+
 function save_contacts($email, $book) {
     if (!$email || !is_array($book)) return false;
-    $file = _contacts_file($email);
-    $tmp  = $file . '.tmp';
-    if (@file_put_contents($tmp, json_encode($book, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX) === false) {
-        return false;
-    }
-    @chmod($tmp, 0600);
-    return @rename($tmp, $file);
+    return atomic_write_json(_contacts_file($email), $book);
 }
 
 /** Tidy a display name: MIME-decode encoded words, collapse whitespace, strip quotes. */

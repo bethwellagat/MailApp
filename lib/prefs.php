@@ -5,6 +5,8 @@
  * that denies all web access.
  */
 
+require_once __DIR__ . '/util.php'; // atomic_write_json()
+
 function _prefs_dir() {
     return __DIR__ . '/../data/prefs';
 }
@@ -53,12 +55,7 @@ function save_prefs($email, $changes) {
     if ($lock) @flock($lock, LOCK_EX);
     $current = load_prefs($email);
     $merged  = array_merge($current, $changes);
-    $tmp     = $file . '.tmp';
-    $ok = false;
-    if (@file_put_contents($tmp, json_encode($merged, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX) !== false) {
-        @chmod($tmp, 0600);
-        $ok = @rename($tmp, $file);
-    }
+    $ok      = atomic_write_json($file, $merged);
     if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); }
     return $ok;
 }

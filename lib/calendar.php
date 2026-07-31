@@ -40,13 +40,7 @@ function load_calendar($email) {
 
 function save_calendar($email, $data) {
     if (!$email || !is_array($data)) return false;
-    $file = _calendar_file($email);
-    $tmp  = $file . '.tmp';
-    $json = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if ($json === false) return false;
-    if (@file_put_contents($tmp, $json, LOCK_EX) === false) return false;
-    @chmod($tmp, 0600);
-    return @rename($tmp, $file);
+    return atomic_write_json(_calendar_file($email), $data);
 }
 
 function calendar_uuid() { return gen_uuid(); }

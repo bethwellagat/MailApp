@@ -81,22 +81,33 @@ if ($action === 'save' && $method === 'POST') {
         }
     }
 
-    $data = load_ooo($email);
-    $wasEnabled = !empty($data['config']['enabled']);
-    $data['config'] = $clean;
-    // When transitioning OFF→ON, snap the high-water mark to the current
-    // top of inbox so we don't auto-reply to every existing unread email.
+    // When transitioning OFF→ON, snap the high-water mark to the current top of
+    // inbox so we don't auto-reply to every existing unread email. Do this network
+    // round-trip BEFORE locking — a lock must never be held across the wire.
+    $wasEnabled = !empty(load_ooo($email)['config']['enabled']);
+    $snapUid = null;
     if ($clean['enabled'] && !$wasEnabled) {
         $mbox = open_box_o('INBOX', OP_HALFOPEN);
         if ($mbox) {
             $check = @imap_check($mbox);
             if ($check && $check->Nmsgs > 0) {
-                $data['last_processed_uid'] = (int)@imap_uid($mbox, $check->Nmsgs);
+                $snapUid = (int)@imap_uid($mbox, $check->Nmsgs);
             }
             @imap_close($mbox);
         }
     }
-    if (!save_ooo($email, $data)) fail_o('Could not save', 500);
+
+    // Write against the freshest state, setting only what the user owns (config)
+    // plus the deliberate snap. A background sweep may have advanced the watermark
+    // or logged a cooldown while we were on the network above — re-reading here
+    // keeps those rather than reverting them to our pre-IMAP snapshot.
+    $lk   = store_lock(_ooo_file($email));
+    $data = load_ooo($email);
+    $data['config'] = $clean;
+    if ($snapUid !== null) $data['last_processed_uid'] = $snapUid;
+    $saved = save_ooo($email, $data);
+    store_unlock($lk);
+    if (!$saved) fail_o('Could not save', 500);
     ok_o(['ok' => true, 'config' => $clean]);
 }
 
@@ -128,8 +139,9 @@ if ($action === 'process' && $method === 'POST') {
     $highUid = $check && $check->Nmsgs > 0 ? (int)@imap_uid($mbox, $check->Nmsgs) : 0;
     $minUid  = (int)$data['last_processed_uid'];
     if ($minUid <= 0 && $highUid > 0) {
-        $data['last_processed_uid'] = $highUid;
-        save_ooo($email, $data);
+        $fresh = load_ooo($email); // reconcile — never persist our pre-IMAP config snapshot
+        $fresh['last_processed_uid'] = $highUid;
+        save_ooo($email, $fresh);
         @imap_close($mbox);
         @flock($lock, LOCK_UN);
         @fclose($lock);
@@ -210,8 +222,13 @@ if ($action === 'process' && $method === 'POST') {
             // the fact that this sender was already answered, or they'd get a
             // duplicate auto-reply on the next run.
             $repliedLog[$fromAddr] = gmdate('c');
+            // Reconcile: persist only the cooldown log this sweep owns. $data was
+            // read before these SMTP sends, so writing the whole blob would revert
+            // a vacation message/date the user edited in Settings mid-sweep.
+            $fresh = load_ooo($email);
+            $fresh['replied'] = $repliedLog;
+            save_ooo($email, $fresh);
             $data['replied'] = $repliedLog;
-            save_ooo($email, $data);
             $sentCount++;
         } else {
             $errors[] = ['to' => $fromAddr, 'error' => $r['error']];
@@ -223,9 +240,13 @@ if ($action === 'process' && $method === 'POST') {
     // failed sender is retried. The persisted cooldown log prevents the
     // re-scanned successes in that range from being answered twice.
     $finalUid = ($failedFloor === PHP_INT_MAX) ? $highUid : min($highUid, $failedFloor - 1);
-    $data['replied'] = $repliedLog;
-    if ($finalUid > 0) $data['last_processed_uid'] = max((int)$data['last_processed_uid'], $finalUid);
-    save_ooo($email, $data);
+    // Reconcile against the latest state: this sweep owns the watermark and the
+    // cooldown log; the user owns config. Writing our pre-send $data would silently
+    // revert an out-of-office message or date range edited while the sweep ran.
+    $fresh = load_ooo($email);
+    $fresh['replied'] = $repliedLog;
+    if ($finalUid > 0) $fresh['last_processed_uid'] = max((int)$fresh['last_processed_uid'], $finalUid);
+    save_ooo($email, $fresh);
     @imap_close($mbox);
     @flock($lock, LOCK_UN);
     @fclose($lock);
