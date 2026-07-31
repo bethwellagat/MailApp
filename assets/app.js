@@ -399,7 +399,7 @@
         listEl.innerHTML = '<div class="outbox-list">' + rows + '</div>';
     }
 
-    async function renderOutboxView(opts) {
+    async function renderOutboxView(opts, seq) {
         opts = opts || {};
         const acctId = viewAcct();
         if ($('listFolderName')) $('listFolderName').textContent = 'Outbox';
@@ -409,6 +409,9 @@
             $('messageList').innerHTML = '<div class="list-loading">Loading…</div>';
         }
         await loadOutbox(acctId);
+        // Same supersession rule in reverse: if the user moved on while this was
+        // loading, a newer load owns the list and must not be overwritten.
+        if (seq !== undefined && seq !== loadMessagesSeq) return;
         // loadOutbox renders on success; render again (from cache/empty) so an
         // offline refresh still shows something rather than a stuck spinner.
         if (state.currentFolder === OUTBOX_FOLDER && viewAcct() === acctId) renderOutboxList(acctId);
@@ -941,13 +944,17 @@
 
     async function loadMessages(opts) {
         opts = opts || {};
+        // Claim the supersession slot BEFORE any early return. Switching to the
+        // Outbox has to cancel an IMAP load that is still in flight — otherwise
+        // that older load finishes, still believes it is current, and paints its
+        // messages straight over the Outbox the user is now looking at.
+        const seq = ++loadMessagesSeq;
         // The Outbox is a virtual folder backed by data/outbox/, not IMAP — render
         // it here so every existing caller (folder switch, poll, refresh) does the
         // right thing without touching the mail server.
-        if (state.currentFolder === OUTBOX_FOLDER) { await renderOutboxView(opts); return; }
+        if (state.currentFolder === OUTBOX_FOLDER) { await renderOutboxView(opts, seq); return; }
         const keepReading = !!opts.keepReading;
         const silent = !!opts.silent;
-        const seq = ++loadMessagesSeq;
         // A fresh (non-silent) view drops stale paperclip flags; a silent poll
         // keeps them so only newly-arrived messages get re-probed.
         if (!silent) { state.attachFlags = {}; state.attachChecked = new Set(); }
@@ -2446,19 +2453,39 @@
         }
     }
 
-    function showUndoToast(queueId, capturedState, sendAcct) {
-        // Own DOM node (separate from the generic #appToast) so a later showToast()
-        // during the 10s window can't overwrite the toast and destroy the Undo button.
-        let el = $('appToastUndo');
-        if (!el) {
-            el = document.createElement('div');
-            el.id = 'appToastUndo';
-            el.className = 'app-toast app-toast-undo';
-            document.body.appendChild(el);
+    /** Bottom-centre container the per-send undo toasts stack inside. */
+    function undoToastStack() {
+        let stack = $('appToastUndoStack');
+        if (!stack) {
+            stack = document.createElement('div');
+            stack.id = 'appToastUndoStack';
+            stack.className = 'app-toast-stack';
+            document.body.appendChild(stack);
         }
+        return stack;
+    }
+
+    function showUndoToast(queueId, capturedState, sendAcct) {
+        // ONE TOAST PER SEND. All sends used to share a single #appToastUndo node,
+        // so a second send inside the 10-second window re-rendered that node and
+        // rebound Undo to the newer message: the first message could no longer be
+        // recalled even though it had not gone out yet. Its orphaned timer also
+        // kept running — fighting over the shared countdown text, and hiding the
+        // newer toast when it expired, cutting that message's undo short too.
+        // Each send now owns its element, timer and closure, and they stack.
+        const el = document.createElement('div');
+        el.className = 'app-toast app-toast-undo';
+        undoToastStack().appendChild(el);
+
         let remaining = 10;
         let timer = null;
         let undone = false;
+
+        // Fade out, then drop the node so the stack doesn't accumulate.
+        function dismiss() {
+            el.classList.remove('visible');
+            setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
+        }
         // The queued message lives in this account's outbox; both the commit
         // (flush) and the cancel must mirror the same account. accounts_boot()
         // reads the acct query param, so append it to the URL.
@@ -2486,7 +2513,7 @@
                     body: JSON.stringify({ id: queueId }),
                 });
             } catch (e) {}
-            el.classList.remove('visible');
+            dismiss();
             reopenCompose(capturedState);
         }
 
@@ -2508,12 +2535,13 @@
         }
 
         render();
-        el.classList.add('visible');
+        // Next frame, so the freshly-inserted node actually transitions in.
+        requestAnimationFrame(() => el.classList.add('visible'));
         timer = setInterval(() => {
             remaining--;
             if (remaining <= 0) {
                 clearInterval(timer);
-                el.classList.remove('visible');
+                dismiss();
                 if (!undone) commitSend();
                 return;
             }
