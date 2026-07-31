@@ -45,7 +45,7 @@ function imap_ref() {
     $ssl   = !empty($_SESSION['imap_ssl']);
     $port  = (int)($_SESSION['imap_port'] ?? 993);
     $host  = $_SESSION['imap_host'];
-    $flags = $ssl ? '/imap/ssl/novalidate-cert' : '/imap/notls';
+    $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
     return '{' . $host . ':' . $port . $flags . '}';
 }
 

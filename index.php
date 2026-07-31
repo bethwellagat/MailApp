@@ -58,14 +58,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (($throttleWait = login_throttle_retry_after($email)) > 0) {
         $error = 'Too many sign-in attempts. Please wait ' . ceil($throttleWait / 60) . ' minute(s) before trying again.';
     } else {
-        $flags = $imap_ssl ? '/imap/ssl/novalidate-cert' : '/imap/notls';
+        $flags = imap_tls_flags($imap_host, $imap_ssl);
         $mailbox = '{' . $imap_host . ':' . $imap_port . $flags . '}INBOX';
 
         $mbox = @imap_open($mailbox, $email, $password, OP_HALFOPEN, 1);
+        // Capture once: imap_errors() CLEARS the stack, and the message below needs it.
+        $imapErrs = ($mbox === false) ? (imap_errors() ?: []) : [];
+
+        // Certificates are verified for remote hosts. If verification is what
+        // failed — plenty of small mail servers still use a self-signed
+        // certificate — retry once without it, and remember that this host needs
+        // relaxed TLS so later requests connect the same way. Being unable to sign
+        // in at all would be a far worse outcome than an unverified certificate,
+        // and this is the ONLY place that decision gets made.
+        if ($mbox === false && $imap_ssl && tls_verify_enabled($imap_host)) {
+            $certish = false;
+            foreach ($imapErrs as $e) {
+                if (preg_match('#certificate|self[ -]?signed|verify|SSL#i', (string)$e)) { $certish = true; break; }
+            }
+            if ($certish) {
+                $relaxed = '{' . $imap_host . ':' . $imap_port . '/imap/ssl/novalidate-cert}INBOX';
+                $mbox = @imap_open($relaxed, $email, $password, OP_HALFOPEN, 1);
+                if ($mbox !== false) {
+                    tls_remember_relaxed($imap_host);
+                    imap_errors(); // drain the first attempt's noise
+                } else {
+                    $imapErrs = array_merge($imapErrs, imap_errors() ?: []);
+                }
+            }
+        }
 
         if ($mbox === false) {
             login_throttle_record($email, false);
-            $msgs = imap_errors() ?: [];
+            $msgs = $imapErrs;
             $last = $msgs ? end($msgs) : 'Could not connect to mail server.';
             $clean = $last;
             if (stripos($last, 'authentication') !== false || stripos($last, 'invalid') !== false || stripos($last, 'AUTH') !== false) {

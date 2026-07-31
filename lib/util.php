@@ -90,6 +90,77 @@ if (!function_exists('atomic_write_json')) {
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * TLS trust for IMAP/SMTP.
+ *
+ * Every connection used to be made with certificate checking switched off
+ * (/novalidate-cert, verify_peer=false) while the account password travelled
+ * over it — so anyone on the path to a REMOTE mail host could present any
+ * certificate and read the password and the whole mailbox.
+ *
+ * Turning verification on unconditionally would lock people out: cheap boxes
+ * routinely serve mail over a self-signed certificate. So:
+ *   - loopback / private-range hosts stay relaxed (traffic never leaves the
+ *     machine or the LAN, and self-signed is the norm there);
+ *   - every other host is VALIDATED;
+ *   - if a validated login fails, the login path retries relaxed, records that
+ *     this host needs it, and continues. Nobody is ever locked out, and hosts
+ *     with a good certificate get real protection everywhere from then on.
+ * ------------------------------------------------------------------------- */
+
+if (!function_exists('tls_host_is_local')) {
+    /** Loopback or private-range host: no meaningful interception exposure. */
+    function tls_host_is_local($host) {
+        $h = strtolower(trim((string)$host));
+        if ($h === '') return false;
+        $h = trim($h, '[]');
+        if ($h === 'localhost' || $h === '127.0.0.1' || $h === '::1') return true;
+        if (filter_var($h, FILTER_VALIDATE_IP)) {
+            // Not-public == private/reserved range.
+            return !filter_var($h, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
+        }
+        return false;
+    }
+}
+
+if (!function_exists('tls_relaxed_hosts')) {
+    function _tls_state_file() { return __DIR__ . '/../data/tls.json'; }
+
+    /** Hosts already proven to need relaxed TLS (map host => iso timestamp). */
+    function tls_relaxed_hosts() {
+        $d = @json_decode((string)@file_get_contents(_tls_state_file()), true);
+        return is_array($d) ? $d : [];
+    }
+    function tls_host_needs_relaxed($host) {
+        $h = strtolower(trim((string)$host));
+        return $h !== '' && isset(tls_relaxed_hosts()[$h]);
+    }
+    /** Record that $host could only be reached without certificate validation. */
+    function tls_remember_relaxed($host) {
+        $h = strtolower(trim((string)$host));
+        if ($h === '') return;
+        $lk = store_lock(_tls_state_file());
+        $d  = tls_relaxed_hosts();
+        if (!isset($d[$h])) {
+            $d[$h] = gmdate('c');
+            atomic_write_json(_tls_state_file(), $d);
+        }
+        store_unlock($lk);
+    }
+    /** Should this host's certificate be verified? */
+    function tls_verify_enabled($host) {
+        return !tls_host_is_local($host) && !tls_host_needs_relaxed($host);
+    }
+    /**
+     * IMAP mailbox-ref flags for this host. Single source of truth — every
+     * endpoint builds its {host:port...} ref through here.
+     */
+    function imap_tls_flags($host, $ssl) {
+        if (!$ssl) return '/imap/notls';
+        return tls_verify_enabled($host) ? '/imap/ssl' : '/imap/ssl/novalidate-cert';
+    }
+}
+
 if (!function_exists('ensure_data_guards')) {
     /**
      * Make sure data/ carries every web-deny file we can ship, creating any that

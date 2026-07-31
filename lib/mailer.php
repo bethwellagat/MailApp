@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/util.php'; // imap_tls_flags(), tls_verify_enabled(), tls_remember_relaxed()
 /**
  * Shared SMTP / outbox helpers.
  *
@@ -37,24 +38,47 @@ if (!function_exists('wrap_html')) {
 
 if (!function_exists('smtp_send')) {
     function smtp_send($host, $from, $rcpts, $message, $user, $pass) {
+        // Certificates are verified for remote hosts (see tls_verify_enabled).
+        // If that is the only reason the send fails, retry once WITHOUT
+        // verification and remember this host needs it — a self-signed mail
+        // server must never stop a user sending mail.
+        $verify = tls_verify_enabled($host);
+
         $errSsl = '';
-        $r = smtp_attempt('ssl://' . $host . ':465', $host, $from, $rcpts, $message, $user, $pass, false);
+        $r = smtp_attempt('ssl://' . $host . ':465', $host, $from, $rcpts, $message, $user, $pass, false, $verify);
         if ($r['ok']) return $r;
         $errSsl = $r['error'];
 
-        $r = smtp_attempt('tcp://' . $host . ':587', $host, $from, $rcpts, $message, $user, $pass, true);
-        if ($r['ok']) return $r;
-        return ['ok' => false, 'error' => "ssl/465: $errSsl ; starttls/587: " . $r['error']];
+        $r2 = smtp_attempt('tcp://' . $host . ':587', $host, $from, $rcpts, $message, $user, $pass, true, $verify);
+        if ($r2['ok']) return $r2;
+
+        if ($verify && (smtp_is_tls_error($errSsl) || smtp_is_tls_error($r2['error']))) {
+            tls_remember_relaxed($host);
+            $r3 = smtp_attempt('ssl://' . $host . ':465', $host, $from, $rcpts, $message, $user, $pass, false, false);
+            if ($r3['ok']) return $r3;
+            $r4 = smtp_attempt('tcp://' . $host . ':587', $host, $from, $rcpts, $message, $user, $pass, true, false);
+            if ($r4['ok']) return $r4;
+        }
+        return ['ok' => false, 'error' => "ssl/465: $errSsl ; starttls/587: " . $r2['error']];
+    }
+}
+
+if (!function_exists('smtp_is_tls_error')) {
+    /** Does this failure look like certificate verification rather than auth/refusal? */
+    function smtp_is_tls_error($err) {
+        return (bool)preg_match('#certificate|ssl|tls|verify|self[ -]?signed#i', (string)$err);
     }
 }
 
 if (!function_exists('smtp_attempt')) {
-    function smtp_attempt($conn, $host, $from, $rcpts, $message, $user, $pass, $starttls) {
+    function smtp_attempt($conn, $host, $from, $rcpts, $message, $user, $pass, $starttls, $verify = false) {
         $errno = 0; $errstr = '';
         $ctx = stream_context_create(['ssl' => [
-            'verify_peer' => false,
-            'verify_peer_name' => false,
-            'allow_self_signed' => true,
+            'verify_peer'       => (bool)$verify,
+            'verify_peer_name'  => (bool)$verify,
+            'allow_self_signed' => !$verify,
+            'SNI_enabled'       => true,
+            'peer_name'         => $host,
         ]]);
         $sock = @stream_socket_client($conn, $errno, $errstr, 15, STREAM_CLIENT_CONNECT, $ctx);
         if (!$sock) return ['ok' => false, 'error' => "connect: $errstr"];
@@ -143,7 +167,7 @@ if (!function_exists('append_to_sent')) {
         $ssl   = !empty($_SESSION['imap_ssl']);
         $port  = (int)($_SESSION['imap_port'] ?? 993);
         $host  = $_SESSION['imap_host'];
-        $flags = $ssl ? '/imap/ssl/novalidate-cert' : '/imap/notls';
+        $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
         $ref   = '{' . $host . ':' . $port . $flags . '}';
 
         $mbox = @imap_open($ref . 'INBOX', $_SESSION['email'], $_SESSION['password'], OP_HALFOPEN, 1);

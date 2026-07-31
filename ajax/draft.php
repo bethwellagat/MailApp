@@ -27,7 +27,7 @@ session_write_close();
 function _d_ref() {
     $ssl  = !empty($_SESSION['imap_ssl']);
     $port = (int)($_SESSION['imap_port'] ?? 993);
-    return '{' . $_SESSION['imap_host'] . ':' . $port . ($ssl ? '/imap/ssl/novalidate-cert' : '/imap/notls') . '}';
+    return '{' . $_SESSION['imap_host'] . ':' . $port . imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl) . '}';
 }
 function _d_valid($name) { return is_string($name) && $name !== '' && !preg_match('/[{}\x00-\x1F\x7F]/', $name); }
 function _d_open($folder = 'INBOX', $opts = 0) {

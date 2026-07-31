@@ -87,12 +87,28 @@ if ($action === 'add') {
         acct_fail('That email address does not look valid.');
     }
 
-    $flags   = $imap_ssl ? '/imap/ssl/novalidate-cert' : '/imap/notls';
+    $flags   = imap_tls_flags($imap_host, $imap_ssl);
     $mailbox = '{' . $imap_host . ':' . $imap_port . $flags . '}INBOX';
 
     $mbox = @imap_open($mailbox, $email, $password, OP_HALFOPEN, 1);
+    // Same certificate fallback as the login path (index.php): if verification is
+    // what failed, retry once relaxed and remember this host, so a self-signed
+    // mail server can't make an account impossible to add.
+    $imapErrs = ($mbox === false) ? (imap_errors() ?: []) : [];
+    if ($mbox === false && $imap_ssl && tls_verify_enabled($imap_host)) {
+        $certish = false;
+        foreach ($imapErrs as $e) {
+            if (preg_match('#certificate|self[ -]?signed|verify|SSL#i', (string)$e)) { $certish = true; break; }
+        }
+        if ($certish) {
+            $relaxed = '{' . $imap_host . ':' . $imap_port . '/imap/ssl/novalidate-cert}INBOX';
+            $mbox = @imap_open($relaxed, $email, $password, OP_HALFOPEN, 1);
+            if ($mbox !== false) { tls_remember_relaxed($imap_host); imap_errors(); }
+            else { $imapErrs = array_merge($imapErrs, imap_errors() ?: []); }
+        }
+    }
     if ($mbox === false) {
-        $msgs = imap_errors() ?: [];
+        $msgs = $imapErrs;
         $last = $msgs ? end($msgs) : 'Could not connect to mail server.';
         $clean = $last;
         if (stripos($last, 'authentication') !== false || stripos($last, 'invalid') !== false || stripos($last, 'AUTH') !== false) {
