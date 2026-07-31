@@ -90,6 +90,63 @@ if (!function_exists('atomic_write_json')) {
     }
 }
 
+if (!function_exists('ensure_data_guards')) {
+    /**
+     * Make sure data/ carries every web-deny file we can ship, creating any that
+     * are missing. Written from CODE rather than shipped as files because the
+     * updater deliberately never copies into data/ — so a new protective file
+     * placed there in the repo would never reach an existing install. Doing it
+     * here means "Update now" heals every deployment.
+     *
+     * data/ holds signatures, workspace logos, brand overrides, filters,
+     * contacts, the outbox and the update token. Serving any of it to the web is
+     * a straight PII/secret disclosure.
+     *
+     *   .htaccess   — Apache (both mod_authz_core and pre-2.4 syntax)
+     *   web.config  — IIS
+     *   index.html  — empty, so a mis-set autoindex lists nothing
+     *
+     * nginx/lighttpd read NONE of these — they need a server-block rule, which no
+     * PHP code can install. The Settings page therefore probes for exposure from
+     * the browser and warns the admin (see the exposure probe file below).
+     *
+     * Costs one stat() per request once the sentinel exists.
+     */
+    function ensure_data_guards() {
+        $dir      = __DIR__ . '/../data';
+        $sentinel = $dir . '/.guards-v1';
+        if (is_file($sentinel)) return; // fast path
+        if (!is_dir($dir) && !@mkdir($dir, 0700, true)) return;
+
+        $files = [
+            '.htaccess' =>
+                "# Deny all web access — this directory holds private user data.\n" .
+                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
+                "<IfModule !mod_authz_core.c>\n    Order deny,allow\n    Deny from all\n</IfModule>\n",
+            'web.config' =>
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n" .
+                "    <authorization>\n      <deny users=\"*\" />\n    </authorization>\n" .
+                "  </system.webServer>\n</configuration>\n",
+            'index.html' => "",
+            // Harmless known content. If a browser can read this, the whole
+            // directory is exposed — Settings fetches it to detect exactly that.
+            'exposure-probe.txt' =>
+                "webmail-data-directory-is-web-readable\n" .
+                "If you can read this over HTTP, your server is serving the private data/\n" .
+                "directory. Deny it in your server config (see the note in Settings).\n",
+        ];
+        foreach ($files as $name => $body) {
+            $path = $dir . '/' . $name;
+            if (!file_exists($path)) {
+                @file_put_contents($path, $body);
+                @chmod($path, 0644);
+            }
+        }
+        @file_put_contents($sentinel, "guards written " . gmdate('c') . "\n");
+        @chmod($sentinel, 0600);
+    }
+}
+
 if (!function_exists('store_lock')) {
     /**
      * Bounded exclusive lock for a load→modify→save sequence on a data/ store,

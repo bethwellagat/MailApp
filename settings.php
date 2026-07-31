@@ -180,6 +180,25 @@ if ('serviceWorker' in navigator) {
 
     <div class="settings-content">
 
+        <!-- Revealed by JS only if the private data/ directory turns out to be
+             readable over HTTP (i.e. the server ignored the deny files we ship —
+             typically nginx or lighttpd, which read neither .htaccess nor web.config). -->
+        <div id="dataExposureWarning" class="settings-alert settings-alert-danger" hidden role="alert">
+            <strong>Your private data folder is publicly readable.</strong>
+            <p>
+                Anyone on the internet can currently download <code>data/</code> from this site —
+                that includes signatures, workspace logos, saved filters, contacts and the update token.
+                The app ships Apache (<code>.htaccess</code>) and IIS (<code>web.config</code>) deny rules,
+                but this server is ignoring them.
+            </p>
+            <p>Add this to your server config and reload it:</p>
+            <pre><code># nginx — inside the server { } block
+location ^~ /data/ { deny all; return 404; }
+
+# lighttpd
+$HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
+        </div>
+
         <section id="account" class="settings-section">
             <header class="settings-section-header">
                 <h2>Account</h2>
@@ -836,6 +855,21 @@ if ('serviceWorker' in navigator) {
             applyBtn.hidden = true;
             setTimeout(() => location.reload(), 1500);
         });
+    })();
+
+    /* ---------- Private-data exposure check ----------
+     * The deny files we ship cover Apache and IIS; nginx/lighttpd read neither,
+     * and no PHP code can install a rule into their config. So ask the BROWSER:
+     * if it can fetch our known-content probe out of data/, the directory is
+     * being served and the admin needs to know right now. Same-origin, one tiny
+     * request, and silent whenever the directory is correctly denied. */
+    (function () {
+        const warn = $('dataExposureWarning');
+        if (!warn || !window.fetch) return;
+        fetch('data/exposure-probe.txt', { cache: 'no-store', credentials: 'omit' })
+            .then(r => r.ok ? r.text() : null)
+            .then(t => { if (t && t.indexOf('webmail-data-directory-is-web-readable') !== -1) warn.hidden = false; })
+            .catch(() => {}); // blocked/offline → nothing to report
     })();
 
     /* ---------- Display name ---------- */

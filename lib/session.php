@@ -44,6 +44,10 @@ if (!function_exists('session_boot')) {
 
         session_start();
         session_enforce_lifetime();
+        // Self-heal data/'s web-deny files (one stat() once they exist). Kept here
+        // so every entry point gets it without per-file wiring.
+        require_once __DIR__ . '/util.php';
+        ensure_data_guards();
     }
 }
 

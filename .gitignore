@@ -8,6 +8,8 @@
 /data/*
 # ...but DO ship the two templates a fresh install needs:
 !/data/.htaccess
+!/data/web.config
+!/data/index.html
 !/data/brand.json.example
 !/data/update.json.example
 
