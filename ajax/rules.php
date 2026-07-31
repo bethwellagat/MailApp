@@ -101,13 +101,13 @@ function apply_rule_actions($mbox, $folder, $uids, $actions) {
         }
         if ($trash) {
             @imap_mail_move($mbox, $set, $trash, CP_UID);
-            @imap_expunge($mbox);
+            expunge_only($mbox, $uids);
         }
         return ['matched' => count($uids), 'deleted' => true];
     }
     if (!empty($actions['move_to']) && !preg_match('/[{}\x00-\x1F\x7F]/', $actions['move_to'])) {
         @imap_mail_move($mbox, $set, $actions['move_to'], CP_UID);
-        @imap_expunge($mbox);
+        expunge_only($mbox, $uids);
         return ['matched' => count($uids), 'moved_to' => $actions['move_to']];
     }
     if (!empty($actions['skip_inbox'])) {
@@ -122,7 +122,7 @@ function apply_rule_actions($mbox, $folder, $uids, $actions) {
         }
         if ($archive) {
             @imap_mail_move($mbox, $set, $archive, CP_UID);
-            @imap_expunge($mbox);
+            expunge_only($mbox, $uids);
             return ['matched' => count($uids), 'archived' => true];
         }
     }

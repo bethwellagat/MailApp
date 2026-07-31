@@ -118,7 +118,7 @@ if ($action === 'save') {
     // Replace the previous autosave of this compose (same Drafts folder).
     if ($prevUid > 0 && (!$prevFolder || strcasecmp($prevFolder, $drafts) === 0)) {
         @imap_delete($box, (string)$prevUid, FT_UID);
-        @imap_expunge($box);
+        expunge_only($box, [$prevUid]);
     }
     @imap_close($box);
     _d_ok(['ok' => true, 'uid' => $newUid, 'folder' => $drafts]);
@@ -131,7 +131,7 @@ if ($action === 'delete') {
     $box = _d_open($folder);
     if (!$box) _d_fail('Could not open folder');
     @imap_delete($box, (string)$uid, FT_UID);
-    @imap_expunge($box);
+    expunge_only($box, [$uid]);
     @imap_close($box);
     _d_ok(['ok' => true]);
 }

@@ -153,7 +153,7 @@ if ($action === 'add' && $method === 'POST') {
     // Move to Later (only the trackable ones)
     $set = implode(',', $trackable);
     $moved = @imap_mail_move($mbox, $set, $later, CP_UID);
-    @imap_expunge($mbox);
+    expunge_only($mbox, $trackable);
     @imap_close($mbox);
     if (!$moved) fail_snz('Failed to move messages to Later');
 
@@ -187,7 +187,7 @@ if ($action === 'add' && $method === 'POST') {
             }
             if ($restore) {
                 @imap_mail_move($back, implode(',', $restore), $from, CP_UID);
-                @imap_expunge($back);
+                expunge_only($back, $restore);
             }
             @imap_close($back);
         }
@@ -232,7 +232,7 @@ if ($action === 'cancel' && $method === 'POST') {
         if ($foundUids) {
             $set = implode(',', $foundUids);
             @imap_mail_move($mbox, $set, $hit['original_folder'], CP_UID);
-            @imap_expunge($mbox);
+            expunge_only($mbox, $foundUids);
         }
         @imap_close($mbox);
     }
@@ -282,6 +282,7 @@ if ($action === 'wake' && $method === 'POST') {
     foreach ($byLater as $laterFolder => $items) {
         $mbox = open_box_snz($laterFolder);
         if (!$mbox) continue; // couldn't open Later — leave these for the next poll
+        $wokenUids = []; // everything this sweep moved out of Later, for the expunge
         foreach ($items as $s) {
             $foundUids = find_uids_by_message_id($mbox, $s['message_id']);
             if (!$foundUids) { $resolved[$s['id'] ?? ''] = true; continue; } // gone → resolved
@@ -291,10 +292,11 @@ if ($action === 'wake' && $method === 'POST') {
                 $count++;
                 $resolved[$s['id'] ?? ''] = true;
                 $movedBy[$s['original_folder']][] = $s['message_id'];
+                foreach ($foundUids as $fu) $wokenUids[] = $fu;
             }
             // move failed → not resolved; retained by the reconcile below
         }
-        @imap_expunge($mbox);
+        expunge_only($mbox, $wokenUids);
         @imap_close($mbox);
     }
 

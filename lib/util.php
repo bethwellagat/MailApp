@@ -90,6 +90,40 @@ if (!function_exists('atomic_write_json')) {
     }
 }
 
+if (!function_exists('expunge_only')) {
+    /**
+     * Expunge ONLY the messages this request flagged \Deleted.
+     *
+     * imap_expunge() permanently purges every \Deleted message in the mailbox —
+     * including ones another client (a phone, Outlook, a second tab) flagged but
+     * has not expunged yet. Those disappear for good, with no Trash copy.
+     *
+     * PHP's IMAP extension exposes no UID EXPUNGE (RFC 4315), so this uses the
+     * standard workaround: work out which \Deleted messages are NOT ours, clear
+     * their flag, expunge (which can now only take ours), then restore the flag.
+     *
+     * Failure mode is deliberately the safe one — if the script dies mid-way, a
+     * foreign message merely loses a \Deleted FLAG and reappears; no mail is lost.
+     *
+     * $ourUids: the UIDs this request just moved/deleted.
+     */
+    function expunge_only($mbox, array $ourUids) {
+        if (!$mbox) return;
+        if (!function_exists('imap_search') || !function_exists('imap_clearflag_full')) {
+            @imap_expunge($mbox);
+            return;
+        }
+        $all = @imap_search($mbox, 'DELETED', SE_UID);
+        $all = is_array($all) ? array_map('intval', $all) : [];
+        $ours = array_map('intval', $ourUids);
+        $foreign = array_values(array_diff($all, $ours));
+
+        if ($foreign) @imap_clearflag_full($mbox, implode(',', $foreign), '\\Deleted', ST_UID);
+        @imap_expunge($mbox);
+        if ($foreign) @imap_setflag_full($mbox, implode(',', $foreign), '\\Deleted', ST_UID);
+    }
+}
+
 /* ---------------------------------------------------------------------------
  * TLS trust for IMAP/SMTP.
  *

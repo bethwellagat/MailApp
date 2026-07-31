@@ -1612,7 +1612,7 @@ if ($action === 'delete') {
     } else {
         @imap_delete($mbox, $set, FT_UID);
     }
-    @imap_expunge($mbox);
+    expunge_only($mbox, $uids);
     @imap_close($mbox);
     ok(['ok' => true, 'count' => count($uids)]);
 }
@@ -1630,7 +1630,7 @@ if ($action === 'move') {
 
     $set   = implode(',', $uids);
     $moved = @imap_mail_move($mbox, $set, $to, CP_UID);
-    @imap_expunge($mbox);
+    expunge_only($mbox, $uids);
     @imap_close($mbox);
 
     if (!$moved) fail('Could not move message');
@@ -1654,7 +1654,7 @@ if ($action === 'restore') {
     $count = 0;
     if ($uids) {
         if (@imap_mail_move($mbox, implode(',', $uids), $to, CP_UID)) {
-            @imap_expunge($mbox);
+            expunge_only($mbox, $uids);
             $count = count($uids);
         }
     }
