@@ -157,9 +157,20 @@ function _update_rrmdir($dir) {
 /**
  * Copy the $src tree onto $dst, writing each file atomically (temp + rename) so a
  * file is never seen half-written, and skipping the excluded top-level names.
+ *
+ * Every file we are about to replace is COPIED INTO $backupDir first, and each
+ * change is appended to $journal, so the caller can undo the whole operation.
+ * Without that, a failure part-way through (disk full, a permission change, PHP
+ * hitting max_execution_time) left the app spliced across two versions — half the
+ * files from the new release, half from the old — which white-screens every
+ * tenant on the host with no way back.
+ *
+ * If a backup cannot be written we stop BEFORE touching that file, so the tree is
+ * always either fully old, fully new, or restorable.
+ *
  * Returns [filesCopied, errorOrNull].
  */
-function _update_copy_tree($src, $dst, array $exclude) {
+function _update_copy_tree($src, $dst, array $exclude, $backupDir, array &$journal) {
     $copied = 0;
     $stack  = [['s' => $src, 'rel' => '']];
     while ($stack) {
@@ -173,20 +184,55 @@ function _update_copy_tree($src, $dst, array $exclude) {
             $sp = $frame['s'] . '/' . $name;
             $dp = $dst . '/' . $rel;
             if (is_dir($sp)) {
-                if (!is_dir($dp) && !@mkdir($dp, 0755, true)) return [$copied, 'could not create ' . $rel];
+                if (!is_dir($dp)) {
+                    if (!@mkdir($dp, 0755, true)) return [$copied, 'could not create ' . $rel];
+                    $journal[] = ['type' => 'mkdir', 'rel' => $rel];
+                }
                 $stack[] = ['s' => $sp, 'rel' => $rel];
             } else {
                 $data = @file_get_contents($sp);
                 if ($data === false) return [$copied, 'could not read ' . $rel];
+                $existed = is_file($dp);
+                if ($existed) {
+                    $bp   = $backupDir . '/' . $rel;
+                    $bdir = dirname($bp);
+                    if (!is_dir($bdir) && !@mkdir($bdir, 0700, true)) return [$copied, 'could not prepare a backup for ' . $rel];
+                    if (!@copy($dp, $bp)) return [$copied, 'could not back up ' . $rel . ' (out of disk space?)'];
+                }
                 $tmp = $dp . '.up.' . bin2hex(random_bytes(4));
                 if (@file_put_contents($tmp, $data) === false) return [$copied, 'could not write ' . $rel . ' (is the app dir writable?)'];
-                @chmod($tmp, is_file($dp) ? (fileperms($dp) & 0777) : 0644);
+                @chmod($tmp, $existed ? (fileperms($dp) & 0777) : 0644);
                 if (!@rename($tmp, $dp)) { @unlink($tmp); return [$copied, 'could not replace ' . $rel]; }
+                $journal[] = ['type' => 'file', 'rel' => $rel, 'existed' => $existed];
                 $copied++;
             }
         }
     }
     return [$copied, null];
+}
+
+/**
+ * Undo everything _update_copy_tree() recorded, most recent change first: restore
+ * each replaced file from the backup, delete each file the update introduced, and
+ * remove directories it created (rmdir only succeeds when they are empty, so a
+ * directory that already held files is left alone).
+ *
+ * Returns the number of entries that could NOT be undone — 0 means the app is
+ * byte-for-byte back on the previous release.
+ */
+function _update_rollback(array $journal, $backupDir, $appRoot) {
+    $failed = 0;
+    foreach (array_reverse($journal) as $j) {
+        $dp = $appRoot . '/' . $j['rel'];
+        if (($j['type'] ?? '') === 'mkdir') { @rmdir($dp); continue; }
+        if (!empty($j['existed'])) {
+            $bp = $backupDir . '/' . $j['rel'];
+            if (!is_file($bp) || !@copy($bp, $dp)) $failed++;
+        } elseif (is_file($dp) && !@unlink($dp)) {
+            $failed++;
+        }
+    }
+    return $failed;
 }
 
 /**
@@ -197,6 +243,14 @@ function update_apply() {
     $cfg = update_config();
     if (!$cfg) return ['error' => 'Updates are not configured on this server.'];
     if (!class_exists('ZipArchive')) return ['error' => 'The PHP ZipArchive extension is required for updates.'];
+
+    // Fail fast if PHP plainly cannot write the app directory — better to say so
+    // now than to download the whole release and discover it on the first file.
+    $probe = _app_root() . '/.update-write-probe-' . bin2hex(random_bytes(4));
+    if (@file_put_contents($probe, 'x') === false) {
+        return ['error' => 'The application directory is not writable by PHP, so an update cannot be installed.'];
+    }
+    @unlink($probe);
 
     // Record the sha we're about to deploy (before touching anything).
     $chk = update_check();
@@ -236,9 +290,26 @@ function update_apply() {
     }
 
     // 5) Copy over the app root (per-file-atomic), skipping data/ and repo metadata.
+    //    Every replaced file is backed up first and every change journalled, so a
+    //    failure part-way through is undone completely rather than leaving the app
+    //    running half of one release and half of another.
     $exclude = ['data', '.git', '.github', '.gitignore', 'tests', 'cgi-bin', '.well-known'];
-    [$copied, $cErr] = _update_copy_tree($newRoot, _app_root(), $exclude);
-    if ($cErr) { _update_rrmdir($work); return ['error' => 'Update stopped: ' . $cErr]; }
+    $backup  = $work . '/backup';
+    if (!@mkdir($backup, 0700, true)) {
+        _update_rrmdir($work);
+        return ['error' => 'Could not create the backup workspace — is data/ writable?'];
+    }
+    $journal = [];
+    [$copied, $cErr] = _update_copy_tree($newRoot, _app_root(), $exclude, $backup, $journal);
+    if ($cErr) {
+        $failed = _update_rollback($journal, $backup, _app_root());
+        _update_rrmdir($work);
+        if ($failed > 0) {
+            return ['error' => 'Update failed (' . $cErr . ') and ' . $failed . ' file(s) could not be restored. '
+                             . 'Re-run the update to try again, or restore from your host backup.'];
+        }
+        return ['error' => 'Update stopped and was rolled back — the app is unchanged and still working. Reason: ' . $cErr];
+    }
 
     // 6) Record the deployed version + clean up.
     @file_put_contents(_update_version_file(), json_encode(['sha' => $targetSha, 'applied_at' => gmdate('c')]));
