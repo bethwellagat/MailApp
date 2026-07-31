@@ -293,6 +293,21 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 </div>
                 <span class="settings-status" id="notifyStatus"></span>
             </div>
+
+            <header class="settings-section-header" style="margin-top:24px">
+                <h2>Privacy</h2>
+                <p class="settings-section-desc">Images hosted on the sender's server act as read receipts — loading one reveals when you opened the message, your IP address and that your address is live. They stay blocked until you choose to load them, with a one-click button on each message.</p>
+            </header>
+            <div class="settings-card">
+                <div class="settings-toggles">
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="remoteImagesToggle" <?= !empty($prefs['remote_images']) ? 'checked' : '' ?>>
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-label">Always load remote images</span>
+                    </label>
+                </div>
+                <span class="settings-status" id="remoteImagesStatus"></span>
+            </div>
         </section>
 
         <section id="signature" class="settings-section">
@@ -854,6 +869,32 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             statusEl.textContent = 'Updated ' + (d.files || 0) + ' files to ' + short(d.version) + '. Reloading…';
             applyBtn.hidden = true;
             setTimeout(() => location.reload(), 1500);
+        });
+    })();
+
+    /* Remote-images toggle. Off (the default) blocks them until asked. */
+    (function () {
+        const t = $('remoteImagesToggle');
+        if (!t) return;
+        const s = $('remoteImagesStatus');
+        t.addEventListener('change', async () => {
+            const fd = new FormData();
+            fd.append('remote_images', t.checked ? 'true' : 'false');
+            s.textContent = ''; s.className = 'settings-status';
+            try {
+                const r = await fetch('ajax/prefs.php', {
+                    method: 'POST', body: fd, credentials: 'same-origin',
+                    headers: { 'X-CSRF-Token': window.__CSRF__ },
+                });
+                const d = await r.json();
+                if (d.error) { s.textContent = d.error; s.className = 'settings-status error'; t.checked = !t.checked; return; }
+                s.textContent = t.checked ? 'Remote images will load automatically' : 'Remote images will be blocked';
+                s.className = 'settings-status success';
+                setTimeout(() => { s.textContent = ''; }, 2600);
+            } catch (e) {
+                s.textContent = 'Save failed: ' + e.message; s.className = 'settings-status error';
+                t.checked = !t.checked;
+            }
         });
     })();
 

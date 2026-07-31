@@ -29,6 +29,7 @@ function default_prefs() {
         'theme'               => 'system',  // system | light | dark
         'notifications'       => false,     // desktop new-mail notifications
         'display_name'        => '',        // From-name override, editable in Settings (empty = use login value)
+        'remote_images'       => false,     // false = block remote images until asked (stops sender read-tracking)
     ];
 }
 

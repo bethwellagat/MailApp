@@ -181,6 +181,110 @@
         return tmp.textContent.replace(/\s+/g, ' ').trim().slice(0, 140);
     }
 
+    /* ---------- Remote image blocking ----------
+     * A remote image in an email is a read receipt: fetching it tells the sender
+     * the moment you opened the message, your IP and your user agent, and proves
+     * the address is live. Every mainstream mail client blocks them by default,
+     * with a one-click override — so do we.
+     *
+     * Deliberately done in the BROWSER, not in sanitize_html(): msg.body is also
+     * the source for draft resume, reply and forward, so rewriting it server-side
+     * would save placeholder markup into the user's drafts and transmit it to
+     * recipients. Here the stored body stays pristine and only what is displayed
+     * is altered.
+     */
+    const BLOCKED_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+    // True only for URLs that would hit a THIRD-PARTY server. cid:/data:/blob:
+    // are embedded, and relative or same-origin URLs are our own attachment
+    // endpoint (that is how inline images are served), so none of those leak.
+    function isRemoteUrl(u) {
+        if (!u) return false;
+        const s = String(u).trim();
+        if (/^(cid:|data:|blob:|#)/i.test(s)) return false;
+        try { return new URL(s, location.href).origin !== location.origin; }
+        catch (e) { return false; }
+    }
+
+    // Returns { html, blocked }. Never fetches anything: a DOMParser document is
+    // inert, whereas assigning to a detached div's innerHTML would start loading
+    // every image before we could strip it.
+    function deferRemoteImages(html) {
+        if (!html) return { html: html || '', blocked: 0 };
+        if (window.__PREFS__ && window.__PREFS__.remote_images) return { html: html, blocked: 0 };
+        let doc;
+        try { doc = new DOMParser().parseFromString(html, 'text/html'); }
+        catch (e) { return { html: html, blocked: 0 }; }
+        let n = 0;
+        doc.querySelectorAll('img[src]').forEach(img => {
+            const src = img.getAttribute('src');
+            if (!isRemoteUrl(src)) return;
+            img.setAttribute('data-blocked-src', src);
+            img.setAttribute('src', BLOCKED_PIXEL);
+            img.classList.add('img-blocked');
+            n++;
+        });
+        doc.querySelectorAll('img[srcset]').forEach(img => {
+            img.setAttribute('data-blocked-srcset', img.getAttribute('srcset'));
+            img.removeAttribute('srcset');
+            // Count it only when the same <img> wasn't already counted above, so a
+            // srcset-only image still raises the notice instead of being silently
+            // stripped with no way for the user to load it.
+            if (!img.hasAttribute('data-blocked-src')) n++;
+        });
+        // CSS background images track just as well as <img>.
+        doc.querySelectorAll('[style]').forEach(el => {
+            const st = el.getAttribute('style');
+            if (!st || !/url\s*\(/i.test(st)) return;
+            const cleaned = st.replace(/url\s*\(\s*(['"]?)([^)'"]*)\1\s*\)/gi,
+                (whole, q, u) => isRemoteUrl(u) ? 'none' : whole);
+            if (cleaned !== st) {
+                el.setAttribute('data-blocked-style', st);
+                el.setAttribute('style', cleaned);
+                n++;
+            }
+        });
+        return { html: doc.body.innerHTML, blocked: n };
+    }
+
+    function remoteImageNotice(n) {
+        if (!n) return '';
+        return '<div class="img-block-bar">' +
+                   '<svg class="icon" width="14" height="14"><use href="#ic-info"/></svg>' +
+                   '<span class="img-block-text">' +
+                       (n === 1 ? '1 remote image was blocked' : n + ' remote images were blocked') +
+                       ' to stop the sender seeing when you opened this message.' +
+                   '</span>' +
+                   '<button type="button" class="img-block-load" data-load-images="1">Load images</button>' +
+               '</div>';
+    }
+
+    /** Body HTML prepared for display: notice bar + images neutralised. */
+    function renderMessageBody(html) {
+        const r = deferRemoteImages(html);
+        return remoteImageNotice(r.blocked) + r.html;
+    }
+
+    /** Restore everything deferred inside one message body. */
+    function loadBlockedImages(container) {
+        if (!container) return;
+        container.querySelectorAll('img[data-blocked-src]').forEach(img => {
+            img.setAttribute('src', img.getAttribute('data-blocked-src'));
+            img.removeAttribute('data-blocked-src');
+            img.classList.remove('img-blocked');
+        });
+        container.querySelectorAll('img[data-blocked-srcset]').forEach(img => {
+            img.setAttribute('srcset', img.getAttribute('data-blocked-srcset'));
+            img.removeAttribute('data-blocked-srcset');
+        });
+        container.querySelectorAll('[data-blocked-style]').forEach(el => {
+            el.setAttribute('style', el.getAttribute('data-blocked-style'));
+            el.removeAttribute('data-blocked-style');
+        });
+        const bar = container.querySelector('.img-block-bar');
+        if (bar) bar.remove();
+    }
+
     /* ---------- Outbox (client-side virtual folder) ----------
      * The outbox (data/outbox/, per account) holds messages waiting to go out:
      * the brief Undo-Send hold, Scheduled sends, and anything that failed and is
@@ -1714,7 +1818,7 @@
                 : '';
             const hasBody    = msg.has_body && msg.body;
             const loadedAttr = hasBody ? ' data-loaded="true"' : '';
-            const bodyHtml   = hasBody ? msg.body : '';
+            const bodyHtml   = hasBody ? renderMessageBody(msg.body) : '';
             const attsHtml   = hasBody ? renderMsgAttachments(msg) : '';
             const inviteHtml = renderInviteCard(msg);
             const badgeHtml  = trustBadge(msg.trust);
@@ -2460,7 +2564,7 @@
             tasks.push((async () => {
                 const data = await apiGet('message', withAcct({ folder, uid }, state.currentMsgAcct));
                 if (!data.error) {
-                    body.innerHTML = data.body || '';
+                    body.innerHTML = renderMessageBody(data.body || '');
                     body.dataset.loaded = 'true';
                 }
             })());
@@ -3672,6 +3776,16 @@
         $('unsubscribeBtn').addEventListener('click', handleUnsubscribe);
 
         $('readThread').addEventListener('click', async (e) => {
+            // "Load images" on the blocked-remote-images bar: reveal them for THIS
+            // message only (the choice is deliberately not remembered per sender —
+            // Settings has a global toggle for people who don't want the prompt).
+            const loadImgs = e.target.closest('[data-load-images]');
+            if (loadImgs) {
+                e.preventDefault();
+                e.stopPropagation();
+                loadBlockedImages(loadImgs.closest('.thread-msg-body'));
+                return;
+            }
             // RSVP button inside an invitation card.
             const rsvpBtn = e.target.closest('.invite-actions [data-rsvp]');
             if (rsvpBtn) {
@@ -3732,7 +3846,7 @@
                 return;
             }
             const msgForAtts = { folder, uid, acct: state.currentMsgAcct, attachments: data.attachments || [], invite: data.invite };
-            body.innerHTML = renderInviteCard(msgForAtts) + renderMsgAttachments(msgForAtts) + (data.body || '');
+            body.innerHTML = renderInviteCard(msgForAtts) + renderMsgAttachments(msgForAtts) + renderMessageBody(data.body || '');
             body.dataset.loaded = 'true';
             if (data.invite && state.thread) {
                 const m = state.thread.find(x => (x.uid | 0) === uid && x.folder === folder);

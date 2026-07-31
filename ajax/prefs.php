@@ -74,6 +74,10 @@ if (isset($_POST['notifications'])) {
     $updates['notifications'] = filter_var($_POST['notifications'], FILTER_VALIDATE_BOOLEAN);
 }
 
+if (isset($_POST['remote_images'])) {
+    $updates['remote_images'] = filter_var($_POST['remote_images'], FILTER_VALIDATE_BOOLEAN);
+}
+
 if (isset($_POST['display_name'])) {
     // This becomes the From-name on every message the user sends, so it must not
     // carry CR/LF (header injection) or control characters. Collapse whitespace,
