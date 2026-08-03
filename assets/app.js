@@ -4103,7 +4103,10 @@
             // Never probe the virtual Outbox against IMAP — fall back to INBOX so
             // new-mail detection keeps working while the Outbox is on screen.
             const cur   = (state.currentFolder && state.currentFolder !== OUTBOX_FOLDER) ? state.currentFolder : 'INBOX';
-            const probe = await apiGet('status', withAcct({ folder: cur }, acct));
+            // poll:1 marks this as a BACKGROUND probe, letting the server serve
+            // several tabs from one IMAP round-trip. Interactive loads deliberately
+            // omit it so they always read live counts.
+            const probe = await apiGet('status', withAcct({ folder: cur, poll: 1 }, acct));
             if (probe && probe.error && probe.network) failed = true; // host unreachable → back off
             const prevCurrent = state.folders.find(f => f.name === state.currentFolder);
             const grew = probe && !probe.error && prevCurrent && probe.total > prevCurrent.total;
@@ -4111,12 +4114,17 @@
             // Refresh all sidebar counts (also updates the tab title + app badge via
             // renderFolders) on the heavy cycle or when the viewed folder grew.
             if (doHeavy || grew) {
-                const data = await apiGet('folders', withAcct({}, acct));
+                const data = await apiGet('folders', withAcct({ poll: 1 }, acct));
                 if (data && !data.error && Array.isArray(data.folders)) {
-                    state.folders = data.folders;
+                    // The account may have changed while this was in flight; only
+                    // write the shared/global view when it is still the one on screen.
+                    const stillCurrent = (viewAcct() || state.primaryAccount || '') === acct;
                     if (acct) state.accountFolders[acct] = data.folders;
-                    renderFolders();
-                    renderMoveDropdown();
+                    if (stillCurrent) {
+                        state.folders = data.folders;
+                        renderFolders();
+                        renderMoveDropdown();
+                    }
                 }
             }
 

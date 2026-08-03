@@ -410,6 +410,53 @@ if (!function_exists('store_lock')) {
     }
 }
 
+if (!function_exists('poll_cache_get')) {
+    /**
+     * Tiny per-account cache for BACKGROUND POLL responses only.
+     *
+     * The status probe and the folder sweep each open their own IMAP connection,
+     * once per open tab per cycle. Five tabs on one account meant five connections
+     * a minute — at ~20-50MB apiece against a 2GB per-account ceiling — to fetch
+     * the identical answer. Caching lets the tabs share one probe.
+     *
+     * Used ONLY when the client marks a request as a background poll (poll=1), so
+     * every user-initiated load — switching folder, refreshing, or reading counts
+     * right after deleting something — still goes straight to the server and can
+     * never show a stale count. With a single tab the TTL is shorter than the poll
+     * interval, so behaviour there is unchanged too; the saving appears exactly in
+     * the multi-tab case that caused the problem.
+     */
+    function _poll_cache_file($email) {
+        $dir = __DIR__ . '/../data/poll';
+        if (!is_dir($dir)) @mkdir($dir, 0700, true);
+        return $dir . '/' . hash('sha256', strtolower(trim((string)$email))) . '-cache.json';
+    }
+
+    function poll_cache_get($email, $key, $ttl) {
+        if (!$email || $ttl <= 0) return null;
+        $d = @json_decode((string) @file_get_contents(_poll_cache_file($email)), true);
+        if (!is_array($d) || !isset($d[$key]) || !is_array($d[$key])) return null;
+        if ((time() - (int)($d[$key]['at'] ?? 0)) > $ttl) return null;
+        return $d[$key]['v'] ?? null;
+    }
+
+    function poll_cache_put($email, $key, $value) {
+        if (!$email) return;
+        $f  = _poll_cache_file($email);
+        $lk = store_lock($f, 300);
+        $d  = @json_decode((string) @file_get_contents($f), true);
+        if (!is_array($d)) $d = [];
+        // Re-insert at the end so the array's own order IS recency; sorting by the
+        // timestamp cannot distinguish entries written in the same second, and the
+        // ties then evicted the newest rather than the oldest.
+        unset($d[$key]);
+        $d[$key] = ['at' => time(), 'v' => $value];
+        if (count($d) > 24) $d = array_slice($d, -24, null, true); // one entry per folder viewed
+        atomic_write_json($f, $d);
+        store_unlock($lk);
+    }
+}
+
 if (!function_exists('gen_uuid')) {
     /** RFC 4122 version-4 UUID, e.g. "f47ac10b-58cc-4372-a567-0e02b2c3d479". */
     function gen_uuid() {

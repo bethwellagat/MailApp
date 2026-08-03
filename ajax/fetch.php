@@ -797,7 +797,11 @@ function parse_thread_ids($rawHeaders) {
  */
 function find_thread_uids_in_folder($box, $folder, $needle, &$diag = null) {
     static $overviewCache = [];
-    $MAX_SCAN = 3000;
+    // 1200 rather than 3000: this overview is fetched and held in memory for EVERY
+    // folder a thread lookup touches, on a host with a 2GB per-account ceiling.
+    // Conversations that reach back beyond the last ~1200 messages in a folder are
+    // vanishingly rare, and the cost is paid on every message open.
+    $MAX_SCAN = 1200;
 
     if (!isset($overviewCache[$folder])) {
         $check = @imap_check($box);
@@ -942,21 +946,43 @@ if ($action === 'status') {
     // back to the full `folders` refresh when a change is seen (or periodically).
     $target = ($folder !== '') ? $folder : 'INBOX';
     if (!valid_mailbox_name($target)) fail('Invalid folder', 400);
+
+    // Background polls from several tabs share one probe (see poll_cache_get).
+    // Keyed BY FOLDER, because different tabs can be looking at different ones.
+    // Interactive requests never pass poll=1, so they always get live data.
+    $isPoll   = !empty($_GET['poll']);
+    $cacheKey = 'status:' . $target;
+    if ($isPoll) {
+        $hit = poll_cache_get($_SESSION['email'], $cacheKey, 30);
+        if (is_array($hit)) ok($hit + ['cached' => true]);
+    }
+
     $ref  = imap_ref();
     $mbox = open_box('INBOX', OP_HALFOPEN);
     if (!$mbox) fail('Could not connect to mail server');
     $st = @imap_status($mbox, $ref . $target, SA_UNSEEN | SA_MESSAGES | SA_UIDNEXT);
     @imap_close($mbox);
     if (!$st) fail('Could not read folder status');
-    ok([
+    $payload = [
         'folder'  => $target,
         'unread'  => (int)($st->unseen ?? 0),
         'total'   => (int)($st->messages ?? 0),
         'uidnext' => (int)($st->uidnext ?? 0),
-    ]);
+    ];
+    if ($isPoll) poll_cache_put($_SESSION['email'], $cacheKey, $payload);
+    ok($payload);
 }
 
 if ($action === 'folders') {
+    // This is the expensive one: an imap_status per folder. Background polls from
+    // multiple tabs share a single sweep; interactive refreshes (no poll=1) always
+    // run live, so counts update immediately after the user does something.
+    $isPoll = !empty($_GET['poll']);
+    if ($isPoll) {
+        $hit = poll_cache_get($_SESSION['email'], 'folders', 60);
+        if (is_array($hit)) ok($hit + ['cached' => true]);
+    }
+
     $ref  = imap_ref();
     $mbox = open_box('INBOX', OP_HALFOPEN);
     if (!$mbox) fail('Could not connect to mail server');
@@ -995,7 +1021,9 @@ if ($action === 'folders') {
         return $aw === $bw ? strcasecmp($a['name'], $b['name']) : $aw - $bw;
     });
 
-    ok(['folders' => $folders, 'delimiter' => $delim]);
+    $payload = ['folders' => $folders, 'delimiter' => $delim];
+    if ($isPoll) poll_cache_put($_SESSION['email'], 'folders', $payload);
+    ok($payload);
 }
 
 if ($action === 'messages') {
