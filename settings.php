@@ -215,7 +215,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     <div class="settings-row-label">Email address</div>
                     <div class="settings-row-value mono"><?= h($email) ?></div>
                 </div>
-                <div class="settings-row">
+                <div class="settings-row settings-row-stack">
                     <div class="settings-row-label">
                         <label for="displayNameInput">Display name</label>
                     </div>

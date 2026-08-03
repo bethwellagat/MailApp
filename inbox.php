@@ -57,7 +57,7 @@ $prefs        = load_prefs($email);
 <!-- Inter is self-hosted via @font-face in assets/style.css (no external font CDN). -->
 <link rel="stylesheet" href="assets/style.css?v=<?= @filemtime(__DIR__.'/assets/style.css') ?>">
 </head>
-<body>
+<body class="mail-page">
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <defs>

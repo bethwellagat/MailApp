@@ -5235,6 +5235,16 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
 .settings-page .cal-field-label { font-size: 13px; color: var(--ip-label-2); }
 .settings-page .settings-inline-edit { justify-content: flex-end; }
 .settings-page .settings-inline-input { max-width: 320px; text-align: right; }
+/* A row holding a text field plus a Save button needs more width than the value
+   column gets in the two-column card layout (~150px), so the button wrapped
+   below the field and ended up sitting beside the label instead of after it.
+   These rows put the label on its own line and give the control the full card
+   width — the same thing iPadOS Settings does when a control won't fit inline. */
+.settings-page .settings-row-stack { flex-direction: column; align-items: stretch; gap: 8px; }
+.settings-page .settings-row-stack .settings-row-label { flex: none; }
+.settings-page .settings-row-stack .settings-inline-edit { justify-content: flex-start; }
+.settings-page .settings-row-stack .settings-inline-input { text-align: left; }
+.settings-page .settings-row-stack .settings-inline-hint { text-align: left; }
 .settings-page .settings-inline-hint { font-size: 13px; color: var(--ip-label-2); margin-top: 6px; text-align: right; }
 
 /* ---- buttons ---- */
@@ -5560,3 +5570,639 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
 /* ---- tighter vertical rhythm between groups ---- */
 .settings-page .settings-section-header { margin: 20px 0 8px; }
 .settings-page .settings-section { margin-bottom: 20px; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INBOX — iPadOS Mail design language
+   ═══════════════════════════════════════════════════════════════════════════
+   Scoped to .mail-page, exactly as the Settings block is scoped to
+   .settings-page, so the two never bleed into each other and either can be
+   reverted on its own.
+
+   Modelled on Mail for iPadOS: translucent chrome, a grouped sidebar with
+   colour-coded icon tiles, list rows led by an unread dot with the time set to
+   the right, and a filled blue selection. Every class the JS touches is kept —
+   this restyles, it does not restructure.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+.mail-page {
+  --m-bg:          #f2f2f7;   /* systemGroupedBackground */
+  --m-surface:     #ffffff;
+  --m-sidebar:     #ececf0;
+  --m-list:        #ffffff;
+  --m-sep:         rgba(60, 60, 67, 0.22);
+  --m-label:       #000000;
+  /* Apple's secondaryLabel/tertiaryLabel are 62% and 34% black, which land at
+     3.4:1 and 1.9:1 on white — below the 4.5:1 this app committed to in the
+     accessibility pass. These are the same greys at AA-safe darkness (6.4:1 and
+     5.1:1); at 12px the difference is barely perceptible next to the win. */
+  --m-label-2:     #5f5f63;
+  --m-label-3:     #6d6d72;
+  /* Deeper than systemBlue #007AFF, which is only 4.0:1 on white and 3.8:1 on
+     the grouped grey the toolbar sits on — tinted toolbar labels would miss AA.
+     This clears 4.5:1 on both, and white-on-blue for the filled controls at
+     5.4:1, while still reading as iOS blue. */
+  --m-blue:        #0068cc;
+  /* Same blue in light mode. It is a separate token because dark mode needs a
+     LIGHTER blue for tinted text on black and a DARKER one behind white text —
+     one value cannot clear AA in both roles. */
+  --m-blue-fill:   #0068cc;
+  --m-red:         #ff3b30;
+  --m-orange:      #ff9500;
+  --m-green:       #34c759;
+  --m-fill:        rgba(120, 120, 128, 0.12);
+  --m-fill-2:      rgba(120, 120, 128, 0.20);
+  --m-radius:      10px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
+               "Segoe UI", var(--font-ui, Inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background: var(--m-bg);
+}
+html.theme-dark .mail-page {
+  --m-bg:      #000000;
+  --m-surface: #1c1c1e;
+  --m-sidebar: #1c1c1e;
+  --m-list:    #000000;
+  --m-sep:     rgba(84, 84, 88, 0.55);
+  --m-label:   #ffffff;
+  --m-label-2: rgba(235, 235, 245, 0.72);
+  /* 34% white is 2.6:1 on black; 58% clears AA on both #000 and #1C1C1E. */
+  --m-label-3: rgba(235, 235, 245, 0.58);
+  --m-blue:    #0a84ff;      /* tinted text on black — 5.8:1 */
+  --m-blue-fill: #0a6ecd;    /* behind white text — 5.1:1 */
+  --m-red:     #ff453a;
+  --m-orange:  #ff9f0a;
+  --m-green:   #30d158;
+  --m-fill:    rgba(120, 120, 128, 0.24);
+  --m-fill-2:  rgba(120, 120, 128, 0.32);
+}
+/* The reading pane stays white in dark mode — email HTML is authored for white
+   backgrounds — so the surrounding chrome must stay light with it. The app
+   already does this for the --c-* tokens a few hundred lines up; the --m-*
+   tokens need the same treatment or the subject renders white-on-white and the
+   empty-state placeholder drops to 1.18:1. Re-declaring them here flips every
+   descendant rule at once, so no reading-pane rule has to special-case dark. */
+html.theme-dark .mail-page .reading-pane {
+  --m-surface: #ffffff;
+  --m-sep:     rgba(60, 60, 67, 0.22);
+  --m-label:   #000000;
+  --m-label-2: #5f5f63;
+  --m-label-3: #6d6d72;
+  --m-blue:    #0068cc;
+  --m-blue-fill: #0068cc;
+  --m-red:     #ff3b30;
+  --m-orange:  #ff9500;
+  --m-green:   #34c759;
+  --m-fill:    rgba(120, 120, 128, 0.12);
+  --m-fill-2:  rgba(120, 120, 128, 0.20);
+}
+
+/* ---- chrome: translucent toolbars ---- */
+.mail-page .topbar {
+  background: color-mix(in srgb, var(--m-bg) 78%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--m-sep);
+  box-shadow: none;
+}
+.mail-page .topbar-logo-text { font-weight: 600; letter-spacing: -0.01em; color: var(--m-label); }
+.mail-page .topbar-logo-mark { background: var(--m-blue-fill); color: #fff; border-radius: 7px; }
+.mail-page .topbar-search-input {
+  background: var(--m-fill);
+  border: 0;
+  border-radius: 10px;
+  height: 34px;
+  font-size: 14px;
+  color: var(--m-label);
+}
+.mail-page .topbar-search-input::placeholder { color: var(--m-label-3); }
+.mail-page .topbar-search-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-blue) 22%, transparent);
+}
+.mail-page .topbar-icon-light {
+  border: 0; background: transparent; color: var(--m-blue);
+  border-radius: 8px; width: 32px; height: 32px;
+}
+.mail-page .topbar-icon-light:hover { background: var(--m-fill); }
+.mail-page .topbar-user { border-radius: 999px; }
+.mail-page .topbar-user:hover { background: var(--m-fill); }
+.mail-page .topbar-user-avatar { background: var(--m-blue-fill); color: #fff; }
+
+.mail-page .actionbar {
+  background: color-mix(in srgb, var(--m-bg) 78%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--m-sep);
+  gap: 4px;
+  padding: 6px 12px;
+}
+.mail-page .ab-btn {
+  border: 0;
+  background: transparent;
+  color: var(--m-blue);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 400;
+  padding: 7px 10px;
+}
+.mail-page .ab-btn:hover:not(:disabled) { background: var(--m-fill); }
+.mail-page .ab-btn:disabled { color: var(--m-label-3); opacity: 1; }
+.mail-page .ab-primary {
+  background: var(--m-blue-fill);
+  color: #fff;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 7px 15px;
+}
+.mail-page .ab-primary:hover { background: var(--m-blue-fill); opacity: 0.88; }
+.mail-page .ab-divider { background: var(--m-sep); }
+
+/* ---- sidebar ---- */
+.mail-page .folder-pane {
+  background: var(--m-sidebar);
+  border-right: 0.5px solid var(--m-sep);
+}
+.mail-page .folder-pane-header,
+.mail-page .folder-pane-footer { border-color: var(--m-sep); }
+.mail-page .folder-list { padding: 8px; }
+.mail-page .folder-item {
+  border-radius: 9px;
+  min-height: 38px;
+  font-size: 14px;
+  color: var(--m-label);
+  gap: 11px;
+  margin-bottom: 1px;
+}
+.mail-page .folder-item:hover { background: var(--m-fill); }
+.mail-page .folder-item.active {
+  background: var(--m-blue-fill);
+  color: #fff;
+  font-weight: 500;
+}
+/* No capsule on the selected row: a 28%-white pill over the blue lifts the
+   backdrop to 3.3:1 against its own white digits. Mail drops the pill here and
+   lets the plain white count sit on the blue (5.5:1). */
+.mail-page .folder-item.active .folder-badge { background: transparent; color: #fff; }
+/* Colour-coded icon tiles, keyed off the type the JS already stamps on each row. */
+.mail-page .folder-item .folder-icon {
+  box-sizing: content-box;
+  width: 15px; height: 15px;
+  padding: 6px;
+  border-radius: 7px;
+  background: #8e8e93;
+  color: #fff;
+  flex: 0 0 auto;
+}
+.mail-page .folder-item[data-folder-type="inbox"]   .folder-icon { background: #007aff; }
+.mail-page .folder-item[data-folder-type="sent"]    .folder-icon { background: #34c759; }
+.mail-page .folder-item[data-folder-type="drafts"]  .folder-icon { background: #ff9500; }
+.mail-page .folder-item[data-folder-type="trash"]   .folder-icon { background: #ff3b30; }
+/* systemBrown, not systemPink: pink sits a few degrees from the systemRed used
+   for Trash and the two tiles read as the same colour at 29pt. */
+.mail-page .folder-item[data-folder-type="spam"]    .folder-icon { background: #a2845e; }
+.mail-page .folder-item[data-folder-type="archive"] .folder-icon { background: #5856d6; }
+.mail-page .folder-item[data-folder-type="later"]   .folder-icon { background: #30b0c7; }
+.mail-page .folder-item[data-folder-type="outbox"]  .folder-icon { background: #af52de; }
+.mail-page .folder-badge {
+  /* --m-fill, not --m-fill-2: the heavier 20% grey darkens the pill enough that
+     the secondary-label digits inside it land at 4.3:1. The lighter pill reads
+     the same and clears AA. */
+  background: var(--m-fill);
+  color: var(--m-label-2);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 7px;
+}
+.mail-page .acct-group-header { border-radius: 8px; }
+.mail-page .acct-group-header:hover { background: var(--m-fill); }
+.mail-page .acct-name { font-size: 13px; font-weight: 600; color: var(--m-label); }
+.mail-page .acct-email { font-size: 11px; color: var(--m-label-2); }
+.mail-page .acct-add { color: var(--m-blue); border-radius: 8px; }
+.mail-page .acct-add:hover { background: var(--m-fill); }
+
+/* ---- message list ---- */
+.mail-page .list-pane { background: var(--m-list); border-right: 0.5px solid var(--m-sep); }
+.mail-page .list-folder-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--m-label);
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+.mail-page .list-filters { border-bottom: 0.5px solid var(--m-sep); gap: 6px; }
+.mail-page .list-filter-chip {
+  border: 0;
+  background: var(--m-fill);
+  color: var(--m-label-2);
+  border-radius: 999px;
+  font-size: 13px;
+  padding: 5px 12px;
+}
+.mail-page .list-filter-chip:hover { background: var(--m-fill-2); }
+.mail-page .list-filter-chip.active { background: var(--m-blue-fill); color: #fff; font-weight: 500; }
+.mail-page .list-group-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--m-label-2);
+  background: transparent;
+  padding: 14px 16px 4px;
+  border: 0;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* iOS Mail row: unread dot, sender, time right, subject, two-line preview. */
+.mail-page .msg-item {
+  position: relative;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px 11px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.mail-page .msg-item::after {
+  content: '';
+  position: absolute;
+  left: 58px; right: 0; bottom: 0;
+  height: 0.5px;
+  background: var(--m-sep);
+}
+.mail-page .msg-item:last-child::after { display: none; }
+.mail-page .msg-item:hover { background: var(--m-fill); }
+.mail-page .msg-item.active {
+  background: var(--m-blue-fill);
+  color: #fff;
+}
+.mail-page .msg-item.active .msg-from,
+.mail-page .msg-item.active .msg-subject { color: #fff; }
+.mail-page .msg-item.active .msg-preview,
+/* Opaque white, not 78%: over the blue fill the translucent version lands at
+   3.9:1. The time is de-emphasised by size and weight instead. */
+.mail-page .msg-item.active .msg-time { color: #fff; }
+.mail-page .msg-item.active::after { background: transparent; }
+.mail-page .msg-item.active .msg-dot { background: #fff; }
+.mail-page .msg-item.selected { background: color-mix(in srgb, var(--m-blue) 16%, transparent); }
+
+.mail-page .msg-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: transparent;
+  margin-top: 6px;
+  flex: 0 0 auto;
+}
+.mail-page .msg-item.unread .msg-dot { background: var(--m-blue); }
+.mail-page .msg-avatar {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 600;
+}
+.mail-page .msg-from {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--m-label);
+  letter-spacing: -0.01em;
+}
+.mail-page .msg-item.unread .msg-from { font-weight: 700; }
+.mail-page .msg-time { font-size: 12.5px; color: var(--m-label-2); }
+.mail-page .msg-subject {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--m-label);
+  margin-top: 1px;
+}
+.mail-page .msg-item.unread .msg-subject { font-weight: 500; }
+.mail-page .msg-preview {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--m-label-2);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.mail-page .msg-indicator { color: var(--m-label-3); }
+.mail-page .msg-indicator-pin { color: var(--m-orange); }
+.mail-page .msg-thread-count {
+  background: var(--m-fill-2);
+  color: var(--m-label-2);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 0 6px;
+}
+
+/* ---- reading pane ---- */
+.mail-page .reading-pane { background: var(--m-surface); }
+.mail-page .reading-actions {
+  background: color-mix(in srgb, var(--m-surface) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--m-sep);
+  gap: 4px;
+}
+.mail-page .reading-actions button,
+.mail-page .read-btn {
+  border: 0; background: transparent; color: var(--m-blue);
+  border-radius: 8px;
+}
+.mail-page .reading-actions button:hover,
+.mail-page .read-btn:hover { background: var(--m-fill); }
+.mail-page .reading-subject {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  color: var(--m-label);
+}
+.mail-page .thread-msg { border-color: var(--m-sep); }
+.mail-page .thread-msg-from-name { font-weight: 600; color: var(--m-label); }
+.mail-page .thread-msg-from-email,
+.mail-page .thread-msg-to,
+.mail-page .thread-msg-date { color: var(--m-label-2); font-size: 12.5px; }
+/* No colour here on purpose: the base rule uses --c-text-secondary, which the
+   pane's existing dark-mode token block already keeps legible on the white
+   reading surface. */
+.mail-page .reading-empty-text { font-size: 15px; }
+
+/* ---- compose: an iOS sheet ---- */
+.mail-page .compose-modal {
+  border-radius: 14px 14px 0 0;
+  border: 0.5px solid var(--m-sep);
+  box-shadow: 0 -8px 40px rgba(0,0,0,0.22);
+  overflow: hidden;
+}
+.mail-page .compose-header {
+  background: color-mix(in srgb, var(--m-surface) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--m-sep);
+}
+.mail-page .compose-title { font-size: 15px; font-weight: 600; color: var(--m-label); }
+.mail-page .compose-hdr-btn { color: var(--m-label-2); border-radius: 7px; }
+.mail-page .compose-hdr-btn:hover { background: var(--m-fill); }
+.mail-page .compose-row { border-bottom: 0.5px solid var(--m-sep); }
+.mail-page .compose-row label,
+.mail-page .compose-label { color: var(--m-label-2); font-size: 14px; }
+.mail-page .compose-row input { font-size: 14px; color: var(--m-label); }
+.mail-page .compose-send {
+  background: var(--m-blue-fill);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  font-weight: 500;
+}
+.mail-page .compose-send:hover { opacity: 0.88; }
+.mail-page .compose-tool { border-radius: 7px; color: var(--m-label); }
+.mail-page .compose-tool:hover { background: var(--m-fill); }
+.mail-page .compose-tool.active { background: var(--m-fill-2); color: var(--m-blue); }
+
+/* ---- focus ring ---- */
+.mail-page a:focus-visible,
+.mail-page button:focus-visible,
+.mail-page input:focus-visible,
+.mail-page [role="option"]:focus-visible {
+  outline: 2px solid var(--m-blue);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* Unread rows: the previous design tinted subject/time/count brand-blue. In Mail
+   the unread cue is the blue DOT plus a bolder sender — the text itself stays
+   label-coloured, or every unread row reads as a link. These selectors carry the
+   .msg-item.unread qualifier so they outrank the original rules. */
+.mail-page .msg-item.unread .msg-subject { color: var(--m-label); }
+.mail-page .msg-item.unread .msg-time { color: var(--m-label-2); font-weight: 400; }
+.mail-page .msg-item.unread .msg-thread-count { color: var(--m-label-2); background: var(--m-fill-2); }
+.mail-page .msg-item.active.unread .msg-subject { color: #fff; }
+.mail-page .msg-item.active.unread .msg-time { color: #fff; }
+
+/* ---- typography: no mono, no all-caps ----
+   The previous design leaned on a monospace face and letter-spaced ALL CAPS for
+   labels. iPadOS uses one face (SF) at every size and reserves capitals for
+   actual acronyms, so a folder called "Folders" reads as "Folders". Undoing it
+   here rather than in the markup keeps the strings translatable and leaves the
+   Settings page — which is scoped separately — exactly as it is. */
+.mail-page .list-folder-name,
+.mail-page .folder-pane-title,
+.mail-page .cal-pane-toggle,
+.mail-page .cal-field-label,
+.mail-page .acct-field-label,
+.mail-page .rule-section-label,
+.mail-page .shortcuts-group h3 {
+  text-transform: none;
+  letter-spacing: -0.01em;
+  font-family: inherit;
+}
+.mail-page .folder-pane-title,
+.mail-page .cal-pane-toggle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-label-2);
+}
+.mail-page .cal-field-label,
+.mail-page .acct-field-label,
+.mail-page .rule-section-label,
+.mail-page .shortcuts-group h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--m-label-2);
+}
+.mail-page .folder-pane-account-email,
+.mail-page .pager-info,
+.mail-page .reading-thread-summary,
+.mail-page .app-footer {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+.mail-page .pager-info { font-size: 12px; color: var(--m-label-2); }
+.mail-page .folder-pane-account-email { font-size: 13px; color: var(--m-label); }
+.mail-page .reading-thread-summary {
+  font-size: 13px;
+  color: var(--m-label-2);
+  border-bottom: 0.5px solid var(--m-sep);
+}
+
+/* The footer pill hard-coded a white background, so on the black Mail
+   background it showed as a bright chip. Track the surface token instead. */
+.mail-page .app-footer {
+  font-size: 11px;
+  background: color-mix(in srgb, var(--m-surface) 82%, transparent);
+  border: 0.5px solid var(--m-sep);
+  color: var(--m-label-3);
+  box-shadow: none;
+}
+.mail-page .app-footer strong { color: var(--m-label-2); font-weight: 600; }
+.mail-page .app-footer a { color: var(--m-blue); }
+
+/* ---- dialogs: iOS sheets ----
+   Four dialog families share one look: a heavier scrim, a 14pt card, hairline
+   rules, and a filled blue confirm. Listed rather than wildcarded so a future
+   dialog opts in deliberately. */
+.mail-page .cal-modal-backdrop,
+.mail-page .shortcuts-modal-backdrop,
+.mail-page .acct-modal-backdrop {
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.mail-page .cal-modal-panel,
+.mail-page .shortcuts-modal-panel,
+.mail-page .acct-modal-card {
+  background: var(--m-surface);
+  border: 0.5px solid var(--m-sep);
+  border-radius: 14px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
+}
+.mail-page .cal-modal-header,
+.mail-page .shortcuts-modal-header,
+.mail-page .acct-modal-header {
+  border-bottom: 0.5px solid var(--m-sep);
+}
+.mail-page .cal-modal-footer { border-top: 0.5px solid var(--m-sep); }
+.mail-page .cal-modal-title,
+.mail-page .shortcuts-modal-title,
+.mail-page .acct-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--m-label);
+}
+.mail-page .cal-modal-close,
+.mail-page .shortcuts-modal-close,
+.mail-page .acct-modal-close {
+  border-radius: 999px;
+  color: var(--m-label-2);
+}
+.mail-page .cal-modal-close:hover,
+.mail-page .shortcuts-modal-close:hover,
+.mail-page .acct-modal-close:hover {
+  background: var(--m-fill);
+  color: var(--m-label);
+}
+.mail-page .cal-modal-btn {
+  border: 0;
+  border-radius: 999px;
+  background: var(--m-fill);
+  color: var(--m-blue);
+  font-weight: 500;
+}
+.mail-page .cal-modal-btn:hover { background: var(--m-fill-2); }
+.mail-page .cal-modal-btn-primary {
+  background: var(--m-blue-fill);
+  color: #fff;
+}
+.mail-page .cal-modal-btn-primary:hover { background: var(--m-blue-fill); opacity: 0.88; }
+.mail-page .cal-modal-btn-danger { background: var(--m-fill); color: var(--m-red); }
+.mail-page .cal-modal-btn-danger:hover { background: var(--m-fill-2); color: var(--m-red); }
+
+/* ---- sidebar: account groups ----
+   The current account was marked with a brand-tinted bar and brand-coloured
+   name. In Mail the selected mailbox is the only blue thing in the sidebar, so
+   the account header stays neutral and carries its weight in type instead. */
+.mail-page .acct-group { border-bottom: 0.5px solid var(--m-sep); }
+.mail-page .acct-group.current > .acct-group-header { background: transparent; }
+.mail-page .acct-group-header:hover { background: var(--m-fill); }
+.mail-page .acct-group-header { border-radius: 8px; }
+.mail-page .acct-name,
+.mail-page .acct-group.current > .acct-group-header .acct-name {
+  color: var(--m-label);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.mail-page .acct-email {
+  color: var(--m-label-2);
+  font-size: 12px;
+  font-family: inherit;
+  letter-spacing: 0;
+}
+.mail-page .acct-group.current > .acct-group-header .acct-unread { color: var(--m-blue); }
+.mail-page .acct-chev { color: var(--m-label-3); }
+.mail-page .acct-folders-loading { color: var(--m-label-3); font-size: 12px; }
+.mail-page .acct-add { color: var(--m-blue); font-size: 13px; border-radius: 8px; }
+.mail-page .acct-add:hover { background: var(--m-fill); }
+.mail-page .acct-add .icon { color: var(--m-blue); }
+.mail-page .folder-pane-add,
+.mail-page .cal-pane-add { border-radius: 999px; color: var(--m-blue); }
+.mail-page .folder-pane-add:hover,
+.mail-page .cal-pane-add:hover { background: var(--m-fill); color: var(--m-blue); }
+
+/* ---- sidebar: mini calendar ----
+   Today was a rounded-square brand chip; iOS draws it as a filled circle. */
+.mail-page .cal-mini-day.today .cal-mini-num {
+  background: var(--m-blue-fill);
+  color: #fff;
+  border-radius: 50%;
+  font-weight: 600;
+}
+.mail-page .cal-mini-day:hover { background: transparent; }
+.mail-page .cal-mini-day:hover .cal-mini-num { background: var(--m-fill); border-radius: 50%; }
+.mail-page .cal-mini-day.today:hover .cal-mini-num { background: var(--m-blue-fill); }
+.mail-page .cal-mini-head {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--m-label-3);
+}
+.mail-page .cal-mini-num { color: var(--m-label); font-size: 12px; }
+.mail-page .cal-mini-month { font-size: 14px; font-weight: 600; color: var(--m-label); border-radius: 8px; }
+.mail-page .cal-mini-month:hover { background: var(--m-fill); }
+.mail-page .cal-mini-navbtn { border-radius: 999px; color: var(--m-blue); }
+.mail-page .cal-mini-navbtn:hover { background: var(--m-fill); color: var(--m-blue); }
+.mail-page .cal-agenda { border-top: 0.5px solid var(--m-sep); background: transparent; }
+.mail-page .cal-agenda-header { color: var(--m-label-2); font-size: 12px; }
+.mail-page .cal-agenda-empty { color: var(--m-label-3); font-size: 12px; }
+
+/* ---- selection bar ---- */
+.mail-page .list-selection {
+  background: color-mix(in srgb, var(--m-blue) 12%, var(--m-surface));
+  border-bottom: 0.5px solid var(--m-sep);
+}
+.mail-page .list-selection-count { color: var(--m-label); font-size: 13px; font-weight: 600; }
+.mail-page .list-selection-all { color: var(--m-blue); font-size: 13px; }
+.mail-page .list-selection-close { border-radius: 999px; color: var(--m-blue); }
+.mail-page .list-selection-close:hover { background: var(--m-fill); }
+
+/* ---- topbar on phones ----
+   The logo and the right-hand controls are absolutely positioned so the search
+   field can sit optically centred on wide screens. Below 720px the search grows
+   to `flex: 1` and, because the other two are out of flow, it runs underneath
+   both of them — the brand mark lands on top of the placeholder text. Returning
+   all three to normal flex flow on phones lets the row size itself, which also
+   holds if a white-label brand ships a wider logo. */
+@media (max-width: 720px) {
+  .mail-page .topbar-logo-slot,
+  .mail-page .topbar-end {
+    position: static;
+    transform: none;
+  }
+  .mail-page .topbar-search {
+    margin: 0 10px;
+    min-width: 0;
+  }
+}
+
+/* ---- topbar text colour ----
+   The original topbar was a solid brand-blue bar, so its contents are hard-coded
+   white. This design makes the bar a light translucent panel, which leaves the
+   user's name and the sign-out control white-on-near-white (1.1:1). Re-point
+   them at the label tokens; the logo tile keeps white glyphs because it paints
+   its own blue fill. */
+.mail-page .topbar-user,
+.mail-page .topbar-user-name { color: var(--m-label); }
+.mail-page .topbar-user-logout { color: var(--m-label-2); opacity: 1; }
+.mail-page .topbar-user:hover { background: var(--m-fill); }
+.mail-page .topbar-user:hover .topbar-user-logout { color: var(--m-label); }
+.mail-page .topbar-logo-default { background: transparent; }
+.mail-page .topbar-logo-default:hover { background: var(--m-fill); }
+.mail-page .topbar-logo-text { color: var(--m-label); }
+
+/* A row that is both unread and selected paints the dot in the same blue as the
+   selection fill, so the unread cue disappears exactly when the row is focused.
+   White keeps it readable, matching the rest of the selected row's text. */
+.mail-page .msg-item.active.unread .msg-dot { background: #fff; }
