@@ -136,11 +136,15 @@ function sanitize_signature_html($html) {
     $html = preg_replace('#(\b(?:' . $urlAttrs . ')\s*=\s*)data\s*:\s*(?!image/(?:png|jpeg|gif|webp)\b)[^\s>]*#i', '$1#', $html);
 
     // 5) Defuse CSS-based vectors inside style="" / style=''.
-    $defuseCss = function ($css) {
-        return preg_replace('#(expression|behavio[u]?r|javascript|vbscript|@import)\s*[:(]#i', 'blocked-', $css);
-    };
+    // Same defuser as inbound mail (lib/util.php). These two had drifted: only
+    // sanitize_html() received the comment/escape/position/z-index hardening, so a
+    // signature or out-of-office body could still carry a viewport-escaping style.
+    $defuseCss = 'defuse_inline_css';
     $html = preg_replace_callback('#(\sstyle\s*=\s*")([^"]*)(")#i', fn($m) => $m[1] . $defuseCss($m[2]) . $m[3], $html);
     $html = preg_replace_callback("#(\sstyle\s*=\s*')([^']*)(')#i", fn($m) => $m[1] . $defuseCss($m[2]) . $m[3], $html);
+    // Unquoted form: style=position:fixed;z-index:9999 is valid HTML and the two
+    // callbacks above only see quoted values.
+    $html = preg_replace_callback('#(\sstyle\s*=\s*)([^"\'\s>][^\s>]*)#i', fn($m) => $m[1] . $defuseCss($m[2]), $html);
 
     return $html;
 }

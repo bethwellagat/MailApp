@@ -101,8 +101,23 @@ if ($action === 'process' && $method === 'POST') {
             delete_outbox_message($email, $meta['id']);
             continue;
         }
+        // Already handed to the mail server on an earlier run that died before it
+        // finished tidying up. Finish the bookkeeping — never transmit again.
+        if (!empty($rec['sent_at'])) {
+            append_to_sent(outbox_sent_copy($rec));
+            delete_outbox_message($email, $rec['id']);
+            continue;
+        }
         $r = smtp_send($_SESSION['smtp_host'], $email, $rec['rcpts'], $rec['message'], $email, $_SESSION['password']);
         if ($r['ok']) {
+            // Mark delivered BEFORE filing the Sent copy. Filing is an IMAP append
+            // that can take seconds on a large message, and the record was only
+            // removed afterwards — so a script killed in between (execution-time
+            // limit, dropped connection) left a record the next sweep would send
+            // AGAIN, delivering the message twice. Recording delivery first shrinks
+            // that window to one small local write.
+            $rec['sent_at'] = gmdate('c');
+            save_outbox_message($email, $rec);
             append_to_sent(outbox_sent_copy($rec));
             delete_outbox_message($email, $rec['id']);
             $sent++;
@@ -148,8 +163,16 @@ if ($action === 'send_now' && $method === 'POST') {
         delete_outbox_message($email, $id);
         fail_ob('Queued message is malformed', 500);
     }
+    // Delivered on an earlier attempt that died before cleanup — finish, don't resend.
+    if (!empty($rec['sent_at'])) {
+        append_to_sent(outbox_sent_copy($rec));
+        delete_outbox_message($email, $id);
+        ok_ob(['ok' => true, 'already_sent' => true]);
+    }
     $r = smtp_send($_SESSION['smtp_host'], $email, $rec['rcpts'], $rec['message'], $email, $_SESSION['password']);
     if (!$r['ok']) fail_ob('Send failed: ' . $r['error'], 500);
+    $rec['sent_at'] = gmdate('c'); // see the sweep: record delivery before the slow append
+    save_outbox_message($email, $rec);
     append_to_sent(outbox_sent_copy($rec));
     delete_outbox_message($email, $id);
     ok_ob(['ok' => true]);

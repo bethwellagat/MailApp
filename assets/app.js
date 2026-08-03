@@ -2503,6 +2503,7 @@
         }
 
         async function undo() {
+            if (undone) return; // double-click sent two cancels and reopened compose twice
             undone = true;
             if (timer) clearInterval(timer);
             try {

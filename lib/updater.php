@@ -252,8 +252,14 @@ function update_apply() {
     // released when this handle goes out of scope (or the script ends).
     $lockPath = __DIR__ . '/../data/.update.lock';
     $applyLock = @fopen($lockPath, 'c');
-    if (!$applyLock || !@flock($applyLock, LOCK_EX | LOCK_NB)) {
-        if ($applyLock) @fclose($applyLock);
+    if (!$applyLock) {
+        // Distinguish "cannot create the lock" from "someone else holds it" —
+        // reporting an unwritable data/ as "already running" sends the admin
+        // looking for a phantom concurrent update.
+        return ['error' => 'Could not create the update lock — is data/ writable?'];
+    }
+    if (!@flock($applyLock, LOCK_EX | LOCK_NB)) {
+        @fclose($applyLock);
         return ['error' => 'An update is already running on this server. Please wait for it to finish, then check again.'];
     }
 

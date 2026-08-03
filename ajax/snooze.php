@@ -90,13 +90,20 @@ function fetch_message_ids($mbox, $uids) {
  */
 function find_uids_by_message_id($mbox, $messageId) {
     if (!$messageId) return [];
+    // Returns [] when the message is definitively NOT in this mailbox, and NULL
+    // when we could not read the mailbox to find out. The caller must not treat
+    // those the same: the wake sweep resolves (and deletes) a snooze record when
+    // the message is gone, so a transient read failure used to discard the record
+    // while the mail was still sitting in Later — it then never came back on its
+    // own, even though the folder still held it.
     $check = @imap_check($mbox);
-    $total = $check ? (int)$check->Nmsgs : 0;
+    if (!$check) return null;
+    $total = (int)$check->Nmsgs;
     if ($total === 0) return [];
     $MAX_SCAN = 5000;
     $start = max(1, $total - $MAX_SCAN + 1);
     $rows  = @imap_fetch_overview($mbox, $start . ':' . $total, 0);
-    if (!is_array($rows)) return [];
+    if (!is_array($rows)) return null;
     $want = strtolower(trim($messageId, '<> '));
     $hits = [];
     foreach ($rows as $om) {
@@ -184,7 +191,7 @@ if ($action === 'add' && $method === 'POST') {
         if ($back) {
             $restore = [];
             foreach ($msgIds as $mid) {
-                foreach (find_uids_by_message_id($back, $mid) as $u) $restore[] = $u;
+                foreach ((find_uids_by_message_id($back, $mid) ?: []) as $u) $restore[] = $u;
             }
             if ($restore) {
                 @imap_mail_move($back, implode(',', $restore), $from, CP_UID);
@@ -286,7 +293,8 @@ if ($action === 'wake' && $method === 'POST') {
         $wokenUids = []; // everything this sweep moved out of Later, for the expunge
         foreach ($items as $s) {
             $foundUids = find_uids_by_message_id($mbox, $s['message_id']);
-            if (!$foundUids) { $resolved[$s['id'] ?? ''] = true; continue; } // gone → resolved
+            if ($foundUids === null) continue;                               // couldn't read → retry next poll
+            if (!$foundUids) { $resolved[$s['id'] ?? ''] = true; continue; } // definitely gone → resolved
             $set = implode(',', $foundUids);
             $moved = @imap_mail_move($mbox, $set, $s['original_folder'], CP_UID);
             if ($moved) {

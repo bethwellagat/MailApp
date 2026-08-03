@@ -108,6 +108,37 @@ if (!defined('TAG_MATCH_RE')) {
     define('TAG_MATCH_RE', '#<[a-z][a-z0-9:-]*+(?:"[^"]*+"|\'[^\']*+\'|[^>"\']++|["\'])*+>#i');
 }
 
+if (!function_exists('defuse_inline_css')) {
+    /**
+     * Neutralise the dangerous parts of an inline style="" value. Shared by
+     * sanitize_html() and sanitize_signature_html() — they previously carried
+     * different copies, and only one of them received the hardening.
+     */
+    function defuse_inline_css($css) {
+        // Comments first: a CSS parser drops them, so `expr/**/ession(` and
+        // `position:/**/fixed` would otherwise walk straight past every rule below.
+        $css = preg_replace('#/\*.*?\*/#s', '', $css);
+        // Hex escapes (`\66 ixed` resolves to `fixed`) exist here only to obfuscate;
+        // real mail never needs a backslash in an inline style. Dropping them turns
+        // an escaped keyword into an invalid value instead of a live one.
+        $css = str_replace('\\', '', $css);
+        // Script-ish and stylesheet-import vectors.
+        $css = preg_replace('#(expression|behavio[u]?r|javascript|vbscript|@import)\s*[:(]#i', 'blocked-', $css);
+        // Positioning escape: `fixed`/`sticky` lift the element out of the message
+        // and pin it to the viewport, so a message can paint a full-screen overlay
+        // across the authenticated UI — a working phishing prompt needing no script
+        // at all. Neither is legitimate in email. (`absolute` is left alone: it is
+        // occasionally used for real layout and is contained by the paint
+        // containment on .thread-msg-body.)
+        $css = preg_replace('#position\s*:\s*(?:fixed|sticky)#i', 'position:static', $css);
+        // Stacking escape: genuine mail layers with single digits; larger values
+        // exist to sit on top of the app's own chrome.
+        $css = preg_replace_callback('#z-index\s*:\s*(-?\d+)#i',
+            fn($m) => abs((int)$m[1]) > 9 ? 'z-index:0' : $m[0], $css);
+        return $css;
+    }
+}
+
 if (!function_exists('strip_event_handlers')) {
     /**
      * Remove on*= attributes from a single start tag.
@@ -366,15 +397,23 @@ if (!function_exists('ensure_data_guards')) {
                 "If you can read this over HTTP, your server is serving the private data/\n" .
                 "directory. Deny it in your server config (see the note in Settings).\n",
         ];
+        $allPresent = true;
         foreach ($files as $name => $body) {
             $path = $dir . '/' . $name;
             if (!file_exists($path)) {
                 @file_put_contents($path, $body);
                 @chmod($path, 0644);
             }
+            if (!file_exists($path)) $allPresent = false;
         }
-        @file_put_contents($sentinel, "guards written " . gmdate('c') . "\n");
-        @chmod($sentinel, 0600);
+        // Only latch the sentinel once every guard is actually on disk. Writing it
+        // unconditionally meant one failed write (a full disk, a permission blip)
+        // permanently skipped the check, so the missing deny file was never
+        // restored — the opposite of self-healing.
+        if ($allPresent) {
+            @file_put_contents($sentinel, "guards written " . gmdate('c') . "\n");
+            @chmod($sentinel, 0600);
+        }
     }
 }
 
