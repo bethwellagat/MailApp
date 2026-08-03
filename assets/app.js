@@ -41,6 +41,7 @@
         searchActive: false,
         searchResults: [],
         listFilter: 'all', // 'all' | 'unread' | 'flagged' | 'attachments'
+        starredActive: false, // showing the cross-folder starred view
         selectedUids: new Set(),
         lastSelectedIndex: -1,
         composeOpen: false,
@@ -1053,8 +1054,9 @@
         const q = state.searchQuery;
         const results = state.searchResults;
         toggleFilterPane(false);
-        $('listFolderName').textContent =
-            'Search "' + q + '" · ' + results.length + ' result' + (results.length === 1 ? '' : 's');
+        $('listFolderName').textContent = state.starredActive
+            ? ('Starred · ' + results.length + (results.length === 1 ? ' message' : ' messages'))
+            : ('Search "' + q + '" · ' + results.length + ' result' + (results.length === 1 ? '' : 's'));
 
         // Searching is deliberately narrow by default (headers only, Inbox +
         // current + Sent) because both dimensions cost real time on IMAP servers
@@ -1062,13 +1064,16 @@
         // who cannot find something knows there is more to look at rather than
         // concluding the message is gone.
         let ctas = '';
-        if (searchResultScope === 'headers') {
+        if (state.starredActive) {
+            // The starred view already spans every folder; the search-widening
+            // actions would be meaningless here.
+        } else if (searchResultScope === 'headers') {
             ctas += '<button type="button" class="search-fulltext-cta" data-full-search="1">' +
                         '<svg class="icon" width="13" height="13"><use href="#ic-search"/></svg>' +
                         'Search full message text' +
                     '</button>';
         }
-        if (searchResultWhere !== 'all') {
+        if (!state.starredActive && searchResultWhere !== 'all') {
             ctas += '<button type="button" class="search-fulltext-cta" data-all-folders="1">' +
                         '<svg class="icon" width="13" height="13"><use href="#ic-folder"/></svg>' +
                         'Search every folder' +
@@ -1084,10 +1089,15 @@
         const fullCta = (ctas || note) ? '<div class="search-fulltext-row">' + ctas + note + '</div>' : '';
 
         if (results.length === 0) {
-            const scopeWord = searchResultWhere === 'all' ? 'any folder' : 'Inbox, this folder or Sent';
-            const whatWord  = searchResultScope === 'full' ? 'message text' : 'subjects, senders, or recipients';
-            $('messageList').innerHTML =
-                '<div class="list-empty">No matches in ' + whatWord + ' in ' + scopeWord + '.</div>' + fullCta;
+            if (state.starredActive) {
+                $('messageList').innerHTML =
+                    '<div class="list-empty">Nothing is starred. Star a message to keep it here.</div>' + fullCta;
+            } else {
+                const scopeWord = searchResultWhere === 'all' ? 'any folder' : 'Inbox, this folder or Sent';
+                const whatWord  = searchResultScope === 'full' ? 'message text' : 'subjects, senders, or recipients';
+                $('messageList').innerHTML =
+                    '<div class="list-empty">No matches in ' + whatWord + ' in ' + scopeWord + '.</div>' + fullCta;
+            }
             $('pagination').hidden = true;
             return;
         }
@@ -1186,7 +1196,34 @@
         }
     }
 
+    /** Every starred message, across folders — rendered through the search view. */
+    async function loadStarred() {
+        const seq = ++loadMessagesSeq;
+        $('listFolderName').textContent = 'Starred · loading…';
+        $('messageList').innerHTML = '<div class="list-loading">Looking for starred mail in every folder…</div>';
+        $('pagination').hidden = true;
+        const data = await apiGet('starred', withAcct({}, viewAcct()));
+        if (seq !== loadMessagesSeq) return;            // superseded by a newer view
+        if (data.error) {
+            $('messageList').innerHTML = '<div class="list-empty">' + escapeHtml(data.error) + '</div>';
+            return;
+        }
+        const results = data.results || [];
+        state.starredActive = true;
+        state.searchActive  = true;                     // reuse the search rendering path
+        state.searchQuery   = '';
+        state.searchResults = results;
+        searchResultScope   = 'headers';
+        searchResultWhere   = 'all';
+        searchFoldersCapped = !!data.folders_capped;
+        searchFolderCount   = (data.folders || []).length;
+        renderSearchResults();
+        $('listFolderName').textContent = 'Starred · ' + results.length +
+            (results.length === 1 ? ' message' : ' messages');
+    }
+
     function exitSearchMode() {
+        state.starredActive = false;
         if (!state.searchActive && state.searchResults.length === 0) return;
         state.searchActive  = false;
         state.searchResults = [];
@@ -3358,6 +3395,76 @@
         }
     }
 
+    /* ---------- Mobile: swipe a row to triage ----------
+     * On a phone the action bar is icon-only and the row has no hover affordances,
+     * so archiving or binning a message meant opening it first. A horizontal drag
+     * on a row now triages it directly: left = delete, right = archive. Both go
+     * through the normal action paths, so both are undoable via the usual toast.
+     *
+     * Only engages when the gesture is clearly horizontal, so vertical scrolling
+     * through the list is never hijacked.
+     */
+    function wireSwipeToTriage() {
+        const list = $('messageList');
+        if (!list || !window.matchMedia || !window.matchMedia('(max-width: 820px)').matches) return;
+
+        const THRESHOLD = 72;   // px of travel before the action commits
+        const SLOP      = 12;   // px before we decide the gesture is horizontal
+        let row = null, startX = 0, startY = 0, dx = 0, axis = '';
+
+        function reset(animate) {
+            if (row) {
+                row.style.transition = animate ? 'transform 0.18s ease' : '';
+                row.style.transform  = '';
+                row.classList.remove('swiping', 'swipe-delete', 'swipe-archive');
+                const el = row;
+                setTimeout(() => { el.style.transition = ''; }, 200);
+            }
+            row = null; dx = 0; axis = '';
+        }
+
+        list.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            if (state.currentFolder === OUTBOX_FOLDER || state.selectedUids.size > 0) return;
+            const target = e.target.closest('.msg-item');
+            if (!target) return;
+            row = target; startX = e.touches[0].clientX; startY = e.touches[0].clientY; dx = 0; axis = '';
+        }, { passive: true });
+
+        list.addEventListener('touchmove', (e) => {
+            if (!row || e.touches.length !== 1) return;
+            const x = e.touches[0].clientX - startX;
+            const y = e.touches[0].clientY - startY;
+            if (!axis) {
+                if (Math.abs(x) < SLOP && Math.abs(y) < SLOP) return;
+                axis = Math.abs(x) > Math.abs(y) ? 'x' : 'y';
+                if (axis === 'y') { reset(false); return; }  // let the list scroll
+                row.classList.add('swiping');
+            }
+            if (axis !== 'x') return;
+            dx = x;
+            row.style.transform = 'translateX(' + dx + 'px)';
+            row.classList.toggle('swipe-delete',  dx <= -THRESHOLD);
+            row.classList.toggle('swipe-archive', dx >=  THRESHOLD);
+        }, { passive: true });
+
+        list.addEventListener('touchend', () => {
+            if (!row || axis !== 'x') { reset(false); return; }
+            const uid = parseInt(row.dataset.uid, 10);
+            const committed = Math.abs(dx) >= THRESHOLD && !isNaN(uid);
+            const goDelete  = dx < 0;
+            reset(true);
+            if (!committed) return;
+            // Reuse the normal actions so the undo toast behaves exactly as it does
+            // from the toolbar.
+            state.selectedUids.clear();
+            state.selectedUids.add(uid);
+            if (goDelete) actDelete(); else actArchive();
+        }, { passive: true });
+
+        list.addEventListener('touchcancel', () => reset(true), { passive: true });
+    }
+
     /* ---------- Drag and drop messages → folders ---------- */
     let _dragUids = null;
     function wireDragAndDrop() {
@@ -3617,6 +3724,12 @@
             state.listFilter = f;
             state.selectedUids.clear();
             state.lastSelectedIndex = -1;
+            // "Flagged" is the one filter that cannot honestly be answered from the
+            // rows already on screen — starred mail lives across folders and pages,
+            // and filtering one page reported "none" while the user's starred mail
+            // sat in Archive. Ask the server instead.
+            if (f === 'flagged') { loadStarred(); updateActionBar(); return; }
+            if (state.starredActive) { state.starredActive = false; loadMessages(); updateActionBar(); return; }
             renderMessages();
             updateActionBar();
         });
@@ -4803,6 +4916,7 @@
     wire();
     wireCalendar();
     wireDragAndDrop();
+    wireSwipeToTriage();
     // Folders and messages don't depend on each other — fire in parallel.
     Promise.all([loadFolders(), loadMessages()]);
     updateActionBar();

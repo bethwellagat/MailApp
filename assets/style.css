@@ -4852,3 +4852,16 @@ body.density-compact .msg-dot { top: 13px; }
     scroll-behavior: auto !important;
   }
 }
+
+/* Mobile swipe-to-triage: the row follows the finger and reveals its intent.
+   Colour comes from the row's own background so the cue reads in both themes. */
+@media (max-width: 820px) {
+  .msg-item.swiping {
+    position: relative;
+    z-index: 1;
+    will-change: transform;
+    user-select: none;
+  }
+  .msg-item.swipe-delete  { background: var(--c-error-bg); }
+  .msg-item.swipe-archive { background: var(--c-success-bg); }
+}

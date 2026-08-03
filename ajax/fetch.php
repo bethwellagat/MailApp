@@ -1079,6 +1079,68 @@ if ($action === 'message') {
     ok($result);
 }
 
+if ($action === 'starred') {
+    // Every flagged/starred message, across every folder.
+    //
+    // The Flagged chip used to filter only the rows already loaded for the
+    // current page, so it reported "no flagged messages on this page" while the
+    // user's starred mail sat in Archive or on page 3 — worse than useless,
+    // because it looked like an answer. Folders are opened ONE AT A TIME (same
+    // as search), so this stays within the memory ceiling; only wall-clock grows.
+    $ref     = imap_ref();
+    $folders = ['INBOX'];
+    $capped  = false;
+    $tmp = open_box('INBOX', OP_HALFOPEN);
+    if ($tmp) {
+        $list = @imap_list($tmp, $ref, '*');
+        if (is_array($list)) {
+            foreach ($list as $raw) {
+                $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
+                if ($name !== '' && !in_array($name, $folders, true)) $folders[] = $name;
+            }
+        }
+        if (count($folders) > 40) { $folders = array_slice($folders, 0, 40); $capped = true; }
+        @imap_close($tmp);
+    }
+
+    $results = [];
+    foreach ($folders as $f) {
+        $box = open_box($f);
+        if (!$box) continue;
+        $uids = @imap_search($box, 'FLAGGED', SE_UID);
+        if (is_array($uids) && $uids) {
+            $uids = array_values(array_unique(array_map('intval', $uids)));
+            rsort($uids);
+            if (count($uids) > 80) $uids = array_slice($uids, 0, 80);
+            $ov = @imap_fetch_overview($box, implode(',', $uids), FT_UID);
+            if ($ov) {
+                foreach ($ov as $m) {
+                    $from = parse_addr($m->from ?? '');
+                    $results[] = [
+                        'uid'          => (int)$m->uid,
+                        'folder'       => $f,
+                        'subject'      => decode_header($m->subject ?? '') ?: '(no subject)',
+                        'from_name'    => $from['name'],
+                        'from_addr'    => $from['email'],
+                        'to'           => decode_header($m->to ?? ''),
+                        'date'         => $m->date ?? '',
+                        'timestamp'    => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
+                        'seen'         => !empty($m->seen),
+                        'flagged'      => true,
+                        'answered'     => !empty($m->answered),
+                        'thread_count' => 1,
+                        'thread_uids'  => [(int)$m->uid],
+                    ];
+                }
+            }
+        }
+        @imap_close($box);
+    }
+    usort($results, fn($a, $b) => $b['timestamp'] - $a['timestamp']);
+    if (count($results) > 200) $results = array_slice($results, 0, 200);
+    ok(['results' => $results, 'folders' => $folders, 'folders_capped' => $capped, 'total' => count($results)]);
+}
+
 if ($action === 'search') {
     $q = trim((string)($_GET['q'] ?? ''));
     if (mb_strlen($q) < 2) {
