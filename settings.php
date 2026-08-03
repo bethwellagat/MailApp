@@ -370,7 +370,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             <div class="settings-card logo-card">
                 <div class="logo-preview" id="logoPreview">
                     <?php if (!empty($prefs['workspace_logo'])): ?>
-                        <img src="<?= h($prefs['workspace_logo']) ?>" alt="Workspace logo">
+                        <img src="<?= h($prefs['workspace_logo']) ?>" alt="Workspace logo" data-ink-detect>
                     <?php else: ?>
                         <span class="logo-empty">No logo set</span>
                     <?php endif; ?>
@@ -1247,7 +1247,10 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             const dataUri = await readFileAsDataURL(file);
             const finalUri = await processLogo(dataUri, file.type);
             pendingLogo = finalUri;
-            logoPreview.innerHTML = '<img src="' + finalUri + '" alt="Workspace logo">';
+            logoPreview.innerHTML = '<img src="' + finalUri + '" alt="Workspace logo" data-ink-detect>';
+            // Re-measure so the preview shows the backdrop the topbar will use,
+            // before the tenant commits to this image.
+            if (window.detectLogoInk) window.detectLogoInk(logoPreview);
             $('logoRemoveBtn').hidden = false;
             $('logoStatus').textContent = 'Click "Save logo" to apply.';
             $('logoStatus').className = 'settings-status';
@@ -1921,5 +1924,6 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
     });
 })();
 </script>
+<script src="assets/logo-ink.js?v=<?= @filemtime(__DIR__."/assets/logo-ink.js") ?>"></script>
 </body>
 </html>

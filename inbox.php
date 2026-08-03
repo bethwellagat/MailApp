@@ -215,7 +215,7 @@ $prefs        = load_prefs($email);
     <header class="topbar">
         <a class="topbar-logo-slot" id="topbarLogo" href="inbox" title="Go to inbox · refresh">
             <?php if (!empty($prefs['workspace_logo'])): ?>
-                <img src="<?= h($prefs['workspace_logo']) ?>" alt="<?= h($brandLabel) ?>" class="topbar-logo">
+                <img src="<?= h($prefs['workspace_logo']) ?>" alt="<?= h($brandLabel) ?>" class="topbar-logo" data-ink-detect>
             <?php else: ?>
                 <span class="topbar-logo-default">
                     <span class="topbar-logo-mark"><svg class="icon" width="14" height="14"><use href="#ic-envelope"/></svg></span>
@@ -821,5 +821,6 @@ window.__LIMITS__ = <?= js([
 ]) ?>;
 </script>
 <script src="assets/app.js?v=<?= @filemtime(__DIR__.'/assets/app.js') ?>"></script>
+<script src="assets/logo-ink.js?v=<?= @filemtime(__DIR__."/assets/logo-ink.js") ?>"></script>
 </body>
 </html>

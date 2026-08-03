@@ -5606,6 +5606,19 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
      LIGHTER blue for tinted text on black and a DARKER one behind white text —
      one value cannot clear AA in both roles. */
   --m-blue-fill:   #0068cc;
+  /* Mailbox tints. A white glyph on a saturated tile is legible whatever the
+     tile colour, but an untiled glyph has to carry the contrast itself, and
+     systemGreen/systemOrange are only ~1.9:1 and ~2.4:1 on this sidebar. These
+     are Apple's published accessible variants of the same colours. */
+  --f-blue:   #0071e3;
+  --f-green:  #1f9142;
+  --f-orange: #cc6f00;
+  --f-red:    #d70015;
+  --f-indigo: #4b48c8;
+  --f-purple: #9333b8;
+  --f-brown:  #8a6f4f;
+  --f-teal:   #00728f;
+  --f-gray:   #6d6d72;
   --m-red:         #ff3b30;
   --m-orange:      #ff9500;
   --m-green:       #34c759;
@@ -5629,6 +5642,17 @@ html.theme-dark .mail-page {
   --m-label-3: rgba(235, 235, 245, 0.58);
   --m-blue:    #0a84ff;      /* tinted text on black — 5.8:1 */
   --m-blue-fill: #0a6ecd;    /* behind white text — 5.1:1 */
+  /* The light-mode tints are far too dark against black; these are Apple's
+     accessible variants for dark appearance. */
+  --f-blue:   #409cff;
+  --f-green:  #30db5b;
+  --f-orange: #ffb340;
+  --f-red:    #ff6961;
+  --f-indigo: #7d7aff;
+  --f-purple: #da8fff;
+  --f-brown:  #b59469;
+  --f-teal:   #5de6ff;
+  --f-gray:   #98989d;
   --m-red:     #ff453a;
   --m-orange:  #ff9f0a;
   --m-green:   #30d158;
@@ -5724,14 +5748,19 @@ html.theme-dark .mail-page .reading-pane {
 }
 .mail-page .folder-pane-header,
 .mail-page .folder-pane-footer { border-color: var(--m-sep); }
-.mail-page .folder-list { padding: 8px; }
+.mail-page .folder-list { padding: 6px; }
 .mail-page .folder-item {
-  border-radius: 9px;
-  min-height: 38px;
+  border-radius: 8px;
+  /* 30px, not 38px: a mailbox list is scanned, not tapped one item at a time,
+     and on a pointer device the row only has to be comfortably clickable. Nine
+     mailboxes reclaim roughly a quarter of the sidebar. The phone drawer takes
+     these back up to a 44px touch target further down. */
+  min-height: 30px;
+  padding: 2px 10px;
   font-size: 14px;
   color: var(--m-label);
-  gap: 11px;
-  margin-bottom: 1px;
+  gap: 9px;
+  margin-bottom: 0;
 }
 .mail-page .folder-item:hover { background: var(--m-fill); }
 .mail-page .folder-item.active {
@@ -5743,26 +5772,32 @@ html.theme-dark .mail-page .reading-pane {
    backdrop to 3.3:1 against its own white digits. Mail drops the pill here and
    lets the plain white count sit on the blue (5.5:1). */
 .mail-page .folder-item.active .folder-badge { background: transparent; color: #fff; }
-/* Colour-coded icon tiles, keyed off the type the JS already stamps on each row. */
+/* Tinted glyphs, not filled tiles. A 27px tile forced a 38px row and made the
+   sidebar the loudest thing on screen; Mail draws these as a plain coloured
+   symbol, which is both quieter and ~8px shorter per row. Colours still key off
+   the type the JS already stamps on each row, so no markup changed. */
 .mail-page .folder-item .folder-icon {
-  box-sizing: content-box;
-  width: 15px; height: 15px;
-  padding: 6px;
-  border-radius: 7px;
-  background: #8e8e93;
-  color: #fff;
+  box-sizing: border-box;
+  width: 19px; height: 19px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--f-gray);
   flex: 0 0 auto;
 }
-.mail-page .folder-item[data-folder-type="inbox"]   .folder-icon { background: #007aff; }
-.mail-page .folder-item[data-folder-type="sent"]    .folder-icon { background: #34c759; }
-.mail-page .folder-item[data-folder-type="drafts"]  .folder-icon { background: #ff9500; }
-.mail-page .folder-item[data-folder-type="trash"]   .folder-icon { background: #ff3b30; }
-/* systemBrown, not systemPink: pink sits a few degrees from the systemRed used
-   for Trash and the two tiles read as the same colour at 29pt. */
-.mail-page .folder-item[data-folder-type="spam"]    .folder-icon { background: #a2845e; }
-.mail-page .folder-item[data-folder-type="archive"] .folder-icon { background: #5856d6; }
-.mail-page .folder-item[data-folder-type="later"]   .folder-icon { background: #30b0c7; }
-.mail-page .folder-item[data-folder-type="outbox"]  .folder-icon { background: #af52de; }
+.mail-page .folder-item[data-folder-type="inbox"]   .folder-icon { color: var(--f-blue); }
+.mail-page .folder-item[data-folder-type="sent"]    .folder-icon { color: var(--f-green); }
+.mail-page .folder-item[data-folder-type="drafts"]  .folder-icon { color: var(--f-orange); }
+.mail-page .folder-item[data-folder-type="trash"]   .folder-icon { color: var(--f-red); }
+/* Brown, not pink: pink sits a few degrees from the red used for Trash and the
+   two read as the same colour at this size. */
+.mail-page .folder-item[data-folder-type="spam"]    .folder-icon { color: var(--f-brown); }
+.mail-page .folder-item[data-folder-type="archive"] .folder-icon { color: var(--f-indigo); }
+.mail-page .folder-item[data-folder-type="later"]   .folder-icon { color: var(--f-teal); }
+.mail-page .folder-item[data-folder-type="outbox"]  .folder-icon { color: var(--f-purple); }
+/* On the filled blue row the tint would be blue-on-blue. */
+.mail-page .folder-item.active .folder-icon,
+.mail-page .folder-item.active[data-folder-type] .folder-icon { color: #fff; }
 .mail-page .folder-badge {
   /* --m-fill, not --m-fill-2: the heavier 20% grey darkens the pill enough that
      the secondary-label digits inside it land at 4.3:1. The lighter pill reads
@@ -6206,3 +6241,58 @@ html.theme-dark .mail-page .reading-pane {
    selection fill, so the unread cue disappears exactly when the row is focused.
    White keeps it readable, matching the rest of the selected row's text. */
 .mail-page .msg-item.active.unread .msg-dot { background: #fff; }
+
+/* The compact 30px mailbox row suits a pointer. In the phone drawer the same
+   row is a touch target, so it goes back to the 44px minimum. */
+@media (max-width: 820px) {
+  .mail-page .folder-item {
+    min-height: 44px;
+    padding: 4px 14px;
+    font-size: 15px;
+    gap: 11px;
+  }
+  .mail-page .folder-item .folder-icon { width: 21px; height: 21px; }
+  .mail-page .folder-list { padding: 8px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WORKSPACE LOGO — legibility on the opposite appearance
+   ═══════════════════════════════════════════════════════════════════════════
+   Tenants upload the logo they already have, and brand assets are usually drawn
+   in dark ink on transparency because they were made for white letterheads. On
+   the dark topbar such a logo vanishes; a knocked-out white logo vanishes in
+   light mode just the same. assets/logo-ink.js measures the image once and
+   stamps data-needs-plate="dark"|"light"|"both" — the appearance(s) the mark
+   would be lost on, judged per pixel against a 3:1 floor, and nothing at all
+   when it is legible either way.
+
+   A plate rather than filter:invert(): inversion would rescue a black wordmark
+   but turn a blue one orange, and a white-label tenant's colours are the one
+   thing that must survive. box-sizing keeps the padding inside the existing
+   max-height so the topbar never grows.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.mail-page .topbar-logo,
+.settings-page .logo-preview img {
+  box-sizing: border-box;
+  border-radius: 6px;
+}
+/* Dark ink on a dark surface. */
+html.theme-dark .mail-page .topbar-logo[data-needs-plate="dark"],
+html.theme-dark .mail-page .topbar-logo[data-needs-plate="both"],
+html.theme-dark .settings-page .logo-preview img[data-needs-plate="dark"],
+html.theme-dark .settings-page .logo-preview img[data-needs-plate="both"] {
+  background: #fff;
+  padding: 3px 7px;
+  /* The drop-shadow is tuned for a mark floating on the bar; over a white plate
+     it just dirties the edge. */
+  filter: none;
+}
+/* Light ink on a light surface. */
+html.theme-light .mail-page .topbar-logo[data-needs-plate="light"],
+html.theme-light .mail-page .topbar-logo[data-needs-plate="both"],
+html.theme-light .settings-page .logo-preview img[data-needs-plate="light"],
+html.theme-light .settings-page .logo-preview img[data-needs-plate="both"] {
+  background: #1c1c1e;
+  padding: 3px 7px;
+  filter: none;
+}
