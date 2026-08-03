@@ -5681,10 +5681,19 @@ html.theme-dark .mail-page .reading-pane {
 }
 
 /* ---- chrome: translucent toolbars ---- */
+/* ⚠ Do NOT add backdrop-filter, filter, transform, perspective, contain:paint or
+   will-change to the topbar or the action bar.
+   Any of those makes the element the containing block for its position:fixed
+   descendants. The Move menu (#moveDropdown) is a position:fixed child of the
+   action bar positioned from getBoundingClientRect(), so a containing block
+   there re-bases its viewport coordinates onto a 48px-tall bar that also clips
+   overflow — the menu lands 48px low and is scissored to nothing. That is
+   exactly what happened in v1.5.x.
+   Nothing is lost by leaving them out: both bars sit in normal flow with no
+   content behind them, so blurring a flat background just reproduces the same
+   flat colour. These are opaque for that reason, not by oversight. */
 .mail-page .topbar {
-  background: color-mix(in srgb, var(--m-bg) 78%, transparent);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: var(--m-bg);
   border-bottom: 0.5px solid var(--m-sep);
   box-shadow: none;
 }
@@ -5712,10 +5721,10 @@ html.theme-dark .mail-page .reading-pane {
 .mail-page .topbar-user:hover { background: var(--m-fill); }
 .mail-page .topbar-user-avatar { background: var(--m-blue-fill); color: #fff; }
 
+/* Opaque, and no backdrop-filter — see the warning on .mail-page .topbar above.
+   This bar is the direct parent of the Move menu, so it is the one that broke. */
 .mail-page .actionbar {
-  background: color-mix(in srgb, var(--m-bg) 78%, transparent);
-  backdrop-filter: saturate(180%) blur(20px);
-  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  background: var(--m-bg);
   border-bottom: 0.5px solid var(--m-sep);
   gap: 4px;
   padding: 6px 12px;
@@ -6296,3 +6305,26 @@ html.theme-light .settings-page .logo-preview img[data-needs-plate="both"] {
   padding: 3px 7px;
   filter: none;
 }
+
+/* ---- the Move menu ----
+   Left unstyled by the original pass, so it kept the old boxy look while
+   everything around it moved. An iOS menu: 12pt panel, hairline border, roomy
+   rows. No containing-block property here or on any ancestor — see the warning
+   on .mail-page .topbar. */
+.mail-page .dropdown {
+  background: var(--m-surface);
+  border: 0.5px solid var(--m-sep);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.24);
+  padding: 5px;
+  min-width: 200px;
+}
+.mail-page .dropdown-item {
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 14px;
+  color: var(--m-label);
+  gap: 9px;
+}
+.mail-page .dropdown-item:hover { background: var(--m-fill); }
+.mail-page .dropdown-item .icon { color: var(--m-label-2); }
