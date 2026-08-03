@@ -111,9 +111,10 @@ foreach (['.topbar', '.actionbar'] as $host) {
 
 t_group('page scoping — neither redesign may leak');
 /**
- * The Settings and Inbox redesigns are each one class on <body>. That is what
- * lets either be reverted alone, and what stops one page restyling the other.
- * Every selector in the redesign block must therefore carry a page scope.
+ * Each page carries one class on <body> — .mail-page, .settings-page,
+ * .login-page. That is what lets any one of them be reverted alone, and what
+ * stops one page restyling another. Every selector below the redesign marker
+ * must therefore carry one of those scopes.
  */
 $i = strpos($css, 'iPadOS Mail design language');
 t_ok('inbox redesign block is present', $i !== false);
@@ -130,9 +131,11 @@ if ($i !== false) {
             $one = trim($one);
             if ($one === '') continue;
             $n++;
-            if (strpos($one, '.mail-page') === false && strpos($one, '.settings-page') === false) {
-                $unscoped[] = $one;
+            $scoped = false;
+            foreach (['.mail-page', '.settings-page', '.login-page'] as $scope) {
+                if (strpos($one, $scope) !== false) { $scoped = true; break; }
             }
+            if (!$scoped) $unscoped[] = $one;
         }
     }
     t_ok('block has selectors to check', $n > 100, "n=$n");
@@ -142,3 +145,39 @@ if ($i !== false) {
 
 t_group('stylesheet is well formed');
 t_eq('braces balance', substr_count($css, '{'), substr_count($css, '}'));
+
+t_group('every icon reference resolves');
+/**
+ * An <svg><use href="#ic-foo"> pointing at a symbol the page never defines
+ * paints nothing at all. On a button with a text label that is a missing glyph;
+ * on an icon-only button it is an invisible control. settings.php shipped with
+ * two: the Add-contact "+" and the filter dialog's close "×", the latter being a
+ * blank clickable square.
+ *
+ * Each page carries its own inline sprite, so this has to be checked per page.
+ */
+foreach (['index.php', 'inbox.php', 'settings.php'] as $page) {
+    $html = @file_get_contents(T_ROOT . '/' . $page);
+    t_ok("$page is readable", is_string($html) && $html !== '');
+    if (!is_string($html)) continue;
+
+    preg_match_all('/<symbol[^>]*\bid="([^"]+)"/i', $html, $def);
+    preg_match_all('/<use[^>]*\bhref="#([^"]+)"/i', $html, $use);
+    $missing = array_values(array_unique(array_diff($use[1], $def[1])));
+    t_ok("$page: every <use> resolves to a defined <symbol>", $missing === [],
+         'undefined: ' . implode(', ', $missing));
+}
+
+/* app.js builds markup for inbox.php, so its icon references have to exist
+   there too — a runtime-only break a page-local check would miss. */
+$js   = @file_get_contents(T_ROOT . '/assets/app.js');
+$html = @file_get_contents(T_ROOT . '/inbox.php');
+if (is_string($js) && is_string($html)) {
+    preg_match_all('/<symbol[^>]*\bid="([^"]+)"/i', $html, $def);
+    preg_match_all('/href=\\\\?["\']#(ic-[a-z0-9-]+)/i', $js, $m);
+    $refs    = array_values(array_unique($m[1]));
+    $missing = array_values(array_diff($refs, $def[1]));
+    t_ok('app.js icon references exist in inbox.php', $missing === [],
+         'undefined: ' . implode(', ', $missing));
+    t_ok('app.js actually references icons', count($refs) > 5, 'found ' . count($refs));
+}

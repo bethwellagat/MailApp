@@ -134,16 +134,21 @@ html.theme-dark {
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.45);
   --shadow-topbar: 0 1px 0 rgba(255, 255, 255, 0.05) inset, 0 2px 12px -2px rgba(0, 0, 0, 0.6);
 
-  /* Avatar palette — lightened so the white initials and the disc itself
-     separate cleanly from the dark list surface. */
-  --c-av-1: #4a82c4;
-  --c-av-2: #9072bf;
-  --c-av-3: #3fa3a3;
-  --c-av-4: #d46b6f;
-  --c-av-5: #6fa847;
-  --c-av-6: #d97e3f;
-  --c-av-7: #d65f96;
-  --c-av-8: #a3784f;
+  /* Avatar palette. These had been lightened so the disc would separate from the
+     dark list surface, but the initials sit ON the disc in white, and lightening
+     it is exactly what takes that pair apart: every colour landed between 2.9
+     and 4.0:1, the green worst at 2.85. The disc only has to be dark enough for
+     its own white text, which does not depend on the page behind it — so these
+     are the same hues stepped down until white clears 4.6:1. They still read as
+     the brighter dark-mode set next to the light values. */
+  --c-av-1: #4376b2;   /* was #4a82c4 — 3.98:1 */
+  --c-av-2: #8368ae;   /* was #9072bf — 3.93:1 */
+  --c-av-3: #317f7f;   /* was #3fa3a3 — 3.01:1 */
+  --c-av-4: #b25a5d;   /* was #d46b6f — 3.42:1 */
+  --c-av-5: #548036;   /* was #6fa847 — 2.85:1 */
+  --c-av-6: #a96231;   /* was #d97e3f — 3.00:1 */
+  --c-av-7: #b85281;   /* was #d65f96 — 3.54:1 */
+  --c-av-8: #946d48;   /* was #a3784f — 3.92:1 */
 }
 
 /* In dark mode keep the ENTIRE reading pane (right side) on a light surface —
@@ -4886,11 +4891,19 @@ body.density-compact .msg-dot { top: 13px; }
   --ip-card-hover:    #f7f7fa;
   --ip-sep:           rgba(60, 60, 67, 0.29);
   --ip-label:         #000000;
-  --ip-label-2:       rgba(60, 60, 67, 0.60);
-  --ip-label-3:       rgba(60, 60, 67, 0.30);
-  --ip-blue:          #007aff;
+  /* Apple ships secondaryLabel at 60% and tertiaryLabel at 30% black, which
+     land at 3.4:1 and 1.9:1 — the same trap the inbox hit. These are the
+     same greys at AA-safe darkness. */
+  --ip-label-2:       #5f5f63;
+  --ip-label-3:       #6d6d72;
+  /* Text blue and fill blue are one value in light, but must differ in dark
+     (lighter for tinted text on black, darker behind white text). */
+  --ip-blue:          #0068cc;
+  --ip-blue-fill:     #0068cc;
   --ip-green:         #34c759;
+  --ip-green-ink:     #1a7a37;   /* green as TEXT, on its own 18% wash */
   --ip-red:           #ff3b30;
+  --ip-red-ink:       #d70015;   /* red as TEXT — systemRed is 3.6:1 */
   --ip-orange:        #ff9500;
   --ip-fill:          rgba(120, 120, 128, 0.12);
   --ip-fill-2:        rgba(120, 120, 128, 0.20);
@@ -4910,11 +4923,14 @@ html.theme-dark .settings-page {
   --ip-card-hover: #2c2c2e;
   --ip-sep:        rgba(84, 84, 88, 0.65);
   --ip-label:      #ffffff;
-  --ip-label-2:    rgba(235, 235, 245, 0.60);
-  --ip-label-3:    rgba(235, 235, 245, 0.30);
-  --ip-blue:       #0a84ff;
+  --ip-label-2:    rgba(235, 235, 245, 0.72);
+  --ip-label-3:    rgba(235, 235, 245, 0.58);
+  --ip-blue:       #0a84ff;      /* tinted text on black */
+  --ip-blue-fill:  #0a6ecd;      /* behind white text */
   --ip-green:      #30d158;
+  --ip-green-ink:  #30d158;      /* already bright enough on a dark card */
   --ip-red:        #ff453a;
+  --ip-red-ink:    #ff6961;
   --ip-orange:     #ff9f0a;
   --ip-fill:       rgba(120, 120, 128, 0.24);
   --ip-fill-2:     rgba(120, 120, 128, 0.32);
@@ -4973,7 +4989,7 @@ html.theme-dark .settings-page {
 .settings-page .topbar-user-avatar {
   width: 28px; height: 28px;
   border-radius: 50%;
-  background: var(--ip-blue);
+  background: var(--ip-blue-fill);
   color: #fff;
   display: grid; place-items: center;
   font-size: 13px; font-weight: 600;
@@ -5019,7 +5035,7 @@ html.theme-dark .settings-page {
 }
 .settings-page .settings-nav-item:hover { background: var(--ip-fill); }
 .settings-page .settings-nav-item.active {
-  background: var(--ip-blue);
+  background: var(--ip-blue-fill);
   color: #fff;
   font-weight: 500;
 }
@@ -5269,12 +5285,12 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
 .settings-page .btn-primary,
 .settings-page .cal-modal-btn-primary,
 .settings-page .settings-inline-save {
-  background: var(--ip-blue);
+  background: var(--ip-blue-fill);
   color: #fff;
 }
 .settings-page .btn-primary:hover,
 .settings-page .cal-modal-btn-primary:hover,
-.settings-page .settings-inline-save:hover { background: var(--ip-blue); opacity: 0.85; }
+.settings-page .settings-inline-save:hover { background: var(--ip-blue-fill); opacity: 0.85; }
 .settings-page .btn:disabled,
 .settings-page .cal-modal-btn:disabled,
 .settings-page .settings-inline-save:disabled { opacity: 0.4; cursor: default; }
@@ -5399,7 +5415,9 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   font-weight: 600;
   font-family: inherit;
 }
-.settings-page .pill-ok   { background: color-mix(in srgb, var(--ip-green) 18%, transparent); color: var(--ip-green); }
+/* The tint lightens the pill under its own text: systemGreen on an 18% green
+   wash is 1.9:1. The ink variant is the same hue at AA. */
+.settings-page .pill-ok   { background: color-mix(in srgb, var(--ip-green) 18%, transparent); color: var(--ip-green-ink); }
 .settings-page .pill-warn { background: color-mix(in srgb, var(--ip-orange) 20%, transparent); color: var(--ip-orange); }
 
 /* ---- contacts add/edit form ---- */
@@ -5633,9 +5651,19 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
 html.theme-dark .mail-page {
   --m-bg:      #000000;
   --m-surface: #1c1c1e;
-  --m-sidebar: #1c1c1e;
-  --m-list:    #000000;
+  /* The elevation was inverted here: the sidebar was the raised surface and the
+     message list — the panel you actually read — was pure black, so the harshest
+     contrast on screen sat where the eye rests longest, with a lighter sidebar
+     beside it drawing attention away from the content. Light mode already had
+     this the right way round (grouped grey behind, white panel in front); this
+     matches it. Pure black stays for the chrome and the sidebar, which is also
+     what makes the raised list read as raised. */
+  --m-sidebar: #000000;
+  --m-list:    #1c1c1e;
   --m-sep:     rgba(84, 84, 88, 0.55);
+  /* Row hairlines inside the list: the structural separator is too strong when
+     it repeats every 44px down a long list. */
+  --m-sep-row: rgba(84, 84, 88, 0.34);
   --m-label:   #ffffff;
   --m-label-2: rgba(235, 235, 245, 0.72);
   /* 34% white is 2.6:1 on black; 58% clears AA on both #000 and #1C1C1E. */
@@ -5872,7 +5900,8 @@ html.theme-dark .mail-page .reading-pane {
   position: absolute;
   left: 58px; right: 0; bottom: 0;
   height: 0.5px;
-  background: var(--m-sep);
+  /* Falls back to --m-sep in light, where the structural weight is right. */
+  background: var(--m-sep-row, var(--m-sep));
 }
 .mail-page .msg-item:last-child::after { display: none; }
 .mail-page .msg-item:hover { background: var(--m-fill); }
@@ -6020,7 +6049,9 @@ html.theme-dark .mail-page .reading-pane {
    .msg-item.unread qualifier so they outrank the original rules. */
 .mail-page .msg-item.unread .msg-subject { color: var(--m-label); }
 .mail-page .msg-item.unread .msg-time { color: var(--m-label-2); font-weight: 400; }
-.mail-page .msg-item.unread .msg-thread-count { color: var(--m-label-2); background: var(--m-fill-2); }
+/* (0,3,0), so it outranks the plain .msg-thread-count rule further down and
+   has to carry the corrected colours itself. */
+.mail-page .msg-item.unread .msg-thread-count { color: var(--m-label); background: var(--m-fill); }
 .mail-page .msg-item.active.unread .msg-subject { color: #fff; }
 .mail-page .msg-item.active.unread .msg-time { color: #fff; }
 
@@ -6417,3 +6448,118 @@ html.theme-light .settings-page .logo-preview img[data-needs-plate="both"] {
 /* --m-label-3 is the tertiary tone; on the sidebar's own grey it lands at
    4.4:1, just under. This is a transient status line, but it is still text. */
 .mail-page .acct-folders-loading { color: var(--m-label-2); }
+
+/* The thread-count pill and the selection bar's Cancel both sat a little under
+   4.5:1 in dark — the tinted fill behind each lightens the backdrop under its
+   own text. Found by sweeping the whole document rather than one pane. */
+.mail-page .msg-thread-count { color: var(--m-label); background: var(--m-fill); }
+.mail-page .list-selection-close { color: var(--m-label); }
+.mail-page .list-selection-close:hover { background: var(--m-fill); color: var(--m-label); }
+
+/* The one base .msg-item.active rule with no .mail-page counterpart at matching
+   specificity, so on a selected row the count stayed old-brand-blue on white
+   (3.7:1). No pill here for the same reason the folder badge drops its own on a
+   selected row — a translucent plate over the blue fill lifts the backdrop under
+   its own white digits. */
+.mail-page .msg-item.active .msg-thread-count,
+.mail-page .msg-item.active.unread .msg-thread-count {
+  background: transparent;
+  color: #fff;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS — legibility corrections found by the whole-app sweep
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Secondary buttons carried a grey fill, and a tinted plate under tinted text
+   lifts the backdrop against it: 4.3:1 in light, 3.5:1 in dark. iOS draws these
+   as plain tinted text on the card, which is both the native look and legible.
+   The filled variants below re-assert themselves after this. */
+.settings-page .btn,
+.settings-page .cal-modal-btn {
+  background: transparent;
+}
+.settings-page .btn:hover,
+.settings-page .cal-modal-btn:hover { background: var(--ip-fill); }
+.settings-page .btn.btn-primary,
+.settings-page .cal-modal-btn.cal-modal-btn-primary,
+.settings-page .settings-inline-save { background: var(--ip-blue-fill); color: #fff; }
+.settings-page .btn.btn-primary:hover,
+.settings-page .cal-modal-btn.cal-modal-btn-primary:hover,
+.settings-page .settings-inline-save:hover { background: var(--ip-blue-fill); opacity: 0.85; }
+/* Destructive: tinted text, not a red plate, so it matches the others — and the
+   accessible red, since systemRed is 3.6:1 on white. */
+.settings-page .btn.btn-danger,
+.settings-page .cal-modal-btn.cal-modal-btn-danger {
+  background: transparent;
+  color: var(--ip-red-ink);
+}
+.settings-page .btn.btn-danger:hover,
+.settings-page .cal-modal-btn.cal-modal-btn-danger:hover {
+  background: var(--ip-fill);
+  color: var(--ip-red-ink);
+}
+
+/* The banner heading used systemRed as text (3.6:1 on the white card). The
+   class is .settings-alert-danger, not .settings-banner. */
+.settings-page .settings-alert-danger strong,
+.settings-page .settings-alert-danger b { color: var(--ip-red-ink); }
+
+/* The sticky bar is 80% opaque with real content scrolling beneath it, so a
+   white card passing under lifts it toward #333 and the tinted title and
+   "Back to inbox" drop to 3.7:1. Raising the opacity bounds how far the
+   backdrop can lift it while keeping the frosted look the blur is there for. */
+html.theme-dark .settings-page .settings-topbar {
+  background: color-mix(in srgb, var(--ip-bg) 94%, transparent);
+}
+
+/* "Back to inbox" carries an 18% white plate from the era when the bar was solid
+   brand blue. Over the dark bar that plate lifts the backdrop to #2e2e2e and the
+   tinted label falls to 3.7:1 — the plate is the whole problem, and on a
+   translucent bar it was never doing anything anyway. */
+.settings-page .settings-back { background: transparent; }
+.settings-page .settings-back:hover { background: var(--ip-fill); }
+
+/* Same as the inbox: the dialog footer kept its own grey fill, lightening the
+   surface under the tinted buttons that sit on it. */
+.settings-page .cal-modal-footer { background: transparent; }
+
+/* The dialog panel kept the old dark surface (#20242b), lighter than the card
+   the rest of the page uses, which left the tinted footer buttons at 4.3:1.
+   Matching the card also makes the dialog look like the page it belongs to. */
+.settings-page .cal-modal-panel,
+.settings-page .acct-modal-card {
+  background: var(--ip-card);
+  border: 0.5px solid var(--ip-sep);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SIGN-IN — legibility corrections found by the whole-app sweep
+   ═══════════════════════════════════════════════════════════════════════════
+   This page was never part of the iPadOS work, so it still runs on the base
+   brand tokens. Three of them do not survive dark mode. */
+
+/* The primary button is a gradient from --c-brand to --c-brand-active. In dark
+   mode "active" is LIGHTER than the base (the opposite of light mode, where it
+   is the pressed/darker shade), so the gradient ends on #6cb4ee and the white
+   label sits at 2.2:1 across the bottom half of the biggest button on the page.
+   A flat fill removes the gradient's bad end entirely. */
+.login-page .btn-primary { background: #0068cc; }
+.login-page .btn-primary:hover:not(:disabled) { background: #0068cc; opacity: 0.9; }
+html.theme-dark .login-page .btn-primary { background: #0a6ecd; }
+html.theme-dark .login-page .btn-primary:hover:not(:disabled) { background: #0a6ecd; opacity: 0.9; }
+
+/* Tinted text on the card: the brand blue is 4.2:1 in dark. */
+html.theme-dark .login-page .login-brand-tag,
+html.theme-dark .login-page .advanced-toggle { color: #4da3ff; }
+.login-page .login-brand-tag,
+.login-page .advanced-toggle { color: #0068cc; }
+
+/* Footer sits on the shell rather than the white card, so the AA-on-white grey
+   lands at 4.05:1 there. */
+.login-page .login-page-footer,
+.login-page .login-page-footer span { color: #5f5f63; }
+html.theme-dark .login-page .login-page-footer,
+html.theme-dark .login-page .login-page-footer span { color: rgba(235, 235, 245, 0.72); }
+html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 245, 0.86); }
+.login-page .login-page-footer strong { color: #48484c; }
