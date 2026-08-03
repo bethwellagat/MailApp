@@ -6328,3 +6328,92 @@ html.theme-light .settings-page .logo-preview img[data-needs-plate="both"] {
 }
 .mail-page .dropdown-item:hover { background: var(--m-fill); }
 .mail-page .dropdown-item .icon { color: var(--m-label-2); }
+
+/* ---- compose header: the close button ----
+   .compose-close is a DIFFERENT class from .compose-hdr-btn, so restyling the
+   header's minimize/expand buttons left this one on the white it was given for
+   the old dark brand header — white on a white header, 1.0:1, invisible. It sits
+   outside .app-shell, which is why the first contrast sweep never saw it. */
+.mail-page .compose-close { color: var(--m-label-2); border-radius: 7px; }
+.mail-page .compose-close:hover { background: var(--m-fill); color: var(--m-label); }
+
+/* ---- alert buttons ----
+   These were given a grey fill, which lifts the backdrop under their own tinted
+   text: Cancel fell to 3.0:1 and Delete to 3.0:1. iOS alert buttons are plain
+   tinted text on the sheet itself, which is both the native look and legible.
+   Destructive text uses the accessible red — systemRed is only 3.6:1 on white. */
+.mail-page .cal-modal-btn {
+  background: transparent;
+  color: var(--m-blue);
+}
+.mail-page .cal-modal-btn:hover { background: var(--m-fill); }
+.mail-page .cal-modal-btn-danger,
+.mail-page .cal-modal-btn-danger:hover { color: var(--f-red); background: transparent; }
+.mail-page .cal-modal-btn-danger:hover { background: var(--m-fill); }
+.mail-page .cal-modal-btn-primary,
+.mail-page .cal-modal-btn-primary:hover { color: #fff; }
+
+/* ---- action bar: colour-coded glyphs ----
+   Mail tints a toolbar with one accent colour and reserves per-item colour for
+   the sidebar, which is why these started out uniformly blue. Side by side with
+   the colour-coded mailboxes it just read as flat, so the toolbar now uses the
+   same semantic palette — Delete in the Trash red, Archive in the Archive
+   indigo — and the label drops to the neutral label colour so the colour reads
+   as the icon's, exactly as it does in the sidebar.
+
+   Carried on a custom property rather than per-button colour rules: that keeps
+   the disabled rule below at a higher specificity than the tints, so a disabled
+   Delete greys out instead of staying bright red and inviting a click. */
+.mail-page [id="abDelete"]     { --ab-tint: var(--f-red); }
+.mail-page [id="abArchive"]    { --ab-tint: var(--f-indigo); }
+.mail-page [id="abMove"]       { --ab-tint: var(--f-teal); }
+.mail-page [id="abFlag"]       { --ab-tint: var(--f-orange); }
+.mail-page [id="abMarkRead"]   { --ab-tint: var(--f-green); }
+.mail-page [id="abMarkUnread"] { --ab-tint: var(--f-gray); }
+.mail-page [id="abSync"]       { --ab-tint: var(--f-blue); }
+
+.mail-page .ab-btn { color: var(--m-label); }
+.mail-page .ab-btn .icon { color: var(--ab-tint, var(--m-blue)); }
+.mail-page .ab-btn .ab-chev { color: var(--m-label-3); }
+/* (0,4,0) — outranks both tint rules above, so disabled always wins. */
+.mail-page .ab-btn:disabled { color: var(--m-label-3); }
+.mail-page .ab-btn:disabled .icon { color: var(--m-label-3); }
+
+/* ---- restore the filled buttons ----
+   The two rules above are written against the plain .cal-modal-btn / .ab-btn,
+   and the filled variants carry those same classes, so at equal specificity the
+   later rule was winning and stripping their fill and their white text: the
+   alert's confirm button went white-on-white (1.0:1) and New Email's label and
+   "+" went dark-on-blue. These re-assert the filled treatment after them. */
+.mail-page .cal-modal-btn.cal-modal-btn-primary {
+  background: var(--m-blue-fill);
+  color: #fff;
+}
+.mail-page .cal-modal-btn.cal-modal-btn-primary:hover {
+  background: var(--m-blue-fill);
+  opacity: 0.88;
+}
+.mail-page .ab-btn.ab-primary,
+.mail-page .ab-btn.ab-primary .icon,
+.mail-page .ab-btn.ab-primary:hover .icon { color: #fff; }
+.mail-page .ab-btn.ab-primary { background: var(--m-blue-fill); }
+
+/* The alert footer kept its own grey fill, which lightens the surface under the
+   tinted Cancel text (3.9:1 in dark). iOS alerts have no separate footer plate —
+   the buttons sit on the sheet itself. */
+.mail-page .cal-modal-footer { background: transparent; }
+
+/* Send and the account-form submit still carried the old brand blue, which is
+   only 3.7:1 under white text. They were never restyled, so they were also the
+   last two controls not speaking the same language as everything around them. */
+.mail-page .btn-send,
+.mail-page .btn-send-chev,
+.mail-page .acct-btn-primary { background: var(--m-blue-fill); border-color: transparent; }
+.mail-page .btn-send:hover:not(:disabled),
+.mail-page .btn-send-chev:hover:not(:disabled),
+.mail-page .acct-btn-primary:hover:not(:disabled) { background: var(--m-blue-fill); opacity: 0.88; }
+.mail-page .btn-send:disabled { background: var(--m-fill-2); color: var(--m-label-3); }
+
+/* --m-label-3 is the tertiary tone; on the sidebar's own grey it lands at
+   4.4:1, just under. This is a transient status line, but it is still text. */
+.mail-page .acct-folders-loading { color: var(--m-label-2); }
