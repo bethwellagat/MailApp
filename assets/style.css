@@ -6739,3 +6739,32 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 @media (pointer: coarse) {
   .mail-page .cal-mini-cell { min-width: 0; min-height: 0; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WIDE-SCREEN MEASURE
+   ═══════════════════════════════════════════════════════════════════════════
+   Nothing capped the text column, so on a large monitor a line ran the full
+   pane: 178 characters at 1920 and 272 at 2560, against a comfortable 60–80.
+   At that width the eye loses the start of the next line.
+
+   The message body is handled in two steps because the two kinds of content
+   have different rights. Sender HTML has a design of its own and is entitled
+   to it, so it only gets a generous outer bound — real email is drawn at
+   600–900px, so this never bites a designed message, it only stops the
+   pathological case. Plain text has no layout at all, so it can take a proper
+   measure; the selector matches the wrapper plain_to_html emits. */
+.mail-page .reading-body { max-width: 1000px; }
+.mail-page .reading-body > div[style*="pre-wrap"] { max-width: 72ch; }
+/* Keep the whole column — subject, sender, body — together and centred in a
+   wide pane. Capping the body alone left it hugging the left edge of 1920px
+   of empty space, which reads as a layout fault rather than a choice.
+   Centring the container, not the text, so a sender's own alignment is
+   untouched. */
+.mail-page .reading-content > * { max-width: 1060px; margin-inline: auto; }
+
+/* The app's own chrome has no such constraint — cap it properly. Left-aligned
+   rather than centred so it stays anchored to the nav beside it. */
+.settings-page .settings-content { max-width: 1280px; }
+.settings-page .settings-alert { max-width: 82ch; }
+.settings-page .settings-hero,
+.settings-page .settings-section-desc { max-width: 82ch; }
