@@ -51,6 +51,10 @@ function resolve_brand($host = null) {
         'domain'  => $domain,
         'host'    => $host,
         'logo'    => '',
+        // Brand colour used for the PWA theme colour and the browser/OS chrome.
+        // Overridable per install so a white-labelled deployment isn't stuck with
+        // the default blue; validated as a hex colour before it reaches any page.
+        'color'   => '#0078d4',
     ];
 
     $config = __DIR__ . '/../data/brand.json';
@@ -63,6 +67,12 @@ function resolve_brand($host = null) {
                     if (!empty($cfg[$k]) && is_string($cfg[$k])) {
                         $defaults[$k] = $cfg[$k];
                     }
+                }
+                // Only a literal hex colour — this value is emitted into a meta
+                // tag and the manifest, so it must not be free-form text.
+                if (!empty($cfg['color']) && is_string($cfg['color'])
+                    && preg_match('/^#[0-9a-fA-F]{6}$/', trim($cfg['color']))) {
+                    $defaults['color'] = strtolower(trim($cfg['color']));
                 }
             }
         }

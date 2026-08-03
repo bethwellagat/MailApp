@@ -36,7 +36,7 @@
   --c-text: #1a1d23;
   --c-text-secondary: #3a3f4a;
   --c-text-muted: #5b6270;
-  --c-text-subtle: #9aa1ac;
+  --c-text-subtle: #707782;   /* WCAG AA 4.52:1 on white (was #9aa1ac = 2.60:1) */
   --c-text-on-brand: #ffffff;
 
   /* Borders */
@@ -116,7 +116,7 @@ html.theme-dark {
   --c-text: #e6e8ec;
   --c-text-secondary: #c4c9d2;
   --c-text-muted: #98a0ab;
-  --c-text-subtle: #6b7380;
+  --c-text-subtle: #838b98;   /* WCAG AA 4.53:1 on the dark surface (was #6b7380 = 3.25:1) */
   --c-text-on-brand: #ffffff;
 
   --c-border: #2f343d;
@@ -167,7 +167,7 @@ html.theme-dark .reading-pane {
   --c-text: #1a1d23;
   --c-text-secondary: #3a3f4a;
   --c-text-muted: #5b6270;
-  --c-text-subtle: #9aa1ac;
+  --c-text-subtle: #707782;   /* WCAG AA 4.52:1 on white (was #9aa1ac = 2.60:1) */
   --c-error: #c2333a;
   --c-error-bg: #fce8ea;
   --c-success: #107c10;

@@ -48,7 +48,7 @@ $prefs        = load_prefs($email);
 <title>Inbox · <?= h($brandLabel) ?></title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg?v=<?= @filemtime(__DIR__.'/assets/favicon.svg') ?>">
 <link rel="manifest" href="manifest?v=<?= @filemtime(__DIR__.'/manifest.php') ?>">
-<meta name="theme-color" content="#0078d4">
+<meta name="theme-color" content="<?= h($brand['color']) ?>">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
