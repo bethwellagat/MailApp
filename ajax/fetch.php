@@ -1086,15 +1086,40 @@ if ($action === 'search') {
     }
     if (mb_strlen($q) > 200) $q = mb_substr($q, 0, 200);
 
-    // Resolve which folders to search: current folder if user is in something
-    // unusual, plus INBOX + Sent (the common case).
-    $ref = imap_ref();
+    // Which folders to search.
+    //   default   — INBOX + the current folder + Sent. Fast, and right for the
+    //               common "where is that message" case.
+    //   where=all — EVERY folder. Without this, anything the user (or a filter,
+    //               or Archive) moved out of those three was simply invisible to
+    //               search, which quietly defeats the app's own organising
+    //               features. Folders are still opened ONE AT A TIME, so the
+    //               memory profile is unchanged; only the wall-clock cost grows.
+    $ref       = imap_ref();
+    $searchAll = (($_GET['where'] ?? '') === 'all');
     $foldersToSearch = ['INBOX'];
     if (strcasecmp($folder, 'INBOX') !== 0) $foldersToSearch[] = $folder;
+    $folderCapped = false;
     $tmp = open_box('INBOX', OP_HALFOPEN);
     if ($tmp) {
-        $sentName = find_folder($tmp, $ref, ['sent']);
-        if ($sentName && !in_array($sentName, $foldersToSearch, true)) $foldersToSearch[] = $sentName;
+        if ($searchAll) {
+            $list = @imap_list($tmp, $ref, '*');
+            if (is_array($list)) {
+                foreach ($list as $raw) {
+                    $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
+                    if ($name !== '' && !in_array($name, $foldersToSearch, true)) $foldersToSearch[] = $name;
+                }
+            }
+            // Bound the work so a mailbox with hundreds of folders can't stall the
+            // request; say so in the response rather than silently truncating.
+            $FOLDER_CAP = 40;
+            if (count($foldersToSearch) > $FOLDER_CAP) {
+                $foldersToSearch = array_slice($foldersToSearch, 0, $FOLDER_CAP);
+                $folderCapped = true;
+            }
+        } else {
+            $sentName = find_folder($tmp, $ref, ['sent']);
+            if ($sentName && !in_array($sentName, $foldersToSearch, true)) $foldersToSearch[] = $sentName;
+        }
         @imap_close($tmp);
     }
 
@@ -1171,10 +1196,12 @@ if ($action === 'search') {
     if (count($results) > 200) $results = array_slice($results, 0, 200);
 
     ok([
-        'results' => $results,
-        'q'       => $q,
-        'folders' => $foldersToSearch,
-        'total'   => count($results),
+        'results'        => $results,
+        'q'              => $q,
+        'folders'        => $foldersToSearch,
+        'searched_all'   => $searchAll,
+        'folders_capped' => $folderCapped,
+        'total'          => count($results),
         'scope'   => $full ? 'full' : 'headers',
     ]);
 }

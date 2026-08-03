@@ -54,6 +54,9 @@
     let searchAbortCtrl     = null;
     const searchCache       = new Map();
     let searchResultScope   = 'headers'; // scope of the results currently shown ('headers' | 'full')
+    let searchResultWhere   = 'default'; // breadth of those results ('default' | 'all')
+    let searchFoldersCapped = false;     // true when "all folders" hit the server-side cap
+    let searchFolderCount   = 0;         // how many folders the server actually searched
 
     const ATTACH_MAX_PER_FILE = 25 * 1024 * 1024;  // 25 MB
     const ATTACH_MAX_TOTAL    = 25 * 1024 * 1024;
@@ -1053,18 +1056,38 @@
         $('listFolderName').textContent =
             'Search "' + q + '" · ' + results.length + ' result' + (results.length === 1 ? '' : 's');
 
-        // Default search is headers-only (fast). Offer a one-click deep search of
-        // the full message text when only headers were searched.
-        const fullCta = (searchResultScope === 'headers')
-            ? '<div class="search-fulltext-row"><button type="button" class="search-fulltext-cta" data-full-search="1">' +
-                  '<svg class="icon" width="13" height="13"><use href="#ic-search"/></svg>' +
-                  'Search full message text for "' + escapeHtml(q) + '"' +
-              '</button></div>'
-            : '';
+        // Searching is deliberately narrow by default (headers only, Inbox +
+        // current + Sent) because both dimensions cost real time on IMAP servers
+        // with no full-text index. Offer each widening step explicitly, so a user
+        // who cannot find something knows there is more to look at rather than
+        // concluding the message is gone.
+        let ctas = '';
+        if (searchResultScope === 'headers') {
+            ctas += '<button type="button" class="search-fulltext-cta" data-full-search="1">' +
+                        '<svg class="icon" width="13" height="13"><use href="#ic-search"/></svg>' +
+                        'Search full message text' +
+                    '</button>';
+        }
+        if (searchResultWhere !== 'all') {
+            ctas += '<button type="button" class="search-fulltext-cta" data-all-folders="1">' +
+                        '<svg class="icon" width="13" height="13"><use href="#ic-folder"/></svg>' +
+                        'Search every folder' +
+                    '</button>';
+        }
+        let note = '';
+        if (searchResultWhere === 'all') {
+            note = '<div class="search-scope-note">Searched ' + searchFolderCount + ' folder' +
+                   (searchFolderCount === 1 ? '' : 's') +
+                   (searchFoldersCapped ? ' (the first ' + searchFolderCount + ' — this mailbox has more)' : '') +
+                   '.</div>';
+        }
+        const fullCta = (ctas || note) ? '<div class="search-fulltext-row">' + ctas + note + '</div>' : '';
 
         if (results.length === 0) {
+            const scopeWord = searchResultWhere === 'all' ? 'any folder' : 'Inbox, this folder or Sent';
+            const whatWord  = searchResultScope === 'full' ? 'message text' : 'subjects, senders, or recipients';
             $('messageList').innerHTML =
-                '<div class="list-empty">No matches in subjects, senders, or recipients.</div>' + fullCta;
+                '<div class="list-empty">No matches in ' + whatWord + ' in ' + scopeWord + '.</div>' + fullCta;
             $('pagination').hidden = true;
             return;
         }
@@ -1108,13 +1131,18 @@
         $('pagination').hidden = true;
     }
 
-    async function runServerSearch(q, scope) {
+    async function runServerSearch(q, scope, where) {
         scope = scope || 'headers'; // default = fast header search (subject/from/to)
-        const cacheKey = scope + '|' + q.toLowerCase();
+        where = where || 'default';  // 'all' = every folder, not just Inbox/current/Sent
+        const cacheKey = scope + '|' + where + '|' + q.toLowerCase();
         if (searchCache.has(cacheKey)) {
+            const hit = searchCache.get(cacheKey);
             state.searchActive  = true;
             searchResultScope   = scope;
-            state.searchResults = searchCache.get(cacheKey);
+            searchResultWhere   = where;
+            searchFoldersCapped = !!hit.capped;
+            searchFolderCount   = hit.folders || 0;
+            state.searchResults = hit.results;
             renderSearchResults();
             return;
         }
@@ -1124,12 +1152,15 @@
 
         $('listFolderName').textContent = 'Searching for "' + q + '"…';
         $('messageList').innerHTML = '<div class="list-loading">' +
-            (scope === 'full' ? 'Searching full message text…' : 'Searching Inbox &amp; Sent…') + '</div>';
+            (where === 'all'
+                ? 'Searching every folder…'
+                : (scope === 'full' ? 'Searching full message text…' : 'Searching Inbox &amp; Sent…')) + '</div>';
         $('pagination').hidden = true;
 
         try {
             const url = 'ajax/fetch.php?action=search&q=' + encodeURIComponent(q) +
-                        (scope === 'full' ? '&scope=full' : '');
+                        (scope === 'full' ? '&scope=full' : '') +
+                        (where === 'all' ? '&where=all' : '');
             const r = await fetch(url, { credentials: 'same-origin', signal: searchAbortCtrl.signal });
             if (r.status === 401) { window.location = 'index'; return; }
             const data = await r.json();
@@ -1140,9 +1171,12 @@
             const results = data.results || [];
             // LRU-ish cap of 20 cached searches per session (keyed by scope+query)
             if (searchCache.size >= 20) searchCache.delete(searchCache.keys().next().value);
-            searchCache.set(cacheKey, results);
+            searchCache.set(cacheKey, { results: results, capped: !!data.folders_capped, folders: (data.folders || []).length });
             state.searchActive  = true;
             searchResultScope   = scope;
+            searchResultWhere   = where;
+            searchFoldersCapped = !!data.folders_capped;
+            searchFolderCount   = (data.folders || []).length;
             state.searchResults = results;
             if (state.searchQuery === q) renderSearchResults(); // ignore stale response
         } catch (e) {
@@ -3598,8 +3632,12 @@
                 return;
             }
             // "Search full message text" affordance shown after a fast header search.
+            if (e.target.closest('[data-all-folders]')) {
+                if (state.searchQuery) runServerSearch(state.searchQuery, searchResultScope, 'all');
+                return;
+            }
             if (e.target.closest('[data-full-search]')) {
-                if (state.searchQuery) runServerSearch(state.searchQuery, 'full');
+                if (state.searchQuery) runServerSearch(state.searchQuery, 'full', searchResultWhere);
                 return;
             }
             const item = e.target.closest('.msg-item');
