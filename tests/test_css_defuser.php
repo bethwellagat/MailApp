@@ -8,8 +8,10 @@
  */
 
 require_once T_ROOT . '/lib/util.php';
-t_extract_fn(T_ROOT . '/ajax/fetch.php', 'sanitize_html',           't_css_mail');
-t_extract_fn(T_ROOT . '/lib/prefs.php',  'sanitize_signature_html', 't_css_sig');
+require_once T_ROOT . '/lib/mailhtml.php';
+require_once T_ROOT . '/lib/prefs.php';
+function t_css_mail($h) { return sanitize_html($h); }
+function t_css_sig($h)  { return sanitize_signature_html($h); }
 
 /**
  * Did anything viewport-escaping survive? Models what a CSS parser resolves

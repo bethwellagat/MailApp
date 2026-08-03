@@ -15,8 +15,13 @@
  */
 
 require_once T_ROOT . '/lib/util.php';
-t_extract_fn(T_ROOT . '/ajax/fetch.php', 'sanitize_html',           't_mail_sanitize');
-t_extract_fn(T_ROOT . '/lib/prefs.php',  'sanitize_signature_html', 't_sig_sanitize');
+// sanitize_html() now lives in a library, so it can simply be required — no need
+// to tokenize an endpoint file to get at it. (sanitize_signature_html still lives
+// in lib/prefs.php, which is safe to include.)
+require_once T_ROOT . '/lib/mailhtml.php';
+require_once T_ROOT . '/lib/prefs.php';
+function t_mail_sanitize($h) { return sanitize_html($h); }
+function t_sig_sanitize($h)  { return sanitize_signature_html($h); }
 
 /** Would a browser see an executable handler attribute in this output? */
 function t_has_handler($out) {
