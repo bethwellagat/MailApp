@@ -866,7 +866,9 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             applyBtn.disabled = false; checkBtn.disabled = false;
             if (d.error) { statusEl.className = 'settings-status error'; statusEl.textContent = d.error; return; }
             statusEl.className = 'settings-status ok';
-            statusEl.textContent = 'Updated ' + (d.files || 0) + ' files to ' + short(d.version) + '. Reloading…';
+            statusEl.textContent = 'Updated ' + (d.files || 0) + ' files'
+                + (d.pruned ? ', removed ' + d.pruned + ' no longer needed' : '')
+                + ' to ' + short(d.version) + '. Reloading…';
             applyBtn.hidden = true;
             setTimeout(() => location.reload(), 1500);
         });

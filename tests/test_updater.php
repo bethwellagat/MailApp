@@ -91,3 +91,38 @@ foreach (['connect: Connection refused', 'AUTH 535 bad credentials',
           'STARTTLS 502', 'TLS upgrade failed', 'EHLO2 421'] as $e) {
     t_ok('not a certificate error: ' . substr($e, 0, 34), smtp_is_tls_error($e) === false);
 }
+
+t_group('pruning files removed upstream — must only ever delete what WE deployed');
+$app = "$base/c4/app";
+t_put("$app/inbox.php",             "x");
+t_put("$app/lib/old_removed.php",   "superseded code that still answers requests");
+t_put("$app/assets/app.js",         "x");
+t_put("$app/customer_custom.php",   "a file the customer added themselves");
+t_put("$app/data/prefs/user.json",  "PRECIOUS USER DATA");
+
+$prev    = ['inbox.php', 'lib/old_removed.php', 'assets/app.js'];  // what we shipped last time
+$current = ['inbox.php', 'assets/app.js'];                          // new release drops one
+$removed = _update_prune($app, $prev, $current, $EXCLUDE);
+t_ok('removed the file dropped upstream', $removed === 1 && !is_file("$app/lib/old_removed.php"), "removed=$removed");
+t_ok('kept files still in the release',   is_file("$app/inbox.php") && is_file("$app/assets/app.js"));
+t_ok('NEVER touches a customer file',     is_file("$app/customer_custom.php"));
+t_ok('NEVER touches user data',           is_file("$app/data/prefs/user.json"));
+
+// No manifest recorded yet (first update after this ships) must prune nothing.
+t_put("$app/lib/another.php", "y");
+t_eq('no previous manifest prunes nothing', _update_prune($app, [], ['inbox.php'], $EXCLUDE), 0);
+t_ok('...and leaves the file alone', is_file("$app/lib/another.php"));
+
+// Path escapes must be refused outright.
+t_put("$app/../ESCAPE_TARGET.txt", "must survive");
+$escapes = ['../ESCAPE_TARGET.txt', '/etc/hosts', 'data/prefs/user.json', '', 'lib/../../ESCAPE_TARGET.txt'];
+t_eq('every path escape refused', _update_prune($app, $escapes, [], $EXCLUDE), 0);
+t_ok('parent-directory file untouched', is_file("$app/../ESCAPE_TARGET.txt"));
+t_ok('data/ file untouched',            is_file("$app/data/prefs/user.json"));
+
+t_group('manifest generation');
+$rel = "$base/c5/rel";
+t_put("$rel/inbox.php", "x"); t_put("$rel/lib/a.php", "x"); t_put("$rel/assets/b.css", "x");
+t_put("$rel/data/should_not_list.json", "x"); t_put("$rel/tests/t.php", "x");
+$m = _update_file_list($rel, $EXCLUDE);
+t_eq('lists shipped files only', $m, ['assets/b.css', 'inbox.php', 'lib/a.php']);

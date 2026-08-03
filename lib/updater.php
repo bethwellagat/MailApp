@@ -58,6 +58,13 @@ function update_config() {
     return ['repo' => $repo, 'branch' => $branch, 'token' => $token, 'admin_email' => $admin];
 }
 
+/** File list recorded by the last successful update, or [] if none was kept. */
+function _update_previous_manifest() {
+    $v = @json_decode((string)@file_get_contents(_update_version_file()), true);
+    $f = (is_array($v) && isset($v['files']) && is_array($v['files'])) ? $v['files'] : [];
+    return array_values(array_filter($f, 'is_string'));
+}
+
 /** The commit sha currently deployed (recorded after the last successful update). */
 function update_current_version() {
     $v = @json_decode((string)@file_get_contents(_update_version_file()), true);
@@ -212,6 +219,59 @@ function _update_copy_tree($src, $dst, array $exclude, $backupDir, array &$journ
 }
 
 /**
+ * Every file in a tree, as sorted paths relative to its root, honouring the same
+ * top-level exclusions as the copy. This is the release MANIFEST.
+ */
+function _update_file_list($root, array $exclude) {
+    $out   = [];
+    $stack = [['s' => $root, 'rel' => '']];
+    while ($stack) {
+        $frame = array_pop($stack);
+        $items = @scandir($frame['s']);
+        if (!is_array($items)) continue;
+        foreach ($items as $name) {
+            if ($name === '.' || $name === '..') continue;
+            $rel = $frame['rel'] === '' ? $name : ($frame['rel'] . '/' . $name);
+            if (in_array(explode('/', $rel)[0], $exclude, true)) continue;
+            $p = $frame['s'] . '/' . $name;
+            if (is_dir($p)) $stack[] = ['s' => $p, 'rel' => $rel];
+            else $out[] = $rel;
+        }
+    }
+    sort($out);
+    return $out;
+}
+
+/**
+ * Delete files this app previously deployed that the new release no longer
+ * contains. Renaming or removing a file upstream otherwise left the old copy on
+ * every install for ever — superseded code that still answers web requests.
+ *
+ * Driven by the manifest recorded at the last update, so ONLY files we shipped
+ * are ever considered: a file the customer added themselves was never in a
+ * manifest and is never touched. An install with no recorded manifest (the first
+ * update after this ships) prunes nothing and simply records one.
+ *
+ * Best-effort and deliberately outside the transaction — the copy has already
+ * succeeded by this point, and a leftover file is harmless compared with failing
+ * an update that otherwise worked.
+ */
+function _update_prune($appRoot, array $previous, array $current, array $exclude) {
+    if (!$previous) return 0;
+    $removed = 0;
+    foreach (array_diff($previous, $current) as $rel) {
+        // Re-validate every path: it must be relative, must not climb out of the
+        // app, and must not fall inside an excluded top-level name (data/ above all).
+        if ($rel === '' || strpos($rel, "\0") !== false) continue;
+        if (strpos($rel, '..') !== false || $rel[0] === '/' || preg_match('#^[a-zA-Z]:#', $rel)) continue;
+        if (in_array(explode('/', $rel)[0], $exclude, true)) continue;
+        $p = $appRoot . '/' . $rel;
+        if (is_file($p) && !is_link($p) && @unlink($p)) $removed++;
+    }
+    return $removed;
+}
+
+/**
  * Undo everything _update_copy_tree() recorded, most recent change first: restore
  * each replaced file from the backup, delete each file the update introduced, and
  * remove directories it created (rmdir only succeeds when they are empty, so a
@@ -334,10 +394,20 @@ function update_apply() {
         return ['error' => 'Update stopped and was rolled back — the app is unchanged and still working. Reason: ' . $cErr];
     }
 
-    // 6) Record the deployed version + clean up.
-    @file_put_contents(_update_version_file(), json_encode(['sha' => $targetSha, 'applied_at' => gmdate('c')]));
+    // 6) Remove files this app deployed that the new release no longer ships, so a
+    //    file deleted or renamed upstream doesn't linger for ever on every install.
+    $prevManifest = _update_previous_manifest();
+    $manifest     = _update_file_list($newRoot, $exclude);
+    $pruned       = _update_prune(_app_root(), $prevManifest, $manifest, $exclude);
+
+    // 7) Record the deployed version + the manifest that produced it, then clean up.
+    @file_put_contents(_update_version_file(), json_encode([
+        'sha'        => $targetSha,
+        'applied_at' => gmdate('c'),
+        'files'      => $manifest,
+    ]));
     @chmod(_update_version_file(), 0600);
     _update_rrmdir($work);
 
-    return ['ok' => true, 'files' => $copied, 'version' => $targetSha];
+    return ['ok' => true, 'files' => $copied, 'pruned' => $pruned, 'version' => $targetSha];
 }
