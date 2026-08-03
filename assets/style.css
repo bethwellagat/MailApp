@@ -5444,6 +5444,12 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   .settings-page .settings-nav {
     position: static;
     height: auto;
+    /* The base rule pins this to the 220px sidebar width. Once the grid is a
+       single column the nav is a full-width horizontal scroller, and 220px
+       left all nine items crammed into a stub strip with dead space beside
+       it — 1337px of content in a 220px box. */
+    width: auto;
+    max-width: none;
     flex-direction: row;
     overflow-x: auto;
     border-right: 0;
@@ -5764,6 +5770,13 @@ html.theme-dark .mail-page .reading-pane {
   padding: 6px 12px;
 }
 .mail-page .ab-btn {
+  /* A flex item defaults to min-width:auto, which is what stops it shrinking
+     below its own content. The phone rules below set an explicit min-width
+     for the touch target, which removes that floor — at 768px, where the
+     labels are still shown, the bar then squeezed the buttons instead of
+     scrolling and every label overflowed onto its neighbour. The bar already
+     has overflow-x:auto; this makes it use it. */
+  flex-shrink: 0;
   border: 0;
   background: transparent;
   color: var(--m-blue);
@@ -6290,7 +6303,11 @@ html.theme-dark .mail-page .reading-pane {
 
 /* The compact 30px mailbox row suits a pointer. In the phone drawer the same
    row is a touch target, so it goes back to the 44px minimum. */
-@media (max-width: 820px) {
+/* Sized by INPUT TYPE, not width: an iPad in landscape is 1024px wide and
+   still a touch device, so a width-only query left every control at pointer
+   size there. (pointer: coarse) covers that; the width clause keeps a
+   narrow desktop window working too. */
+@media (max-width: 820px), (pointer: coarse) {
   .mail-page .folder-item {
     min-height: 44px;
     padding: 4px 14px;
@@ -6599,7 +6616,7 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
    change the design — the 32px avatar, the small glyph buttons — the visual size
    is kept and only the hit box is enlarged, so nothing looks different but the
    whole 44px is tappable. */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) {
   /* toolbar and header glyph buttons */
   .mail-page .ab-btn,
   .mail-page .ab-btn.ab-icon-only,
@@ -6686,7 +6703,7 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 /* The rest of the phone targets the sweep turned up: the brand link, the
    reading-pane Back button, the Bcc toggle, the send-menu chevron, the
    attachment Download button and the filter's folder <select>. */
-@media (max-width: 820px) {
+@media (max-width: 820px), (pointer: coarse) {
   .mail-page .topbar-logo-slot { min-height: 44px; }
   .mail-page .reading-back { min-height: 44px; min-width: 44px; }
   .mail-page .compose-row-toggle { min-width: 44px; }
@@ -6700,4 +6717,25 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
      filter row is a primary control, so it gets the full target. */
   /* min-width too: "All" is short enough that padding alone left it 40px. */
   .mail-page .list-filter-chip { min-height: 44px; min-width: 44px; justify-content: center; }
+}
+
+/* The logo slot is capped at 220px below 1180px, but nothing told the brand text
+   to truncate, so a long name overflowed the cap and ran into the search field
+   — 7px at 1024px with the default name, more with a longer white-label one.
+   An ellipsis is the honest behaviour for a name that will not fit. */
+.mail-page .topbar-logo-slot { overflow: hidden; }
+.mail-page .topbar-logo-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* The mini-calendar day cells stay at ~27px on touch. A month grid is seven
+   columns wide, so 44px cells need 308px — wider than the 280px drawer they
+   live in. They sit above the WCAG 2.5.8 24px floor, and the grid layout is
+   what makes a month readable at a glance, so this is a deliberate exception
+   rather than an oversight. */
+@media (pointer: coarse) {
+  .mail-page .cal-mini-cell { min-width: 0; min-height: 0; }
 }
