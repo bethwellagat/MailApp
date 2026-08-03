@@ -1080,14 +1080,17 @@
             }
             const cls = ['msg-item', 'search-result'];
             if (!m.seen) cls.push('unread');
-            if (m.uid === state.currentUid) cls.push('active');
+            const isActive = (m.uid === state.currentUid);
+            if (isActive) cls.push('active');
             const seed       = m.from_addr || m.from_name || '?';
             const initial    = avatarInitial(m.from_name, m.from_addr);
             const color      = avatarColor(seed);
             const fromDisp   = m.from_name || m.from_addr || '(unknown)';
             const folderTag  = '<span class="msg-folder-badge" data-folder-type="' + folderType(m.folder) + '">' + escapeHtml(displayFolderName(m.folder)) + '</span>';
             html +=
-                '<div class="' + cls.join(' ') + '" data-uid="' + m.uid + '" data-folder="' + escapeAttr(m.folder) + '">' +
+                '<div class="' + cls.join(' ') + '" data-uid="' + m.uid + '" data-folder="' + escapeAttr(m.folder) + '"' +
+                     ' role="option" id="msgrow-' + m.uid + '" aria-selected="' + (isActive ? 'true' : 'false') + '"' +
+                     ' tabindex="' + (isActive ? '0' : '-1') + '">' +
                     '<span class="msg-dot"></span>' +
                     '<div class="msg-avatar" style="background:' + color + '">' + escapeHtml(initial) + '</div>' +
                     '<div class="msg-body">' +
@@ -1102,6 +1105,7 @@
                 '</div>';
         }
         $('messageList').innerHTML = html + fullCta;
+        ensureTabbableRow();
         $('pagination').hidden = true;
     }
 
@@ -1242,6 +1246,7 @@
             html += renderMsgItem(m);
         }
         $('messageList').innerHTML = html;
+        ensureTabbableRow();
         $('messageList').classList.toggle('msg-list-selecting', state.selectedUids.size > 0);
         updateSelectionBar();
     }
@@ -1281,9 +1286,19 @@
             }
         }
 
+        // Listbox semantics: the rows were plain <div>s with click handlers, so a
+        // keyboard user could not reach or operate the message list at all, and a
+        // screen reader announced no role, position or selected state. Roving
+        // tabindex keeps ONE stop in the list (Tab moves past it, arrows move
+        // within) instead of 25 separate tab stops.
+        const isActive = (m.uid === state.currentUid);
         const rowAttrs = ' data-uid="' + m.uid + '"' +
                          ' data-acct="' + escapeAttr(m.acct || '') + '"' +
-                         ' data-folder="' + escapeAttr(m.folder || state.currentFolder) + '"';
+                         ' data-folder="' + escapeAttr(m.folder || state.currentFolder) + '"' +
+                         ' role="option"' +
+                         ' id="msgrow-' + m.uid + '"' +
+                         ' aria-selected="' + (state.selectedUids.has(m.uid) || isActive ? 'true' : 'false') + '"' +
+                         ' tabindex="' + (isActive ? '0' : '-1') + '"';
 
         return (
             '<div class="' + cls.join(' ') + '"' + rowAttrs + ' draggable="true">' +
@@ -3394,14 +3409,41 @@
         const target = visible[idx];
         if (!target) return;
         loadMessage(target.uid);
-        // Scroll the row into view
+        // Scroll the row into view AND move real focus onto it. Without the focus
+        // move the selection travelled but a screen reader stayed silent, and Tab
+        // would have jumped back to the top of the list.
         setTimeout(() => {
             const row = $('messageList').querySelector('.msg-item[data-uid="' + target.uid + '"]');
-            if (row && typeof row.scrollIntoView === 'function') {
-                row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-            }
+            if (!row) return;
+            if (typeof row.scrollIntoView === 'function') row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            focusMessageRow(row);
         }, 30);
     }
+    /**
+     * Guarantee the list has exactly ONE tab stop. With no message open, no row
+     * carried tabindex=0, so Tab skipped the whole list and a keyboard user could
+     * never get into it.
+     */
+    function ensureTabbableRow() {
+        const list = $('messageList');
+        if (!list) return;
+        const rows = list.querySelectorAll('.msg-item');
+        if (!rows.length) return;
+        const tabbable = list.querySelectorAll('.msg-item[tabindex="0"]');
+        if (tabbable.length === 1) return;
+        rows.forEach(r => { r.tabIndex = -1; });
+        (list.querySelector('.msg-item.active') || rows[0]).tabIndex = 0;
+    }
+
+    /** Roving tabindex: exactly one row is tabbable, and it is the focused one. */
+    function focusMessageRow(row) {
+        if (!row) return;
+        const list = $('messageList');
+        if (list) list.querySelectorAll('.msg-item[tabindex="0"]').forEach(r => { r.tabIndex = -1; });
+        row.tabIndex = 0;
+        if (document.activeElement !== row) row.focus({ preventScroll: true });
+    }
+
     function isTypingTarget(t) {
         if (!t) return false;
         if (t.isContentEditable) return true;
@@ -3604,6 +3646,47 @@
                 loadMessages({ keepReading: true });
             }
             loadMessage(uid);
+        });
+
+        // Keyboard operation of the list itself. The global j/k/arrow shortcuts only
+        // fire when focus is NOT inside a control, so once a row had real focus the
+        // list became unusable without this.
+        $('messageList').addEventListener('keydown', (e) => {
+            const row = e.target.closest && e.target.closest('.msg-item');
+            if (!row) return;
+            const uid = parseInt(row.dataset.uid, 10);
+            switch (e.key) {
+                case 'Enter':
+                case ' ':
+                case 'Spacebar':
+                    e.preventDefault();
+                    if (state.currentFolder === OUTBOX_FOLDER) return;
+                    // Space toggles selection (bulk actions); Enter opens.
+                    if (e.key === 'Enter') {
+                        if (!isNaN(uid)) {
+                            if (!state.searchActive && folderType(state.currentFolder) === 'drafts') resumeDraft(uid);
+                            else loadMessage(uid);
+                        }
+                    } else if (!isNaN(uid)) {
+                        const visible = visibleMessages();
+                        toggleSelectionAt(uid, visible.findIndex(m => m.uid === uid), e.shiftKey);
+                    }
+                    return;
+                case 'ArrowDown': e.preventDefault(); navigateMessage(+1); return;
+                case 'ArrowUp':   e.preventDefault(); navigateMessage(-1); return;
+                case 'Home': {
+                    e.preventDefault();
+                    const first = $('messageList').querySelector('.msg-item');
+                    if (first) focusMessageRow(first);
+                    return;
+                }
+                case 'End': {
+                    e.preventDefault();
+                    const all = $('messageList').querySelectorAll('.msg-item');
+                    if (all.length) focusMessageRow(all[all.length - 1]);
+                    return;
+                }
+            }
         });
 
         // Right-click → message context menu

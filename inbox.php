@@ -363,7 +363,7 @@ $prefs        = load_prefs($email);
                 </label>
                 <button type="button" class="list-selection-close" id="listSelectionClose">Cancel</button>
             </div>
-            <div class="list-items" id="messageList">
+            <div class="list-items" id="messageList" role="listbox" aria-label="Messages">
                 <div class="list-loading">Loading messages…</div>
             </div>
             <div class="list-pagination" id="pagination" hidden>
