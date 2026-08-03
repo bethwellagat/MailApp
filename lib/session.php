@@ -48,6 +48,7 @@ if (!function_exists('session_boot')) {
         // so every entry point gets it without per-file wiring.
         require_once __DIR__ . '/util.php';
         ensure_data_guards();
+        data_janitor(); // gated to once an hour install-wide; a no-op otherwise
     }
 }
 

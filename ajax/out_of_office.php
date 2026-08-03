@@ -159,6 +159,19 @@ if ($action === 'process' && $method === 'POST') {
     $repliedLog = (array)$data['replied'];
     $cooldownMs = max(0, (int)$cfg['cooldown_days']) * 86400 * 1000;
     $nowMs      = time() * 1000;
+
+    // Drop cooldown entries that have already expired. Once an entry is older than
+    // the cooldown it no longer suppresses anything, but it was kept for ever — so
+    // a busy mailbox accumulated one line per correspondent, growing this file
+    // (and every read of it) without limit. Keeps the sender's address on disk no
+    // longer than it actually serves a purpose.
+    if ($cooldownMs > 0) {
+        $cutoff = $nowMs - $cooldownMs;
+        foreach ($repliedLog as $addr => $iso) {
+            $ts = strtotime((string)$iso);
+            if ($ts === false || ($ts * 1000) < $cutoff) unset($repliedLog[$addr]);
+        }
+    }
     $myAddr     = strtolower($email);
     $sentCount  = 0;
     $errors     = [];

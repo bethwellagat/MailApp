@@ -410,6 +410,39 @@ if (!function_exists('store_lock')) {
     }
 }
 
+if (!function_exists('data_janitor')) {
+    /**
+     * Sweep expired throwaway files out of data/. Runs at most once an hour across
+     * the whole install (poll_gate), and touches a bounded number of files per run
+     * so no single request stalls behind it.
+     *
+     * The login throttle writes one file per (email, IP) pair and never removes it
+     * on failure, so repeated failed sign-ins — or a spray across many addresses —
+     * grow the file COUNT without bound. Each file is tiny, so this shows up as
+     * inode exhaustion on the kind of tight shared-hosting quota this app targets,
+     * long before it shows up as disk usage.
+     */
+    function data_janitor() {
+        if (!poll_gate('__system__', 'janitor', 3600)) return;
+        $base = __DIR__ . '/../data';
+        $now  = time();
+        $budget = 2000; // hard cap on unlinks per run
+
+        // Throttle records: the counting window is 15 minutes, so 2 hours is ample.
+        foreach ((array) @glob($base . '/ratelimit/*.json') as $f) {
+            if ($budget-- <= 0) break;
+            $m = @filemtime($f);
+            if ($m !== false && ($now - $m) > 7200) @unlink($f);
+        }
+        // Poll timestamps/caches for accounts nobody has used in a month.
+        foreach ((array) @glob($base . '/poll/*.json') as $f) {
+            if ($budget-- <= 0) break;
+            $m = @filemtime($f);
+            if ($m !== false && ($now - $m) > 2592000) @unlink($f);
+        }
+    }
+}
+
 if (!function_exists('poll_cache_get')) {
     /**
      * Tiny per-account cache for BACKGROUND POLL responses only.

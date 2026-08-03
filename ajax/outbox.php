@@ -75,7 +75,21 @@ if ($action === 'process' && $method === 'POST') {
     $messages = list_outbox_messages($email);
     $sent = 0;
     $errors = [];
+    $purged = 0;
+    // Retention: a message that gave up retrying stays on disk for ever, and a
+    // queued record holds the FULL MIME body — message text plus any attachment
+    // bytes — in the clear under data/. Long after the user has seen it fail and
+    // moved on, that is just sensitive content sitting at rest. Keep failures long
+    // enough to notice and act on (30 days), then drop them.
+    $PURGE_FAILED_AFTER = 30 * 86400;
     foreach ($messages as $meta) {
+        if (!empty($meta['failed'])) {
+            $stamp = strtotime((string)($meta['queued_at'] ?? $meta['send_at'] ?? ''));
+            if ($stamp !== false && ($nowTs - $stamp) > $PURGE_FAILED_AFTER) {
+                if (delete_outbox_message($email, $meta['id'])) $purged++;
+                continue;
+            }
+        }
         if (empty($meta['send_at']) || $meta['send_at'] > $now) continue;
         // Bounded retry: stop hammering a permanently-rejected message, and
         // honour exponential backoff between attempts. Without this a 5xx /
@@ -110,7 +124,7 @@ if ($action === 'process' && $method === 'POST') {
 
     @flock($lock, LOCK_UN);
     @fclose($lock);
-    ok_ob(['ok' => true, 'sent' => $sent, 'errors' => $errors]);
+    ok_ob(['ok' => true, 'sent' => $sent, 'purged' => $purged, 'errors' => $errors]);
 }
 
 if ($action === 'send_now' && $method === 'POST') {
@@ -125,7 +139,11 @@ if ($action === 'send_now' && $method === 'POST') {
     $lock = @fopen(_outbox_dir($email) . '/.process.lock', 'c');
     if ($lock) @flock($lock, LOCK_EX);
     $rec = load_outbox_message($email, $id);
-    if (!$rec) fail_ob('Not found', 404);
+    // No record means the sweep already flushed this message while we waited for
+    // the lock — the message HAS been sent, so reporting 404 surfaced a scary
+    // "failed" state in the UI for a send that actually succeeded. Treat it as
+    // done, which is also what makes this endpoint safe to retry.
+    if (!$rec) ok_ob(['ok' => true, 'already_sent' => true]);
     if (empty($rec['rcpts']) || empty($rec['message'])) {
         delete_outbox_message($email, $id);
         fail_ob('Queued message is malformed', 500);
