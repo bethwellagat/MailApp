@@ -5434,3 +5434,129 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   .settings-page .settings-inline-input { text-align: left; }
   .settings-page .settings-inline-hint { text-align: left; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS — pane switching, two-column grouping, density fixes
+   ═══════════════════════════════════════════════════════════════════════════
+   The first pass restyled the page but left every section stacked on one
+   scroll, which printed to thirteen pages. iPadOS shows ONE pane at a time and
+   uses the width it has; this does the same.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* One pane at a time. */
+.settings-page .settings-section { display: none; }
+.settings-page .settings-section.visible { display: block; }
+
+/* Use the horizontal space: a pane's header+card pairs flow into two columns on
+   a wide screen instead of one narrow ribbon down the left. break-inside keeps a
+   card whole and break-after keeps each heading with the card it introduces. */
+@media (min-width: 1100px) {
+  .settings-page .settings-section.visible {
+    column-count: 2;
+    column-gap: 26px;
+  }
+  .settings-page .settings-section-header {
+    break-after: avoid;
+    page-break-after: avoid;
+    break-inside: avoid;
+  }
+  .settings-page .settings-card,
+  .settings-page .settings-hint {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  /* Editors, long lists and anything with its own internal layout stay full
+     width — splitting those across columns would be worse, not better. */
+  .settings-page #signature,
+  .settings-page #out-of-office,
+  .settings-page #contacts,
+  .settings-page #filters,
+  .settings-page #calendars { column-count: 1; }
+}
+
+/* First heading in a pane sits close to the title. */
+.settings-page .settings-section > .settings-section-header:first-child { margin-top: 6px; }
+.settings-page .settings-hero { margin-bottom: 2px; }
+.settings-page .settings-content { padding-top: 4px; }
+
+/* ---- contacts: compact grid instead of one full-width row each ---- */
+.settings-page .contacts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  padding: 12px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+.settings-page .contact-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 9px 12px;
+  border-radius: 10px;
+  background: var(--ip-fill);
+  min-width: 0;
+}
+.settings-page .contact-card:hover { background: var(--ip-fill-2); }
+.settings-page .contact-card-main { flex: 1; min-width: 0; }
+.settings-page .contact-card-name {
+  font-size: 14px;
+  color: var(--ip-label);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-page .contact-card-mail {
+  font-size: 12px;
+  color: var(--ip-label-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.settings-page .contact-card-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.settings-page .contact-card .cal-feed-btn { width: 26px; height: 26px; border-radius: 7px; }
+.settings-page .contact-filter { max-width: 260px; flex: 0 1 260px; }
+.settings-page .contact-count { font-size: 13px; color: var(--ip-label-2); margin-right: auto; }
+.settings-page .rules-list-header { flex-wrap: wrap; }
+
+/* ---- fix: hint text escaping its card (signature tip, calendar help) ---- */
+.settings-page .settings-card > .settings-hint,
+.settings-page .settings-card .sig-hint,
+.settings-page .settings-card .cal-hint,
+.settings-page .settings-card p em,
+.settings-page .settings-card > em {
+  display: block;
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ip-label-2);
+  border-top: 0.5px solid var(--ip-sep);
+  background: transparent;
+}
+
+/* ---- fix: out-of-office field block ---- */
+.settings-page #out-of-office .settings-card { padding-bottom: 4px; }
+.settings-page #out-of-office .cal-field,
+.settings-page #calendars .cal-field { padding: 10px 16px; }
+.settings-page .cal-field-label,
+.settings-page #out-of-office .cal-field-label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ip-label-2);
+}
+/* Start/end dates belong side by side, not stacked full width. */
+.settings-page .ooo-dates,
+.settings-page #out-of-office .cal-field-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 12px;
+}
+/* The enable switch is its own row, clear of the fields under it. */
+.settings-page #out-of-office .settings-toggle,
+.settings-page #out-of-office .toggle-row {
+  border-bottom: 0.5px solid var(--ip-sep);
+  margin-bottom: 4px;
+}
+
+/* ---- tighter vertical rhythm between groups ---- */
+.settings-page .settings-section-header { margin: 20px 0 8px; }
+.settings-page .settings-section { margin-bottom: 20px; }

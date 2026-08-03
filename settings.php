@@ -509,6 +509,9 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
 
             <div class="settings-card">
                 <div class="rules-list-header">
+                    <input type="search" id="contactFilter" class="cal-field-input contact-filter"
+                           placeholder="Search contacts" autocomplete="off" aria-label="Search contacts">
+                    <span class="contact-count" id="contactCount"></span>
                     <button type="button" class="cal-modal-btn cal-modal-btn-primary" id="contactNewBtn">
                         <svg class="icon" width="13" height="13"><use href="#ic-plus"/></svg>
                         Add contact
@@ -864,12 +867,41 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         }
     });
 
-    document.querySelectorAll('.settings-nav-item').forEach((link) => {
-        link.addEventListener('click', () => {
-            document.querySelectorAll('.settings-nav-item').forEach(l => l.classList.remove('active'));
-            link.classList.add('active');
+    /* Sidebar = pane switcher, as in iPadOS Settings. Every section used to render
+       stacked on one enormous scroll; now exactly one is shown at a time. */
+    (function () {
+        const items = [...document.querySelectorAll('.settings-nav-item')];
+        const panes = [...document.querySelectorAll('.settings-section')];
+
+        function show(target, push) {
+            const pane = document.getElementById(target);
+            if (!pane) return;
+            panes.forEach(p => p.classList.toggle('visible', p === pane));
+            items.forEach(l => {
+                const on = l.dataset.target === target;
+                l.classList.toggle('active', on);
+                if (on) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
+            });
+            document.querySelector('.settings-content').scrollTop = 0;
+            window.scrollTo(0, 0);
+            if (push && history.replaceState) history.replaceState(null, '', '#' + target);
+        }
+
+        items.forEach(link => {
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                show(link.dataset.target, true);
+            });
         });
-    });
+
+        // Honour a deep link (#filters), else open the first pane.
+        const initial = (location.hash || '').replace('#', '');
+        show(items.some(i => i.dataset.target === initial) ? initial : items[0].dataset.target, false);
+        window.addEventListener('hashchange', () => {
+            const t = (location.hash || '').replace('#', '');
+            if (items.some(i => i.dataset.target === t)) show(t, false);
+        });
+    })();
 
     /* ---------- Software update ---------- */
     (function () {
@@ -961,23 +993,53 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             if (msg && !isError) setTimeout(() => { statusEl.textContent = ''; }, 2400);
         }
 
+        // Rendered as a multi-column grid of compact cards rather than one
+        // full-width row per contact: an address book of any size used to run to
+        // several screens of mostly-empty space.
+        function visible() {
+            const q = ($('contactFilter').value || '').trim().toLowerCase();
+            if (!q) return contacts;
+            return contacts.filter(c =>
+                (c.email || '').toLowerCase().includes(q) ||
+                (c.name  || '').toLowerCase().includes(q));
+        }
+
         function render() {
+            const rows = visible();
+            const count = $('contactCount');
+            if (count) {
+                count.textContent = contacts.length
+                    ? (rows.length === contacts.length
+                        ? contacts.length + (contacts.length === 1 ? ' contact' : ' contacts')
+                        : rows.length + ' of ' + contacts.length)
+                    : '';
+            }
             if (!contacts.length) {
-                listEl.innerHTML = '<div class="cal-feed-empty">No contacts yet. They appear here automatically as you send mail, or add one above.</div>';
+                listEl.className = 'rules-list';
+                listEl.innerHTML = '<div class="cal-feed-empty">No contacts yet. They are collected as you send mail, or add one above.</div>';
                 return;
             }
-            listEl.innerHTML = contacts.map(c =>
-                '<div class="cal-feed-row" data-email="' + esc(c.email) + '">' +
-                    '<div class="cal-feed-main">' +
-                        '<div class="cal-feed-name">' + esc(c.name || c.email) + '</div>' +
-                        '<div class="cal-feed-url">' + esc(c.name ? c.email : '') + '</div>' +
+            if (!rows.length) {
+                listEl.className = 'rules-list';
+                listEl.innerHTML = '<div class="cal-feed-empty">No contact matches that search.</div>';
+                return;
+            }
+            listEl.className = 'rules-list contacts-grid';
+            listEl.innerHTML = rows.map(c => {
+                const label = c.name || c.email;
+                return '<div class="contact-card" data-email="' + esc(c.email) + '">' +
+                    '<div class="contact-card-main">' +
+                        '<div class="contact-card-name">' + esc(label) + '</div>' +
+                        (c.name ? '<div class="contact-card-mail">' + esc(c.email) + '</div>' : '') +
                     '</div>' +
-                    '<button type="button" class="cal-feed-btn" data-contact-edit="' + esc(c.email) + '" title="Edit" aria-label="Edit ' + esc(c.name || c.email) + '">' +
-                        '<svg class="icon" width="13" height="13"><use href="#ic-edit-s"/></svg></button>' +
-                    '<button type="button" class="cal-feed-btn cal-feed-btn-danger" data-contact-del="' + esc(c.email) + '" title="Remove" aria-label="Remove ' + esc(c.name || c.email) + '">' +
-                        '<svg class="icon" width="13" height="13"><use href="#ic-trash-s"/></svg></button>' +
-                '</div>'
-            ).join('');
+                    '<div class="contact-card-actions">' +
+                        '<button type="button" class="cal-feed-btn" data-contact-edit="' + esc(c.email) + '" title="Edit" aria-label="Edit ' + esc(label) + '">' +
+                            '<svg class="icon" width="13" height="13"><use href="#ic-edit-s"/></svg></button>' +
+                        '<button type="button" class="cal-feed-btn cal-feed-btn-danger" data-contact-del="' + esc(c.email) + '" title="Remove" aria-label="Remove ' + esc(label) + '">' +
+                            '<svg class="icon" width="13" height="13"><use href="#ic-trash-s"/></svg></button>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
         }
 
         async function api(action, params, method) {
@@ -1003,6 +1065,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         }
         function closeForm() { form.hidden = true; origEl.value = ''; form.reset(); }
 
+        $('contactFilter').addEventListener('input', render);
         $('contactNewBtn').addEventListener('click', () => openForm(null));
         $('contactCancel').addEventListener('click', closeForm);
 
