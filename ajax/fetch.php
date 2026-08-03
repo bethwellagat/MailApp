@@ -757,17 +757,9 @@ function sanitize_html($html) {
     return $html;
 }
 
+/** Thin alias — the ranking logic lives in lib/util.php and is shared with rules. */
 function find_folder($mbox, $ref, $keywords) {
-    $list = @imap_list($mbox, $ref, '*');
-    if (!$list) return null;
-    foreach ($list as $raw) {
-        $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
-        $low  = strtolower($name);
-        foreach ($keywords as $kw) {
-            if (strpos($low, $kw) !== false) return $name;
-        }
-    }
-    return null;
+    return resolve_folder($mbox, $ref, (array)$keywords);
 }
 
 function parse_thread_ids($rawHeaders) {

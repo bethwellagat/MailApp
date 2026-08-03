@@ -20,7 +20,7 @@
 
 'use strict';
 
-var VERSION = 'v4';
+var VERSION = 'v5';
 var SHELL_CACHE  = 'wm-shell-' + VERSION;   // precached offline shell + icons
 var STATIC_CACHE = 'wm-static-' + VERSION;  // runtime-cached static assets + fonts
 var MSG_CACHE    = 'wm-msg-' + VERSION;     // already-read mail JSON (cleared on logout)
@@ -40,7 +40,13 @@ var SHELL_ASSETS = [
 self.addEventListener('install', function (event) {
     event.waitUntil(
         caches.open(SHELL_CACHE).then(function (cache) {
-            return cache.addAll(SHELL_ASSETS);
+            // cache:'reload' forces each shell asset to come from the NETWORK.
+            // Without it the install could re-precache whatever the HTTP cache
+            // already held, so an updated offline page or icon stayed stale until
+            // the cache name itself changed.
+            return cache.addAll(SHELL_ASSETS.map(function (u) {
+                return new Request(u, { cache: 'reload' });
+            }));
         }).then(function () {
             return self.skipWaiting();
         })

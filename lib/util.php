@@ -410,6 +410,49 @@ if (!function_exists('store_lock')) {
     }
 }
 
+if (!function_exists('resolve_folder')) {
+    /**
+     * Find the mailbox that best matches one of $keywords (e.g. trash / archive).
+     *
+     * The old approach returned the FIRST folder whose full name contained the
+     * keyword anywhere, in whatever order the server listed them. That happily
+     * picked a user folder called "Trashed receipts" over the real Trash, or
+     * "Archive 2019/Sent" when looking for Sent — and then moved mail into it.
+     *
+     * PHP's IMAP extension does not expose SPECIAL-USE flags, so rank instead:
+     * an exact leaf match beats a leaf that merely starts with the keyword, which
+     * beats a substring anywhere; shallower folders win ties. Keyword order is
+     * honoured, so callers can express a preference (trash before bin).
+     */
+    function resolve_folder($mbox, $ref, array $keywords) {
+        $list = @imap_list($mbox, $ref, '*');
+        if (!is_array($list)) return null;
+
+        $best = null; $bestScore = -1;
+        foreach ($list as $raw) {
+            $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
+            if ($name === '') continue;
+            $parts = preg_split('/[.\/]/', $name);
+            $leaf  = strtolower((string) end($parts));
+            $depth = max(0, count($parts) - 1);
+            $low   = strtolower($name);
+
+            foreach ($keywords as $i => $kw) {
+                $kw = strtolower($kw);
+                if     ($leaf === $kw)                 $tier = 3;
+                elseif (strpos($leaf, $kw) === 0)      $tier = 2;
+                elseif (strpos($low,  $kw) !== false)  $tier = 1;
+                else continue;
+                // tier dominates, then earlier keyword, then shallower nesting
+                $score = $tier * 1000 - $i * 100 - min($depth, 20);
+                if ($score > $bestScore) { $bestScore = $score; $best = $name; }
+                break; // first matching keyword decides this folder's score
+            }
+        }
+        return $best;
+    }
+}
+
 if (!function_exists('data_janitor')) {
     /**
      * Sweep expired throwaway files out of data/. Runs at most once an hour across

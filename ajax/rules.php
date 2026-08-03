@@ -89,21 +89,14 @@ function apply_rule_actions($mbox, $folder, $uids, $actions) {
         @imap_setflag_full($mbox, $set, '\\Flagged', ST_UID);
     }
     if (!empty($actions['delete'])) {
-        // Move to Trash (locate any folder containing 'trash')
-        $trash = null;
-        $boxes = @imap_list($mbox, imap_ref_r(), '*');
-        if ($boxes) {
-            foreach ($boxes as $raw) {
-                $name = mb_convert_encoding(str_replace(imap_ref_r(), '', $raw), 'UTF-8', 'UTF7-IMAP');
-                if (stripos($name, 'trash') !== false || stripos($name, 'deleted') !== false) {
-                    $trash = $name; break;
-                }
-            }
+        $trash = resolve_folder($mbox, imap_ref_r(), ['trash', 'deleted', 'bin']);
+        if (!$trash) {
+            // No Trash folder: nothing was moved. Saying deleted=true here reported
+            // a rule as having deleted mail that is still sitting in the inbox.
+            return ['matched' => count($uids), 'deleted' => false, 'error' => 'No Trash folder found'];
         }
-        if ($trash) {
-            @imap_mail_move($mbox, $set, $trash, CP_UID);
-            expunge_only($mbox, $uids);
-        }
+        @imap_mail_move($mbox, $set, $trash, CP_UID);
+        expunge_only($mbox, $uids);
         return ['matched' => count($uids), 'deleted' => true];
     }
     if (!empty($actions['move_to']) && !preg_match('/[{}\x00-\x1F\x7F]/', $actions['move_to'])) {
