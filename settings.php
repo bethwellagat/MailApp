@@ -145,44 +145,46 @@ if ('serviceWorker' in navigator) {
 
     <nav class="settings-nav" id="settingsNav">
         <a class="settings-nav-item active" href="#account" data-target="account">
-            <svg class="icon"><use href="#ic-user"/></svg>
+            <span class="snav-icon snav-icon-blue"><svg class="icon"><use href="#ic-user"/></svg></span>
             <span>Account</span>
         </a>
         <a class="settings-nav-item" href="#signature" data-target="signature">
-            <svg class="icon"><use href="#ic-pen"/></svg>
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-pen"/></svg></span>
             <span>Signature</span>
         </a>
         <a class="settings-nav-item" href="#logo" data-target="logo">
-            <svg class="icon"><use href="#ic-image"/></svg>
+            <span class="snav-icon snav-icon-pink"><svg class="icon"><use href="#ic-image"/></svg></span>
             <span>Workspace logo</span>
         </a>
         <a class="settings-nav-item" href="#out-of-office" data-target="out-of-office">
-            <svg class="icon"><use href="#ic-plane-s"/></svg>
+            <span class="snav-icon snav-icon-orange"><svg class="icon"><use href="#ic-plane-s"/></svg></span>
             <span>Out of office</span>
         </a>
         <a class="settings-nav-item" href="#filters" data-target="filters">
-            <svg class="icon"><use href="#ic-funnel-s"/></svg>
+            <span class="snav-icon snav-icon-teal"><svg class="icon"><use href="#ic-funnel-s"/></svg></span>
             <span>Filters</span>
         </a>
         <a class="settings-nav-item" href="#contacts" data-target="contacts">
-            <svg class="icon"><use href="#ic-user"/></svg>
+            <span class="snav-icon snav-icon-green"><svg class="icon"><use href="#ic-user"/></svg></span>
             <span>Contacts</span>
         </a>
         <a class="settings-nav-item" href="#calendars" data-target="calendars">
-            <svg class="icon"><use href="#ic-calendar-s"/></svg>
+            <span class="snav-icon snav-icon-red"><svg class="icon"><use href="#ic-calendar-s"/></svg></span>
             <span>Calendars</span>
         </a>
         <a class="settings-nav-item" href="#mail-server" data-target="mail-server">
-            <svg class="icon"><use href="#ic-server"/></svg>
+            <span class="snav-icon snav-icon-graphite"><svg class="icon"><use href="#ic-server"/></svg></span>
             <span>Mail server</span>
         </a>
         <a class="settings-nav-item" href="#update" data-target="update">
-            <svg class="icon"><use href="#ic-refresh-s"/></svg>
+            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-refresh-s"/></svg></span>
             <span>Software update</span>
         </a>
     </nav>
 
     <div class="settings-content">
+
+        <h1 class="settings-hero">Settings</h1>
 
         <!-- Revealed by JS only if the private data/ directory turns out to be
              readable over HTTP (i.e. the server ignored the deny files we ship —
