@@ -5642,6 +5642,8 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   --m-green:       #34c759;
   --m-fill:        rgba(120, 120, 128, 0.12);
   --m-fill-2:      rgba(120, 120, 128, 0.20);
+  --m-sep-solid:   #c6c6c8;
+  --m-chrome:      #ffffff;
   --m-radius:      10px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
                "Segoe UI", var(--font-ui, Inter), system-ui, sans-serif;
@@ -5664,6 +5666,10 @@ html.theme-dark .mail-page {
   /* Row hairlines inside the list: the structural separator is too strong when
      it repeats every 44px down a long list. */
   --m-sep-row: rgba(84, 84, 88, 0.34);
+  /* Apple opaqueSeparator. A translucent hairline over a dark surface
+     composites to almost the surface itself — it has to be opaque to read. */
+  --m-sep-solid: #38383a;
+  --m-chrome:    #1c1c1e;   /* toolbar surface, distinct from the page */
   --m-label:   #ffffff;
   --m-label-2: rgba(235, 235, 245, 0.72);
   /* 34% white is 2.6:1 on black; 58% clears AA on both #000 and #1C1C1E. */
@@ -6563,3 +6569,135 @@ html.theme-dark .login-page .login-page-footer,
 html.theme-dark .login-page .login-page-footer span { color: rgba(235, 235, 245, 0.72); }
 html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 245, 0.86); }
 .login-page .login-page-footer strong { color: #48484c; }
+
+/* ---- separating the two bars ----
+   Both were the same colour with a 0.5px translucent hairline between them,
+   which over a dark surface composites to nearly the surface itself — at 0.5px
+   the boundary simply was not there. Two changes: the bars now sit on different
+   surfaces (the header on the chrome surface, the toolbar at page level, so the
+   band between them reads tonally), and the rules between them are opaque so the
+   line survives whatever it is drawn over. This also gives the toolbar/list
+   boundary its own contrast, since the list is the raised surface. */
+.mail-page .topbar {
+  background: var(--m-chrome);
+  border-bottom: 1px solid var(--m-sep-solid);
+}
+.mail-page .actionbar {
+  background: var(--m-bg);
+  border-bottom: 1px solid var(--m-sep-solid);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PHONE TOUCH TARGETS
+   ═══════════════════════════════════════════════════════════════════════════
+   Measured at 375px: the toolbar buttons were 38x38, the filter chips 25 tall,
+   the row select-avatars and the folder "+" 24x24, and the compose formatting
+   tools 28x28. All were sized for a pointer. Apple asks for 44pt; WCAG 2.5.8
+   sets a 24px floor, which several of these were sitting exactly on.
+
+   Where the control's own box can simply grow it does. Where growing it would
+   change the design — the 32px avatar, the small glyph buttons — the visual size
+   is kept and only the hit box is enlarged, so nothing looks different but the
+   whole 44px is tappable. */
+@media (max-width: 820px) {
+  /* toolbar and header glyph buttons */
+  .mail-page .ab-btn,
+  .mail-page .ab-btn.ab-icon-only,
+  .mail-page .topbar-icon-light,
+  .mail-page .pager-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .mail-page .topbar-user { min-height: 44px; }
+
+  /* filter chips: 25px tall is a hard target while scrolling */
+  .mail-page .list-filter-chip {
+    min-height: 36px;
+    padding-top: 0;
+    padding-bottom: 0;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* The select-avatar stays 32px; the button around it becomes the target.
+     Negative margin keeps the row's layout and height exactly as it was. */
+  /* body.mail-page, not .mail-page: the density preference is written as
+     body.density-compact .msg-select, which at (0,2,1) outranks a plain
+     two-class selector and pinned this back to 24px. */
+  body.mail-page .msg-select {
+    width: 44px;
+    height: 44px;
+    margin: -6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Small glyph buttons: grow the hit box past the visual box. The pseudo
+     element is the target, so the icon keeps its size and position. */
+  .mail-page .folder-pane-add,
+  .mail-page .cal-pane-add,
+  .mail-page .compose-tool,
+  .mail-page .compose-close,
+  .mail-page .compose-hdr-btn,
+  .mail-page .cal-modal-close,
+  .mail-page .shortcuts-modal-close,
+  .mail-page .acct-modal-close,
+  .mail-page .attach-preview-close,
+  .mail-page .cal-mini-navbtn { position: relative; }
+  .mail-page .folder-pane-add::after,
+  .mail-page .cal-pane-add::after,
+  .mail-page .compose-tool::after,
+  .mail-page .compose-close::after,
+  .mail-page .compose-hdr-btn::after,
+  .mail-page .cal-modal-close::after,
+  .mail-page .shortcuts-modal-close::after,
+  .mail-page .acct-modal-close::after,
+  .mail-page .attach-preview-close::after,
+  .mail-page .cal-mini-navbtn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Menu and dialog buttons */
+  .mail-page .dropdown-item,
+  .mail-page .cal-modal-btn,
+  .mail-page .btn-send,
+  .mail-page .btn-send-chev,
+  .mail-page .acct-btn-primary,
+  .mail-page .acct-btn-secondary,
+  .mail-page .compose-discard,
+  .mail-page .list-selection-close,
+  .mail-page .acct-advanced-toggle,
+  .mail-page .compose-row-toggle { min-height: 44px; }
+  .mail-page .compose-discard { min-width: 44px; }
+
+  /* A checkbox is tapped via its label, so the label carries the target. */
+  .mail-page .cal-row label,
+  .mail-page .shortcuts-row label,
+  .mail-page label:has(> input[type="checkbox"]) { min-height: 44px; display: flex; align-items: center; }
+}
+
+/* The rest of the phone targets the sweep turned up: the brand link, the
+   reading-pane Back button, the Bcc toggle, the send-menu chevron, the
+   attachment Download button and the filter's folder <select>. */
+@media (max-width: 820px) {
+  .mail-page .topbar-logo-slot { min-height: 44px; }
+  .mail-page .reading-back { min-height: 44px; min-width: 44px; }
+  .mail-page .compose-row-toggle { min-width: 44px; }
+  .mail-page .btn-send-chev { min-width: 44px; }
+  .mail-page .attach-preview-close,
+  .mail-page .attach-preview .btn { min-height: 44px; }
+  .mail-page .cal-field-input,
+  .mail-page .acct-field-input,
+  .mail-page select { min-height: 44px; }
+  /* 36px chips were comfortably over the WCAG floor but under Apple's 44; the
+     filter row is a primary control, so it gets the full target. */
+  /* min-width too: "All" is short enough that padding alone left it 40px. */
+  .mail-page .list-filter-chip { min-height: 44px; min-width: 44px; justify-content: center; }
+}
