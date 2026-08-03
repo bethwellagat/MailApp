@@ -788,6 +788,9 @@
         } else if (folderName === state.currentFolder) {
             return;
         }
+        // On mobile the drawer covers the list, so picking a folder must dismiss it —
+        // otherwise the user lands on content they cannot see.
+        closeMobileDrawer();
         state.currentAccount = acctId || state.currentAccount;
         state.currentMsgAcct = state.currentAccount;
         state.currentFolder = folderName;
@@ -903,11 +906,26 @@
     }
 
     /* ---------- Folder pane ---------- */
+    function mobileDrawerOpen() {
+        return $('appMain') && $('appMain').classList.contains('mobile-folders-open');
+    }
+    /** Keep the toggle button's advertised state in step with the drawer. */
+    function syncDrawerState() {
+        const t = $('drawerToggle');
+        if (t) t.setAttribute('aria-expanded', mobileDrawerOpen() ? 'true' : 'false');
+    }
+    function closeMobileDrawer() {
+        if (!mobileDrawerOpen()) return false;
+        $('appMain').classList.remove('mobile-folders-open');
+        syncDrawerState();
+        return true;
+    }
     function toggleFolderPane() {
         const main = $('appMain');
         const isMobile = window.matchMedia('(max-width: 820px)').matches;
         if (isMobile) {
             main.classList.toggle('mobile-folders-open');
+            syncDrawerState();
         } else {
             main.classList.toggle('folders-collapsed');
         }
@@ -1628,8 +1646,12 @@
 
         $('attachPreview').classList.remove('hidden');
         $('attachPreview').setAttribute('aria-hidden', 'false');
+        // Same trap every other dialog uses: without it Tab walked off into the
+        // page behind the preview, and closing left focus wherever it had drifted.
+        modalTrap.activate($('attachPreview').querySelector('.attach-preview-panel'));
     }
     function closeAttachmentPreview() {
+        modalTrap.deactivate($('attachPreview').querySelector('.attach-preview-panel'));
         $('attachPreview').classList.add('hidden');
         $('attachPreview').setAttribute('aria-hidden', 'true');
         $('attachPreviewBody').innerHTML = '';
@@ -2460,6 +2482,10 @@
             stack = document.createElement('div');
             stack.id = 'appToastUndoStack';
             stack.className = 'app-toast-stack';
+            // Toasts appear without focus moving, so a screen reader would never
+            // mention them. Announce politely rather than interrupting.
+            stack.setAttribute('role', 'status');
+            stack.setAttribute('aria-live', 'polite');
             document.body.appendChild(stack);
         }
         return stack;
@@ -3087,6 +3113,8 @@
             el = document.createElement('div');
             el.id = 'appToast';
             el.className = 'app-toast';
+            el.setAttribute('role', 'status');      // nothing takes focus, so announce it
+            el.setAttribute('aria-live', 'polite');
             document.body.appendChild(el);
         }
         el.textContent = msg;
@@ -3100,7 +3128,14 @@
     function showUndoActionToast(text, onUndo, seconds) {
         seconds = seconds || 7;
         let el = $('appToastAction');
-        if (!el) { el = document.createElement('div'); el.id = 'appToastAction'; el.className = 'app-toast app-toast-undo'; document.body.appendChild(el); }
+        if (!el) {
+            el = document.createElement('div');
+            el.id = 'appToastAction';
+            el.className = 'app-toast app-toast-undo';
+            el.setAttribute('role', 'status');
+            el.setAttribute('aria-live', 'polite');
+            document.body.appendChild(el);
+        }
         let remaining = seconds, timer = null, used = false;
         const close = () => { if (timer) { clearInterval(timer); timer = null; } el.classList.remove('visible'); };
         el.innerHTML = '';
@@ -3910,9 +3945,21 @@
             $('moveDropdown').classList.remove('open');
         });
 
+        // Tapping the dimmed area beside the mobile drawer closes it. The overlay is
+        // an ::before on .app-main, so there is no element to bind to — detect a
+        // press that landed outside the pane while the drawer is open.
+        $('appMain').addEventListener('click', (e) => {
+            if (!mobileDrawerOpen()) return;
+            if (e.target.closest('#folderPane') || e.target.closest('#drawerToggle')) return;
+            closeMobileDrawer();
+        }, true);
+
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                if (closeMobileDrawer()) return; // dismiss the drawer before anything else
                 if (!$('attachPreview').classList.contains('hidden')) closeAttachmentPreview();
+                // The calendar event dialog was the one modal Escape never closed.
+                else if ($('calModal') && !$('calModal').classList.contains('hidden')) closeCalModal();
                 else if ($('addAccountModal') && !$('addAccountModal').classList.contains('hidden')) closeAddAccount();
                 else if ($('filterModal') && !$('filterModal').classList.contains('hidden')) closeFilterModal();
                 else if ($('composeModal').classList.contains('open')) closeCompose();

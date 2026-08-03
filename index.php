@@ -235,7 +235,7 @@ if ('caches' in window) {
             </div>
         </div>
 
-        <button type="button" class="advanced-toggle <?= $advanced_open ? 'open' : '' ?>" id="advancedToggle">
+        <button type="button" class="advanced-toggle <?= $advanced_open ? 'open' : '' ?>" id="advancedToggle" aria-expanded="<?= $advanced_open ? 'true' : 'false' ?>" aria-controls="advancedFields">
             <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><polyline points="9 6 15 12 9 18"/></svg>
             <span>Advanced settings</span>
         </button>
@@ -303,6 +303,9 @@ if ('caches' in window) {
     toggle.addEventListener('click', function () {
         toggle.classList.toggle('open');
         fields.classList.toggle('open');
+        // Keep the announced state in step, or the control reads as collapsed
+        // to a screen reader even while the fields are visible.
+        toggle.setAttribute('aria-expanded', fields.classList.contains('open') ? 'true' : 'false');
     });
 
     var pw      = document.getElementById('password');

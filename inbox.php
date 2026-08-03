@@ -244,44 +244,44 @@ $prefs        = load_prefs($email);
     </header>
 
     <nav class="actionbar">
-        <button class="ab-btn ab-icon-only" id="drawerToggle" title="Folders" aria-label="Folders">
+        <button class="ab-btn ab-icon-only" id="drawerToggle" title="Folders" aria-label="Folders" aria-expanded="false" aria-controls="folderPane">
             <svg class="icon"><use href="#ic-menu"/></svg>
         </button>
-        <button class="ab-btn ab-primary" id="composeBtn">
+        <button class="ab-btn ab-primary" id="composeBtn" aria-label="New email">
             <svg class="icon"><use href="#ic-plus"/></svg>
             <span>New Email</span>
         </button>
         <div class="ab-divider"></div>
-        <button class="ab-btn" id="abDelete" disabled>
+        <button class="ab-btn" id="abDelete" aria-label="Delete" disabled>
             <svg class="icon"><use href="#ic-trash"/></svg>
             <span>Delete</span>
         </button>
-        <button class="ab-btn" id="abArchive" disabled>
+        <button class="ab-btn" id="abArchive" aria-label="Archive" disabled>
             <svg class="icon"><use href="#ic-archive"/></svg>
             <span>Archive</span>
         </button>
         <div class="ab-btn-wrap">
-            <button class="ab-btn" id="abMove" disabled>
+            <button class="ab-btn" id="abMove" aria-label="Move to folder" disabled>
                 <svg class="icon"><use href="#ic-move"/></svg>
                 <span>Move</span>
                 <svg class="icon ab-chev" width="12" height="12"><use href="#ic-chev-down"/></svg>
             </button>
             <div class="dropdown" id="moveDropdown"></div>
         </div>
-        <button class="ab-btn" id="abFlag" disabled>
+        <button class="ab-btn" id="abFlag" aria-label="Flag" disabled>
             <svg class="icon"><use href="#ic-flag"/></svg>
             <span>Flag</span>
         </button>
-        <button class="ab-btn" id="abMarkRead" disabled>
+        <button class="ab-btn" id="abMarkRead" aria-label="Mark as read" disabled>
             <svg class="icon"><use href="#ic-envelope-open"/></svg>
             <span>Mark Read</span>
         </button>
-        <button class="ab-btn" id="abMarkUnread" disabled>
+        <button class="ab-btn" id="abMarkUnread" aria-label="Mark as unread" disabled>
             <svg class="icon"><use href="#ic-envelope"/></svg>
             <span>Mark Unread</span>
         </button>
         <div class="ab-divider"></div>
-        <button class="ab-btn" id="abSync">
+        <button class="ab-btn" id="abSync" aria-label="Refresh">
             <svg class="icon"><use href="#ic-refresh"/></svg>
             <span>Sync</span>
         </button>
@@ -478,7 +478,7 @@ $prefs        = load_prefs($email);
 <!-- Attachment preview modal -->
 <div class="attach-preview hidden" id="attachPreview" aria-hidden="true">
     <div class="attach-preview-backdrop" data-close="1"></div>
-    <div class="attach-preview-panel" role="dialog">
+    <div class="attach-preview-panel" role="dialog" aria-labelledby="attachPreviewName">
         <header class="attach-preview-header">
             <div class="attach-preview-title">
                 <span class="attach-preview-name" id="attachPreviewName"></span>
@@ -499,7 +499,7 @@ $prefs        = load_prefs($email);
 </div>
 
 <!-- Compose modal -->
-<div class="compose-modal" id="composeModal" role="dialog" aria-label="New message">
+<div class="compose-modal" id="composeModal" role="dialog" aria-labelledby="composeTitle">
     <div class="compose-header">
         <span class="compose-title" id="composeTitle">New Message</span>
         <div class="compose-header-actions">
