@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../lib/session.php'; session_boot();
 require_once __DIR__ . '/../lib/accounts.php';
 accounts_boot();
+require_once __DIR__ . '/../lib/imap.php';
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
@@ -27,20 +28,8 @@ session_write_close(); // release the session lock early — avoids request seri
 
 mb_internal_encoding('UTF-8');
 
-function imap_ref_o() {
-    $ssl = !empty($_SESSION['imap_ssl']);
-    $port = (int)($_SESSION['imap_port'] ?? 993);
-    $host = $_SESSION['imap_host'];
-    $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
-    return '{' . $host . ':' . $port . $flags . '}';
-}
-function open_box_o($folder = 'INBOX', $opts = 0) {
-    // Reject c-client metacharacters / control chars so a folder value cannot
-    // rewrite the {host:port} ref and redirect the IMAP connection.
-    if (!is_string($folder) || $folder === '' || preg_match('/[{}\x00-\x1F\x7F]/', $folder)) return false;
-    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
-                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
-}
+function imap_ref_o() { return imap_session_ref(); } // shared: lib/imap.php
+function open_box_o($folder = 'INBOX', $opts = 0) { return imap_open_box($folder, $opts); } // shared: lib/imap.php
 function fail_o($msg, $code = 500) { http_response_code($code); echo json_encode(['error' => $msg]); exit; }
 function ok_o($d) { echo json_encode($d); exit; }
 function input_json_o() {

@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../lib/session.php'; session_boot();
 require_once __DIR__ . '/../lib/accounts.php';
 accounts_boot();
+require_once __DIR__ . '/../lib/imap.php';
 $action = $_GET['action'] ?? '';
 if ($action === 'attachment') {
     header('Cache-Control: no-store');
@@ -41,29 +42,11 @@ mb_internal_encoding('UTF-8');
 
 /* ---------- IMAP helpers ---------- */
 
-function imap_ref() {
-    $ssl   = !empty($_SESSION['imap_ssl']);
-    $port  = (int)($_SESSION['imap_port'] ?? 993);
-    $host  = $_SESSION['imap_host'];
-    $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
-    return '{' . $host . ':' . $port . $flags . '}';
-}
+function imap_ref() { return imap_session_ref(); } // shared: lib/imap.php
 
-function valid_mailbox_name($name) {
-    // A folder/mailbox name must not carry c-client connection metacharacters
-    // ('{' '}') or control characters: a '}' could rewrite the {host:port}
-    // portion of the connection ref and redirect the IMAP session to an
-    // attacker-chosen server, and control bytes could smuggle protocol data.
-    // Legitimate folder names (letters, digits, spaces, the hierarchy
-    // delimiter) never contain these.
-    return is_string($name) && $name !== '' && !preg_match('/[{}\x00-\x1F\x7F]/', $name);
-}
+function valid_mailbox_name($name) { return imap_valid_mailbox($name); } // shared: lib/imap.php
 
-function open_box($folder = 'INBOX', $opts = 0) {
-    if (!valid_mailbox_name($folder)) return false;
-    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
-                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
-}
+function open_box($folder = 'INBOX', $opts = 0) { return imap_open_box($folder, $opts); } // shared: lib/imap.php
 
 function fail($msg, $code = 500) {
     http_response_code($code);
@@ -765,7 +748,7 @@ function parse_thread_ids($rawHeaders) {
  * folders (Inbox with thousands of messages) we cap at the most recent slice
  * because real conversations are almost always within recent history.
  */
-function find_thread_uids_in_folder($box, $folder, $needle, &$diag = null) {
+function find_thread_uids_in_folder($box, $folder, $needle) {
     static $overviewCache = [];
     // 1200 rather than 3000: this overview is fetched and held in memory for EVERY
     // folder a thread lookup touches, on a host with a 2GB per-account ceiling.
@@ -783,13 +766,6 @@ function find_thread_uids_in_folder($box, $folder, $needle, &$diag = null) {
             $start = max(1, $total - $MAX_SCAN + 1);
             $rows  = @imap_fetch_overview($box, "$start:$end", 0);
             $overviewCache[$folder] = is_array($rows) ? $rows : [];
-            if ($diag !== null) {
-                $diag['scans'][] = [
-                    'folder' => $folder,
-                    'total'  => $total,
-                    'scanned'=> count($overviewCache[$folder]),
-                ];
-            }
         }
     }
 
@@ -805,13 +781,6 @@ function find_thread_uids_in_folder($box, $folder, $needle, &$diag = null) {
             $u = (int)@imap_uid($box, $om->msgno);
             if ($u > 0) $hits[] = $u;
         }
-    }
-    if ($diag !== null) {
-        $diag['searches'][] = [
-            'folder' => $folder,
-            'needle' => $needle,
-            'hits'   => $hits,
-        ];
     }
     return $hits;
 }
@@ -1449,7 +1418,6 @@ if ($action === 'thread') {
         $boxes[$f] = open_box($f);
     }
 
-    $diag = null; // set to [] to re-enable per-call diagnostic capture
     $threadIds = [];
     if ($startInfo['msg_id'] !== '')      $threadIds[strtolower($startInfo['msg_id'])]      = $startInfo['msg_id'];
     if ($startInfo['in_reply_to'] !== '') $threadIds[strtolower($startInfo['in_reply_to'])] = $startInfo['in_reply_to'];
@@ -1487,7 +1455,7 @@ if ($action === 'thread') {
                 // for IDs that demonstrably exist in the folder. Fall back to scanning
                 // imap_fetch_overview (which returns message_id/in_reply_to/references
                 // per message) and matching client-side.
-                $allUids = find_thread_uids_in_folder($box, $f, $needle, $diag);
+                $allUids = find_thread_uids_in_folder($box, $f, $needle);
                 $allUids = array_values(array_unique(array_map('intval', $allUids)));
 
                 foreach ($allUids as $foundUid) {

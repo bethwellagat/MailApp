@@ -451,13 +451,24 @@
     // caller's `if (data.error)` never fires, so the action silently no-ops —
     // the worst failure mode for mail. Normalize it into a surfaced error.
     const NET_ERR = 'Network error — check your connection and try again.';
-    async function apiGet(action, params) {
-        const q = new URLSearchParams({ action, ...(params || {}) }).toString();
+
+    /**
+     * The shared tail of every JSON API call: normalise a rejected fetch into a
+     * surfaced error, bounce to the login page on 401, and never let a non-JSON
+     * body throw. This was copy-pasted into five wrappers; a fix to one (such as
+     * the network-error normalisation) had to be remembered in the other four.
+     */
+    async function apiCall(url, init) {
         let r;
-        try { r = await fetch('ajax/fetch.php?' + q, { credentials: 'same-origin' }); }
+        try { r = await fetch(url, init); }
         catch (e) { return { error: NET_ERR, network: true }; }
         if (r.status === 401) { window.location = 'index'; return { error: 'Not authenticated' }; }
         try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    }
+
+    async function apiGet(action, params) {
+        const q = new URLSearchParams({ action, ...(params || {}) }).toString();
+        return apiCall('ajax/fetch.php?' + q, { credentials: 'same-origin' });
     }
     async function apiPost(action, params) {
         const body = new URLSearchParams();
@@ -469,14 +480,8 @@
                 body.append(k, String(v));
             }
         }
-        let r;
-        try {
-            r = await fetch('ajax/fetch.php?action=' + encodeURIComponent(action), {
-                method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body
-            });
-        } catch (e) { return { error: NET_ERR, network: true }; }
-        if (r.status === 401) { window.location = 'index'; return { error: 'Not authenticated' }; }
-        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+        return apiCall('ajax/fetch.php?action=' + encodeURIComponent(action),
+                       { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
     }
     async function apiSend(payload, files) {
         const body = new FormData();
@@ -486,11 +491,8 @@
         if (Array.isArray(files)) {
             for (const f of files) body.append('attachments[]', f, f.name);
         }
-        let r;
-        try { r = await fetch('ajax/send.php', { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body }); }
-        catch (e) { return { error: NET_ERR, network: true }; }
-        if (r.status === 401) { window.location = 'index'; return { error: 'Not authenticated' }; }
-        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+        return apiCall('ajax/send.php',
+                       { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
     }
     // Merge an `acct` param into a request only when one is given — the backend
     // treats a missing/empty acct as "use the active account", so we never send
@@ -513,11 +515,8 @@
         const body = new FormData();
         body.append('action', action);
         for (const [k, v] of Object.entries(params || {})) body.append(k, v == null ? '' : String(v));
-        let r;
-        try { r = await fetch('ajax/account.php', { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body }); }
-        catch (e) { return { error: NET_ERR, network: true }; }
-        if (r.status === 401) { window.location = 'index'; return { error: 'Not authenticated' }; }
-        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+        return apiCall('ajax/account.php',
+                       { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
     }
     // Persist the focused account as the server-side active account so the
     // background processors (outbox, snooze, OOO, rules) and every flat-key
@@ -2181,11 +2180,7 @@
         body.append('action', action);
         for (const [k, v] of Object.entries(params || {})) if (v !== undefined && v !== null) body.append(k, String(v));
         const url = 'ajax/draft.php' + (acct ? ('?acct=' + encodeURIComponent(acct)) : '');
-        try {
-            const r = await fetch(url, { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
-            if (r.status === 401) { window.location = 'index'; return { error: 'Not authenticated' }; }
-            return await r.json();
-        } catch (e) { return { error: NET_ERR, network: true }; }
+        return apiCall(url, { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
     }
     function composeHasContent() {
         // A recipient or subject is enough on its own.

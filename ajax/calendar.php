@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../lib/session.php'; session_boot();
 require_once __DIR__ . '/../lib/accounts.php';
 accounts_boot();
+require_once __DIR__ . '/../lib/imap.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -51,13 +52,7 @@ function input_json() {
 /* live only in $_SESSION, never on disk.                        */
 /* ------------------------------------------------------------ */
 
-function _cal_imap_ref() {
-    $ssl   = !empty($_SESSION['imap_ssl']);
-    $port  = (int)($_SESSION['imap_port'] ?? 993);
-    $host  = $_SESSION['imap_host'];
-    $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
-    return '{' . $host . ':' . $port . $flags . '}';
-}
+function _cal_imap_ref() { return imap_session_ref(); } // shared: lib/imap.php
 
 function _cal_open_box($folder) {
     // Reject c-client metacharacters / control chars so a folder value cannot

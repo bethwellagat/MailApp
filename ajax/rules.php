@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../lib/session.php'; session_boot();
 require_once __DIR__ . '/../lib/accounts.php';
 accounts_boot();
+require_once __DIR__ . '/../lib/imap.php';
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
 
@@ -24,17 +25,8 @@ session_write_close(); // release the session lock early — avoids request seri
 
 mb_internal_encoding('UTF-8');
 
-function imap_ref_r() {
-    $ssl   = !empty($_SESSION['imap_ssl']);
-    $port  = (int)($_SESSION['imap_port'] ?? 993);
-    $host  = $_SESSION['imap_host'];
-    $flags = imap_tls_flags($_SESSION['imap_host'] ?? '', $ssl);
-    return '{' . $host . ':' . $port . $flags . '}';
-}
-function open_box_r($folder = 'INBOX', $opts = 0) {
-    return imap_open_tls($_SESSION['imap_host'], (int)($_SESSION['imap_port'] ?? 993), !empty($_SESSION['imap_ssl']),
-                         $folder, $_SESSION['email'], $_SESSION['password'], $opts, 1);
-}
+function imap_ref_r() { return imap_session_ref(); } // shared: lib/imap.php
+function open_box_r($folder = 'INBOX', $opts = 0) { return imap_open_box($folder, $opts); } // shared: lib/imap.php
 function fail_r($msg, $code = 500) { http_response_code($code); echo json_encode(['error' => $msg]); exit; }
 function ok_r($data) { echo json_encode($data); exit; }
 function input_json_r() {
@@ -105,15 +97,9 @@ function apply_rule_actions($mbox, $folder, $uids, $actions) {
         return ['matched' => count($uids), 'moved_to' => $actions['move_to']];
     }
     if (!empty($actions['skip_inbox'])) {
-        // "Archive" — move to any folder containing "archive"
-        $archive = null;
-        $boxes = @imap_list($mbox, imap_ref_r(), '*');
-        if ($boxes) {
-            foreach ($boxes as $raw) {
-                $name = mb_convert_encoding(str_replace(imap_ref_r(), '', $raw), 'UTF-8', 'UTF7-IMAP');
-                if (stripos($name, 'archive') !== false) { $archive = $name; break; }
-            }
-        }
+        // "Archive" — ranked like every other special folder, so a decoy such as
+        // "Projects/archive-old" cannot win over the real Archive.
+        $archive = resolve_folder($mbox, imap_ref_r(), ['archive']);
         if ($archive) {
             @imap_mail_move($mbox, $set, $archive, CP_UID);
             expunge_only($mbox, $uids);
