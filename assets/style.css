@@ -3092,6 +3092,24 @@ img.img-blocked {
   min-height: 12px;
 }
 
+/* Add/edit form inside the Contacts settings card. */
+.contact-form {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--c-divider);
+  background: var(--c-actionbar-bg);
+}
+.contact-form-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.contact-form-row .cal-field { flex: 1 1 220px; min-width: 0; }
+.contact-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* Prominent alert inside the settings page (e.g. private-data exposure). */
 .settings-alert {
   border: 1px solid var(--c-border);

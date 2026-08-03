@@ -164,6 +164,10 @@ if ('serviceWorker' in navigator) {
             <svg class="icon"><use href="#ic-funnel-s"/></svg>
             <span>Filters</span>
         </a>
+        <a class="settings-nav-item" href="#contacts" data-target="contacts">
+            <svg class="icon"><use href="#ic-user"/></svg>
+            <span>Contacts</span>
+        </a>
         <a class="settings-nav-item" href="#calendars" data-target="calendars">
             <svg class="icon"><use href="#ic-calendar-s"/></svg>
             <span>Calendars</span>
@@ -491,6 +495,43 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                         </div>
                         <?php endforeach; ?>
                     <?php endif; ?>
+                </div>
+            </div>
+        </section>
+
+        <section id="contacts" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Contacts</h2>
+                <p class="settings-section-desc">Addresses suggested while you type a recipient. They are collected automatically from mail you send and conversations you open — this is where you can correct a name, add someone before you have written to them, or remove an address you don't want suggested.</p>
+            </header>
+
+            <div class="settings-card">
+                <div class="rules-list-header">
+                    <button type="button" class="cal-modal-btn cal-modal-btn-primary" id="contactNewBtn">
+                        <svg class="icon" width="13" height="13"><use href="#ic-plus"/></svg>
+                        Add contact
+                    </button>
+                    <span class="settings-status" id="contactStatus" role="status" aria-live="polite"></span>
+                </div>
+                <form class="contact-form" id="contactForm" hidden>
+                    <input type="hidden" id="contactOriginal" value="">
+                    <div class="contact-form-row">
+                        <label class="cal-field">
+                            <span class="cal-field-label">Name</span>
+                            <input type="text" id="contactName" class="cal-field-input" maxlength="120" placeholder="Jane Doe" autocomplete="off">
+                        </label>
+                        <label class="cal-field">
+                            <span class="cal-field-label">Email address</span>
+                            <input type="email" id="contactEmail" class="cal-field-input" maxlength="200" placeholder="jane@example.com" autocomplete="off" required>
+                        </label>
+                    </div>
+                    <div class="contact-form-actions">
+                        <button type="submit" class="cal-modal-btn cal-modal-btn-primary" id="contactSave">Save contact</button>
+                        <button type="button" class="cal-modal-btn" id="contactCancel">Cancel</button>
+                    </div>
+                </form>
+                <div class="rules-list" id="contactsList">
+                    <div class="cal-feed-empty">Loading…</div>
                 </div>
             </div>
         </section>
@@ -898,6 +939,106 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 t.checked = !t.checked;
             }
         });
+    })();
+
+    /* ---------- Contacts ---------- */
+    (function () {
+        const listEl = $('contactsList');
+        if (!listEl) return;
+        const form   = $('contactForm'), nameEl = $('contactName'), emailEl = $('contactEmail'),
+              origEl = $('contactOriginal'), statusEl = $('contactStatus');
+        let contacts = [];
+
+        const esc = (v) => String(v == null ? '' : v)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+        function say(msg, isError) {
+            statusEl.textContent = msg;
+            statusEl.className = 'settings-status' + (isError ? ' error' : (msg ? ' success' : ''));
+            if (msg && !isError) setTimeout(() => { statusEl.textContent = ''; }, 2400);
+        }
+
+        function render() {
+            if (!contacts.length) {
+                listEl.innerHTML = '<div class="cal-feed-empty">No contacts yet. They appear here automatically as you send mail, or add one above.</div>';
+                return;
+            }
+            listEl.innerHTML = contacts.map(c =>
+                '<div class="cal-feed-row" data-email="' + esc(c.email) + '">' +
+                    '<div class="cal-feed-main">' +
+                        '<div class="cal-feed-name">' + esc(c.name || c.email) + '</div>' +
+                        '<div class="cal-feed-url">' + esc(c.name ? c.email : '') + '</div>' +
+                    '</div>' +
+                    '<button type="button" class="cal-feed-btn" data-contact-edit="' + esc(c.email) + '" title="Edit" aria-label="Edit ' + esc(c.name || c.email) + '">' +
+                        '<svg class="icon" width="13" height="13"><use href="#ic-edit-s"/></svg></button>' +
+                    '<button type="button" class="cal-feed-btn cal-feed-btn-danger" data-contact-del="' + esc(c.email) + '" title="Remove" aria-label="Remove ' + esc(c.name || c.email) + '">' +
+                        '<svg class="icon" width="13" height="13"><use href="#ic-trash-s"/></svg></button>' +
+                '</div>'
+            ).join('');
+        }
+
+        async function api(action, params, method) {
+            const opts = { method: method || 'GET', credentials: 'same-origin' };
+            let url = 'ajax/contacts.php?action=' + encodeURIComponent(action);
+            if (method === 'POST') {
+                const fd = new FormData();
+                for (const [k, v] of Object.entries(params || {})) fd.append(k, v == null ? '' : v);
+                opts.body = fd;
+                opts.headers = { 'X-CSRF-Token': window.__CSRF__ };
+            }
+            const r = await fetch(url, opts);
+            if (r.status === 401) { window.location = 'index'; return {}; }
+            try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+        }
+
+        function openForm(c) {
+            form.hidden = false;
+            origEl.value  = c ? c.email : '';
+            nameEl.value  = c ? (c.name || '') : '';
+            emailEl.value = c ? c.email : '';
+            (c ? nameEl : emailEl).focus();
+        }
+        function closeForm() { form.hidden = true; origEl.value = ''; form.reset(); }
+
+        $('contactNewBtn').addEventListener('click', () => openForm(null));
+        $('contactCancel').addEventListener('click', closeForm);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const d = await api('save', {
+                email: emailEl.value.trim(),
+                name: nameEl.value.trim(),
+                original_email: origEl.value,
+            }, 'POST');
+            if (d.error) { say(d.error, true); return; }
+            contacts = d.contacts || [];
+            render(); closeForm(); say('Saved');
+        });
+
+        listEl.addEventListener('click', async (e) => {
+            const ed = e.target.closest('[data-contact-edit]');
+            if (ed) {
+                const c = contacts.find(x => x.email === ed.dataset.contactEdit);
+                if (c) openForm(c);
+                return;
+            }
+            const del = e.target.closest('[data-contact-del]');
+            if (!del) return;
+            const email = del.dataset.contactDel;
+            if (!confirm('Remove ' + email + ' from your contacts? This only affects address suggestions — no mail is deleted.')) return;
+            const d = await api('delete', { email: email }, 'POST');
+            if (d.error) { say(d.error, true); return; }
+            contacts = d.contacts || [];
+            render(); say('Removed');
+        });
+
+        (async () => {
+            const d = await api('all');
+            if (d.error) { listEl.innerHTML = '<div class="cal-feed-empty">Could not load contacts.</div>'; return; }
+            contacts = d.contacts || [];
+            render();
+        })();
     })();
 
     /* ---------- Private-data exposure check ----------

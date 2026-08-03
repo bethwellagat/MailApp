@@ -251,3 +251,95 @@ function contacts_search($ownerEmail, $query, $limit = 8) {
     }
     return $out;
 }
+
+/* ---------------------------------------------------------------------------
+ * Manual contact management.
+ *
+ * The book is harvested passively from mail the user sends and threads they
+ * open, which is convenient but leaves no way to fix a wrong name, add someone
+ * before ever writing to them, or remove an address that should not be
+ * suggested. These give the user control of their own address book.
+ *
+ * Same lock discipline as contacts_record(): harvesting runs on every send and
+ * every thread open, so an unlocked read-modify-write here would drop entries.
+ * ------------------------------------------------------------------------- */
+
+/** Every contact, newest-interaction first, as a list the UI can render. */
+function contacts_all($ownerEmail) {
+    $book = load_contacts($ownerEmail);
+    $out  = [];
+    foreach ($book as $email => $e) {
+        if (!is_array($e)) continue;
+        $out[] = [
+            'email'     => (string)($e['email'] ?? $email),
+            'name'      => (string)($e['name'] ?? ''),
+            'count'     => (int)($e['count'] ?? 0),
+            'last_seen' => (int)($e['last_seen'] ?? 0),
+        ];
+    }
+    usort($out, function ($a, $b) {
+        if ($a['last_seen'] !== $b['last_seen']) return $b['last_seen'] - $a['last_seen'];
+        return strcasecmp($a['name'] !== '' ? $a['name'] : $a['email'],
+                          $b['name'] !== '' ? $b['name'] : $b['email']);
+    });
+    return $out;
+}
+
+/**
+ * Create or update one contact. Returns [ok, error].
+ * $originalEmail lets an edit change the address itself — the book is keyed by
+ * address, so that is a delete plus an insert rather than a field update.
+ */
+function contacts_upsert($ownerEmail, $email, $name, $originalEmail = '') {
+    if (!$ownerEmail) return [false, 'Not authenticated'];
+    $email = strtolower(trim((string)$email));
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) return [false, 'Enter a valid email address.'];
+    if ($email === strtolower(trim($ownerEmail)))                     return [false, 'That is your own address.'];
+
+    $name = _contacts_clean_name((string)$name);
+    if (strcasecmp($name, $email) === 0) $name = '';
+    if (mb_strlen($name) > 120) $name = mb_substr($name, 0, 120);
+
+    $lock = @fopen(_contacts_file($ownerEmail) . '.lock', 'c');
+    if ($lock) @flock($lock, LOCK_EX);
+    $book = load_contacts($ownerEmail);
+
+    $original = strtolower(trim((string)$originalEmail));
+    if ($original !== '' && $original !== $email && isset($book[$original])) {
+        // Carry the interaction history across an address change so a corrected
+        // contact doesn't drop to the bottom of autocomplete.
+        $book[$email] = $book[$original];
+        unset($book[$original]);
+    }
+
+    if (!isset($book[$email]) || !is_array($book[$email])) {
+        if (count($book) >= CONTACTS_MAX_ENTRIES) {
+            if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); }
+            return [false, 'Your address book is full (' . CONTACTS_MAX_ENTRIES . ' contacts).'];
+        }
+        $book[$email] = ['email' => $email, 'count' => 0, 'last_seen' => time()];
+    }
+    $book[$email]['email'] = $email;
+    $book[$email]['name']  = $name;   // a manual edit is authoritative, including clearing it
+
+    $ok = save_contacts($ownerEmail, $book);
+    if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); }
+    return [$ok, $ok ? '' : 'Could not save the contact.'];
+}
+
+/** Remove one contact. Returns true if it existed and was removed. */
+function contacts_delete($ownerEmail, $email) {
+    if (!$ownerEmail) return false;
+    $email = strtolower(trim((string)$email));
+    if ($email === '') return false;
+    $lock = @fopen(_contacts_file($ownerEmail) . '.lock', 'c');
+    if ($lock) @flock($lock, LOCK_EX);
+    $book = load_contacts($ownerEmail);
+    $existed = isset($book[$email]);
+    if ($existed) {
+        unset($book[$email]);
+        save_contacts($ownerEmail, $book);
+    }
+    if ($lock) { @flock($lock, LOCK_UN); @fclose($lock); }
+    return $existed;
+}
