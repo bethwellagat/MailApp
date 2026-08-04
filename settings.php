@@ -162,6 +162,10 @@ if ('serviceWorker' in navigator) {
             <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-pen"/></svg></span>
             <span>Signature</span>
         </a>
+        <a class="settings-nav-item" href="#workspace" data-target="workspace">
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span>Workspace</span>
+        </a>
         <a class="settings-nav-item" href="#logo" data-target="logo">
             <span class="snav-icon snav-icon-pink"><svg class="icon"><use href="#ic-image"/></svg></span>
             <span>Workspace logo</span>
@@ -372,6 +376,66 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             </div>
         </section>
 
+        <section id="workspace" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Workspace</h2>
+                <p class="settings-section-desc">The name and colour this installation is branded with. Shown on the sign-in page, in the header, in the browser tab and when the app is installed to a home screen &mdash; so this applies to everyone who signs in on this domain, not just you.</p>
+            </header>
+
+            <div class="settings-alert settings-alert-info" id="wsAdminNote" hidden>
+                <p>Only <strong id="wsAdminEmail"></strong> can change the workspace for this installation.</p>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-row settings-row-stack">
+                    <div class="settings-row-label"><label for="wsName">Workspace name</label></div>
+                    <div class="settings-row-value">
+                        <div class="settings-inline-edit">
+                            <input type="text" id="wsName" class="settings-inline-input" maxlength="60"
+                                   autocomplete="off" spellcheck="false">
+                        </div>
+                        <p class="settings-inline-hint" id="wsNameHint">Leave empty to use the name derived from the domain.</p>
+                    </div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <div class="settings-row-label"><label for="wsTagline">Tagline</label></div>
+                    <div class="settings-row-value">
+                        <div class="settings-inline-edit">
+                            <input type="text" id="wsTagline" class="settings-inline-input" maxlength="80"
+                                   autocomplete="off" spellcheck="false">
+                        </div>
+                        <p class="settings-inline-hint">Appears after the workspace name in the footer.</p>
+                    </div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <div class="settings-row-label"><label for="wsColorText">Brand colour</label></div>
+                    <div class="settings-row-value">
+                        <div class="settings-inline-edit">
+                            <input type="color" id="wsColor" class="ws-color-swatch" aria-label="Pick the brand colour">
+                            <input type="text" id="wsColorText" class="settings-inline-input" maxlength="7"
+                                   placeholder="#0078d4" autocomplete="off" spellcheck="false">
+                        </div>
+                        <p class="settings-inline-hint">Tints the browser tab and the app window when installed to a home screen.</p>
+                    </div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <div class="settings-row-label">Preview</div>
+                    <div class="settings-row-value">
+                        <div class="ws-preview" id="wsPreview">
+                            <span class="ws-preview-dot" id="wsPreviewDot"></span>
+                            <span class="ws-preview-name" id="wsPreviewName"></span>
+                            <span class="ws-preview-tag" id="wsPreviewTag"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-actions">
+                <button type="button" class="btn btn-primary" id="wsSave">Save workspace</button>
+                <button type="button" class="btn" id="wsReset">Reset to automatic</button>
+                <span id="wsStatus" class="settings-status" role="status" aria-live="polite"></span>
+            </div>
+        </section>
         <section id="logo" class="settings-section">
             <header class="settings-section-header">
                 <h2>Workspace logo</h2>
@@ -1932,6 +1996,108 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         const rule = cachedRules.find(x => x.id === id);
         if (rule) rule.enabled = cb.checked;
     });
+})();
+</script>
+<script nonce="<?= csp_nonce() ?>">
+/* === Workspace branding ===
+   Install-wide, so the server owns every fallback: an empty field means "derive
+   it", and the derived value only ever comes from ajax/brand.php. Keeping that
+   logic in one place is what stops the preview drifting from what the app will
+   actually render. */
+(function () {
+    const $ = id => document.getElementById(id);
+    const nameI = $('wsName'), tagI = $('wsTagline');
+    const colorI = $('wsColor'), colorT = $('wsColorText');
+    const saveB = $('wsSave'), resetB = $('wsReset'), status = $('wsStatus');
+    if (!nameI) return;
+
+    let derived = { name: '', tagline: '', color: '#0078d4', domain: '' };
+    let mayEdit = true;
+    const HEX = /^#[0-9a-fA-F]{6}$/;
+
+    const say = (msg, kind) => {
+        status.textContent = msg || '';
+        status.className = 'settings-status' + (kind ? ' ' + kind : '');
+    };
+
+    function paintPreview() {
+        // An empty field means "derive it", so the preview shows the derived
+        // value — exactly what the header will show after a reload.
+        $('wsPreviewName').textContent = (nameI.value.trim() || derived.name) + ' WorkSpace';
+        $('wsPreviewTag').textContent = tagI.value.trim() || derived.tagline;
+        const c = colorT.value.trim();
+        $('wsPreviewDot').style.background = HEX.test(c) ? c : derived.color;
+    }
+
+    function applyState(d) {
+        if (d.derived) derived = d.derived;
+        mayEdit = d.may_edit !== false;
+        const o = d.override || {};
+        nameI.value = o.name || '';
+        tagI.value = o.tagline || '';
+        colorT.value = o.color || '';
+        colorI.value = HEX.test(colorT.value) ? colorT.value : derived.color;
+        nameI.placeholder = derived.name;
+        tagI.placeholder = derived.tagline;
+        $('wsNameHint').textContent =
+            'Leave empty to use "' + derived.name + '", derived from ' +
+            (derived.domain || 'this domain') + '.';
+        if (!mayEdit) {
+            [nameI, tagI, colorI, colorT, saveB, resetB].forEach(el => { el.disabled = true; });
+            $('wsAdminEmail').textContent = d.admin_email || 'the administrator';
+            $('wsAdminNote').hidden = false;
+        }
+        paintPreview();
+    }
+
+    [nameI, tagI, colorT].forEach(el => el.addEventListener('input', paintPreview));
+    colorI.addEventListener('input', () => { colorT.value = colorI.value; paintPreview(); });
+    colorT.addEventListener('input', () => {
+        const v = colorT.value.trim();
+        if (HEX.test(v)) colorI.value = v;
+    });
+
+    async function post(body, working, done) {
+        saveB.disabled = true; resetB.disabled = true;
+        say(working);
+        try {
+            const r = await fetch('ajax/brand.php', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'X-CSRF-Token': window.__CSRF__ },
+                body: body
+            });
+            const d = await r.json();
+            if (d.error) { say(d.error, 'error'); return; }
+            applyState(d);
+            say(done, 'ok');
+        } catch (e) {
+            say('Could not reach the server.', 'error');
+        } finally {
+            if (mayEdit) { saveB.disabled = false; resetB.disabled = false; }
+        }
+    }
+
+    saveB.addEventListener('click', () => {
+        const c = colorT.value.trim();
+        if (c !== '' && !HEX.test(c)) {
+            say('Colour must be a 6-digit hex value such as #0078d4.', 'error');
+            colorT.focus();
+            return;
+        }
+        post(new URLSearchParams({ name: nameI.value, tagline: tagI.value, color: c }),
+             'Saving...', 'Saved. Reload to see it in the header.');
+    });
+
+    resetB.addEventListener('click', () => {
+        post(new URLSearchParams({ reset: '1' }),
+             'Resetting...', 'Reset. The name is derived from the domain again.');
+    });
+
+    fetch('ajax/brand.php', { credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(d => { if (!d.error) applyState(d); })
+        .catch(() => {});
 })();
 </script>
 <script src="assets/logo-ink.js?v=<?= @filemtime(__DIR__."/assets/logo-ink.js") ?>"></script>

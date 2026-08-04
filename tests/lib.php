@@ -69,6 +69,26 @@ function t_extract_fn($file, $name, $alias) {
     }
     if ($i >= $n) { fwrite(STDERR, "could not find function $name in $file\n"); exit(1); }
 
+    // Capture the real parameter list rather than assuming one argument. The
+    // helper began life extracting the sanitizers, which all take a single
+    // $html, and hardcoded that — so a two-argument function came out with an
+    // undefined parameter and every assertion against it silently read ''.
+    // For the single-argument callers this reproduces the same signature.
+    $params = ''; $paren = 0; $k = $j + 1;
+    for (; $k < $n; $k++) {
+        $t   = $tokens[$k];
+        $txt = is_array($t) ? $t[1] : $t;
+        if (!is_array($t) && $t === '(') $paren++;
+        if (!is_array($t) && $t === '{' && $paren === 0) break;   // body starts
+        $params .= $txt;
+        if (!is_array($t) && $t === ')') { $paren--; if ($paren === 0) { $k++; break; } }
+    }
+    $params = trim($params);
+    if ($params === '' || $params[0] !== '(') {
+        fwrite(STDERR, "could not read the parameter list of $name in $file\n");
+        exit(1);
+    }
+
     $depth = 0; $started = false; $body = '';
     for (; $i < $n; $i++) {
         $t   = $tokens[$i];
@@ -82,7 +102,7 @@ function t_extract_fn($file, $name, $alias) {
         fwrite(STDERR, "extraction of $name from $file looks wrong (" . substr_count($body, "\n") . " lines)\n");
         exit(1);
     }
-    eval("function $alias(\$html) $body");
+    eval("function $alias$params $body");
 }
 
 /** A scratch directory for this process, removed by t_cleanup(). */

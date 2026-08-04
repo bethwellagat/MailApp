@@ -6842,3 +6842,47 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
    rebuilds the design). The element has no height constraint, so the vertical
    axis never produces a scrollbar of its own. */
 .mail-page .thread-msg-body { overflow-x: auto; }
+
+/* ---- Settings → Workspace ----
+   Branding is install-wide, so the section leans on the same card/row furniture
+   as the rest of Settings and adds only what it genuinely needs: a colour
+   swatch, a live preview of the resulting header string, and an informational
+   variant of the alert box for the "someone else owns this" case. */
+.settings-page .ws-color-swatch {
+  width: 44px;
+  height: 44px;
+  padding: 2px;
+  border: 1px solid var(--ip-sep);
+  border-radius: 10px;
+  background: var(--ip-card);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.settings-page .ws-color-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.settings-page .ws-color-swatch::-webkit-color-swatch { border: 0; border-radius: 7px; }
+.settings-page .ws-color-swatch::-moz-color-swatch { border: 0; border-radius: 7px; }
+.settings-page .ws-color-swatch:disabled { opacity: 0.4; cursor: default; }
+
+.settings-page .ws-preview {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--ip-sep);
+  border-radius: 10px;
+  background: var(--ip-bg);
+}
+.settings-page .ws-preview-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+  background: var(--ip-blue);
+}
+.settings-page .ws-preview-name { font-weight: 600; color: var(--ip-label); }
+.settings-page .ws-preview-tag { color: var(--ip-label-2); font-size: 13px; }
+
+/* Informational sibling of .settings-alert-danger — same box, calmer colour. */
+.settings-page .settings-alert-info { border-left-color: var(--ip-blue); }
+.settings-page .settings-alert-info strong { color: var(--ip-blue); }

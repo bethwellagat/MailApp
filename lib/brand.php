@@ -15,7 +15,14 @@
  * Any field that is empty / missing falls back to the derived value.
  */
 
-function resolve_brand($host = null) {
+/**
+ * The brand as derived from the host alone, with no data/brand.json overlay.
+ * Split out from resolve_brand() so a caller can ask what the name WOULD be
+ * without the override — Settings shows this as the placeholder and in the
+ * "leave empty to use…" hint, and that hint is a lie if it reports the value
+ * currently overriding it.
+ */
+function brand_derived($host = null) {
     $host = $host ?? ($_SERVER['HTTP_HOST'] ?? '');
     $host = preg_replace('/:\d+$/', '', (string)$host);
     $host = strtolower($host);
@@ -39,6 +46,13 @@ function resolve_brand($host = null) {
         }
     }
 
+    // An IP address has no meaningful second-level label — 127.0.0.1 would
+    // otherwise yield "0" — and neither does a label with no letters in it.
+    // Fall through to the generic name rather than invent a nonsense brand.
+    if (filter_var($host, FILTER_VALIDATE_IP) !== false || !preg_match("/\p{L}/u", $sld)) {
+        $sld = '';
+    }
+
     // Turn the SLD into a presentable name: treat - and _ as word breaks and
     // title-case each word, so radiant-comms → "Radiant Comms", acme_corp →
     // "Acme Corp", acme → "Acme". Run-together names (radiantcomms) can't be
@@ -56,6 +70,16 @@ function resolve_brand($host = null) {
         // the default blue; validated as a hex colour before it reaches any page.
         'color'   => '#0078d4',
     ];
+
+    return $defaults;
+}
+
+/**
+ * The brand the app actually uses: the derived values with data/brand.json
+ * laid over the top. Any field that is empty or missing keeps the derived one.
+ */
+function resolve_brand($host = null) {
+    $defaults = brand_derived($host);
 
     $config = __DIR__ . '/../data/brand.json';
     if (is_file($config)) {
