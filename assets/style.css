@@ -3267,11 +3267,17 @@ img.img-blocked {
   padding: 4px 11px;
   border-radius: 999px;
   letter-spacing: 0.02em;
-  pointer-events: auto;
+  /* The pill floats over the scrolling page, so whatever scrolls under it was
+     having its clicks swallowed — on Settings → Calendars that meant a feed's
+     Show toggle and its refresh/delete buttons became dead while the row sat
+     behind the pill. It is a copyright line with nothing to click, so it opts
+     out of hit-testing entirely; the <a> rule below keeps any link that is
+     ever added to it clickable. */
+  pointer-events: none;
   border: 1px solid rgba(15, 23, 42, 0.06);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-.app-footer a { color: var(--c-brand); font-weight: 500; }
+.app-footer a { color: var(--c-brand); font-weight: 500; pointer-events: auto; }
 .app-footer a:hover { text-decoration: underline; }
 .app-footer strong { color: var(--c-text-secondary); font-weight: 600; }
 /* Dark mode: the footer pill hardcodes a light background above — re-scope it so
@@ -5248,6 +5254,16 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ip-blue) 22%, transparent);
 }
 .settings-page .cal-field { display: flex; flex-direction: column; gap: 6px; }
+/* ...except the checkbox variant. A .cal-field stacks its label above its input,
+   which is right for a text field and wrong for a checkbox: .cal-field-check
+   asks for `row` but is only (0,1,0), so the line above outranked it and left
+   every checkbox in Settings floating above its own caption. Re-assert the row
+   at matching specificity rather than weakening the column rule. */
+.settings-page .cal-field-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
 .settings-page .cal-field-label { font-size: 13px; color: var(--ip-label-2); }
 .settings-page .settings-inline-edit { justify-content: flex-end; }
 .settings-page .settings-inline-input { max-width: 320px; text-align: right; }
@@ -5299,8 +5315,11 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
 
 /* ---- status text ---- */
 .settings-page .settings-status { font-size: 13px; color: var(--ip-label-2); }
-.settings-page .settings-status.success { color: var(--ip-green); font-weight: 500; }
-.settings-page .settings-status.error   { color: var(--ip-red);   font-weight: 500; }
+/* The ink variants, not the system colours: systemRed is 3.6:1 on the white card
+   and systemGreen 1.9:1. A status line only appears when something succeeded or
+   failed, so it is the one moment the text has to be readable. */
+.settings-page .settings-status.success { color: var(--ip-green-ink); font-weight: 500; }
+.settings-page .settings-status.error   { color: var(--ip-red-ink);   font-weight: 500; }
 
 /* ---- dynamic list rows (filters, calendars, contacts) ---- */
 .settings-page .rules-list-header {
@@ -5337,17 +5356,22 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   font-size: 13px; color: var(--ip-label-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* Row actions in the filter, calendar and contact lists. No resting fill: the
+   grey plate lightens the surface under the button's own tinted glyph, and on a
+   contact card — which is already a raised surface — that stacked to 2.7:1. The
+   fill returns on hover, where it reads as feedback rather than decoration. */
 .settings-page .cal-feed-btn {
   width: 30px; height: 30px;
   border-radius: 8px;
   border: 0;
-  background: var(--ip-fill);
+  background: transparent;
   color: var(--ip-blue);
   display: grid; place-items: center;
   cursor: pointer;
 }
-.settings-page .cal-feed-btn:hover { background: var(--ip-fill-2); }
-.settings-page .cal-feed-btn-danger { color: var(--ip-red); }
+.settings-page .cal-feed-btn:hover { background: var(--ip-fill); }
+.settings-page .cal-feed-btn-danger { color: var(--ip-red-ink); }
+.settings-page .cal-feed-btn-danger:hover { background: var(--ip-fill); color: var(--ip-red-ink); }
 .settings-page .cal-feed-empty {
   padding: 22px 16px;
   text-align: center;
@@ -5549,11 +5573,24 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
 .settings-page .contact-count { font-size: 13px; color: var(--ip-label-2); margin-right: auto; }
 .settings-page .rules-list-header { flex-wrap: wrap; }
 
-/* ---- fix: hint text escaping its card (signature tip, calendar help) ---- */
+/* ---- fix: hint text escaping its card (signature tip, calendar help) ----
+   Deliberately NOT `p em`: an <em> inside a paragraph is inline emphasis, and
+   making it a padded block shattered the calendar help into one row per label
+   — "Google Calendar:", "Outlook 365:" and "iCloud:" each broke onto their own
+   ruled line, leaving the sentence's trailing full stop orphaned below them.
+   Only an <em> used as a card's own child is a standalone hint. */
+/* The hint itself is italic, so an inline <em> inside it would be invisible as
+   emphasis. Revert it to roman — the long-standing typographic convention for
+   emphasis within italic text — and give it a little weight, so the service
+   names stay the thing the eye lands on when scanning the paragraph. */
+.settings-page .settings-hint em {
+  font-style: normal;
+  font-weight: 600;
+  color: var(--ip-label);
+}
 .settings-page .settings-card > .settings-hint,
 .settings-page .settings-card .sig-hint,
 .settings-page .settings-card .cal-hint,
-.settings-page .settings-card p em,
 .settings-page .settings-card > em {
   display: block;
   margin: 0;
@@ -6886,3 +6923,110 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 /* Informational sibling of .settings-alert-danger — same box, calmer colour. */
 .settings-page .settings-alert-info { border-left-color: var(--ip-blue); }
 .settings-page .settings-alert-info strong { color: var(--ip-blue); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS ON A PHONE
+   ═══════════════════════════════════════════════════════════════════════════
+   The touch-target work was scoped to .mail-page, so Settings never got any of
+   it: row actions at 26–30px, checkboxes at 16px, every field and button at
+   34–39px tall. Same rule as the inbox — sized by input type, so a tablet gets
+   it too, and only where the control's own box can grow without changing the
+   design. */
+@media (max-width: 820px), (pointer: coarse) {
+  .settings-page .cal-field-input,
+  .settings-page .settings-inline-input,
+  .settings-page .settings-inline-save,
+  .settings-page .btn,
+  .settings-page .cal-modal-btn,
+  .settings-page .acct-btn-primary,
+  .settings-page .acct-btn-secondary,
+  .settings-page .settings-nav-item,
+  .settings-page .settings-back,
+  .settings-page .topbar-user,
+  .settings-page select,
+  .settings-page input[type="text"],
+  .settings-page input[type="url"],
+  .settings-page input[type="email"],
+  .settings-page input[type="password"],
+  .settings-page input[type="number"],
+  .settings-page input[type="date"] { min-height: 44px; }
+
+  .settings-page .cal-feed-color,
+  .settings-page .ws-color-swatch { min-height: 44px; min-width: 44px; }
+
+  /* Row actions and toolbar glyphs keep their size — a 44px button in a list
+     row would dominate it — and grow the hit box underneath instead. */
+  .settings-page .cal-feed-btn,
+  .settings-page .cal-modal-close,
+  .settings-page .sig-tool,
+  .settings-page .signature-btn { position: relative; }
+  .settings-page .cal-feed-btn::after,
+  .settings-page .cal-modal-close::after,
+  .settings-page .sig-tool::after,
+  .settings-page .signature-btn::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  /* A checkbox is tapped via its label, so the label carries the target. */
+  .settings-page .rule-toggle,
+  .settings-page .cal-feed-toggle,
+  .settings-page .settings-check,
+  .settings-page label:has(> input[type="checkbox"]),
+  .settings-page label:has(> input[type="radio"]) {
+    min-height: 44px;
+    /* min-width too: a label that wraps nothing but the box — the filter
+       enable toggle — is only as wide as the box, so height alone left it
+       16px across. A no-op for the labels that carry text. */
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    /* flex-start, not center: min-width padded these to 44px, and centring then
+       pushed the box away from the text it labels. Only a label that wraps
+       nothing but the box wants the box centred in its target — see below. */
+    justify-content: flex-start;
+  }
+  /* The filter-enable toggle has no caption, so its 44px target is all padding
+     and the box belongs in the middle of it. */
+  .settings-page .rule-toggle { justify-content: center; }
+}
+
+/* The filter dialog's footer carries four buttons — Delete, Preview matches,
+   Cancel, Save filter — which do not fit 375px in a row, so Save was pushed
+   39px outside the dialog and Preview sat under its neighbour. Wrapping keeps
+   every one of them reachable; the spacer collapses so the group stays tidy
+   once it is on two lines. */
+@media (max-width: 560px) {
+  /* stretch, not center: "Preview matches" wraps to two lines at this width
+     and ends up 51px tall, so centring left it 3px out of line with its
+     neighbour. Stretching gives every button in a row the same height. */
+  .settings-page .cal-modal-footer { flex-wrap: wrap; justify-content: flex-end; align-items: stretch; }
+  /* The spacer exists to push the confirm group right on a wide footer. Given a
+     100% basis it became a row of its own, and the four buttons ended up on four
+     lines, 181px tall. Dropping it and letting each button take about half the
+     width lands them two-per-row. */
+  .settings-page .cal-modal-spacer { display: none; }
+  .settings-page .cal-modal-footer .cal-modal-btn { flex: 1 1 44%; }
+}
+
+/* Once the toggle and the three row actions are all 44px targets, a filter or
+   calendar row has ~176px of controls and there is not enough left for the text
+   on a phone — the rule description was down to 129px. Wrapping gives the text
+   the full width and puts the controls on their own line, which is the honest
+   answer at this size: the row is describing a rule, and that description is
+   the part worth reading. */
+@media (max-width: 560px) {
+  .settings-page .rule-row,
+  .settings-page .cal-feed-row { flex-wrap: wrap; row-gap: 4px; }
+  .settings-page .rule-info,
+  .settings-page .cal-feed-info { flex: 1 1 calc(100% - 56px); min-width: 0; }
+  /* Push the action buttons onto their own line, aligned right. */
+  .settings-page .rule-row > .cal-feed-btn:first-of-type,
+  .settings-page .cal-feed-row > .cal-feed-toggle { margin-left: auto; }
+  .settings-page .rule-row > .cal-feed-btn:first-of-type { flex-basis: auto; }
+}

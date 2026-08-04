@@ -36,6 +36,33 @@ function t_rules_for(string $css, string $class): array {
     return $out;
 }
 
+/**
+ * Every rule whose last compound carries $class, as a flat list of
+ * [selector, body] pairs.
+ *
+ * t_rules_for() returns a selector-keyed map, which is convenient until the
+ * same selector appears twice — a base rule plus an @media override, say. The
+ * map keeps only the last one, so the base rule's declarations disappear and a
+ * check for them reports a false failure. Use this whenever the question is
+ * "does any rule declare X", not "what does the winning rule say".
+ */
+function t_blocks_for(string $css, string $class): array {
+    $clean = preg_replace('#/\*.*?\*/#s', '', $css);
+    preg_match_all('/([^{}]+)\{([^{}]*)\}/', $clean, $m, PREG_SET_ORDER);
+    $token = '/' . preg_quote($class, '/') . '(?![\w-])/';
+    $out = [];
+    foreach ($m as $r) {
+        $sel = trim($r[1]);
+        if ($sel === '' || $sel[0] === '@') continue;
+        foreach (explode(',', $sel) as $one) {
+            $last = preg_split('/[\s>+~]+/', trim($one));
+            $last = end($last);
+            if (preg_match($token, $last)) { $out[] = [$sel, $r[2]]; break; }
+        }
+    }
+    return $out;
+}
+
 /** Split a declaration body into [property => value], lowercased property. */
 function t_decls(string $body): array {
     $out = [];
@@ -181,3 +208,82 @@ if (is_string($js) && is_string($html)) {
          'undefined: ' . implode(', ', $missing));
     t_ok('app.js actually references icons', count($refs) > 5, 'found ' . count($refs));
 }
+
+t_group('a decorative floating overlay must not steal clicks');
+/**
+ * .app-footer is a position:fixed copyright pill that floats over the scrolling
+ * page on both inbox.php and settings.php. It has nothing to click, but it was
+ * declaring pointer-events:auto — so whatever scrolled under it went dead. On
+ * Settings → Calendars that silently killed a feed's Show toggle and its
+ * refresh/delete buttons whenever the row happened to sit behind the pill.
+ *
+ * Fixed overlays that carry no controls must opt out of hit-testing.
+ */
+/* Scanned rule-by-rule rather than via t_rules_for(): that helper keys its map
+   by selector text, so a later `@media ... { .app-footer { display: none } }`
+   silently replaces the base rule and its declarations vanish from the map. */
+$footerRules = t_blocks_for($css, '.app-footer');
+t_ok('.app-footer has a rule', $footerRules !== [], 'none found');
+$declaresNone = false;
+$declaresAuto = [];
+foreach ($footerRules as [$sel, $body]) {
+    $decls = t_decls($body);
+    if (!isset($decls['pointer-events'])) continue;
+    if ($decls['pointer-events'] === 'none') $declaresNone = true;
+    if ($decls['pointer-events'] === 'auto') $declaresAuto[] = "$sel → pointer-events: auto";
+}
+t_ok('.app-footer opts out of hit-testing', $declaresNone, 'no pointer-events:none found');
+t_ok('.app-footer never re-enables it', $declaresAuto === [], implode(' | ', $declaresAuto));
+
+/* ...but the link inside it must stay clickable, or opting the pill out would
+   take any future link with it. */
+$linkAuto = false;
+foreach (t_blocks_for($css, 'a') as [$sel, $body]) {
+    if (strpos($sel, '.app-footer') === false) continue;
+    if ((t_decls($body)['pointer-events'] ?? '') === 'auto') $linkAuto = true;
+}
+t_ok('a link inside the pill stays clickable', $linkAuto,
+     '.app-footer a does not restore pointer-events');
+
+t_group('a checkbox row is a row, not a column');
+/**
+ * .cal-field stacks a label above its input, which is right for a text field
+ * and wrong for a checkbox. .cal-field-check asks for flex-direction:row but is
+ * only (0,1,0), so `.settings-page .cal-field` (0,2,0) outranked it and left
+ * every checkbox in Settings floating above its own caption — six of them in
+ * the filter dialog alone.
+ *
+ * If the page-scoped column rule exists, a page-scoped row override must too.
+ */
+$colRule = false;
+foreach (t_blocks_for($css, '.cal-field') as [$sel, $body]) {
+    if (strpos($sel, '.settings-page') === false) continue;
+    if ((t_decls($body)['flex-direction'] ?? '') === 'column') $colRule = true;
+}
+if ($colRule) {
+    $rowFix = false;
+    foreach (t_blocks_for($css, '.cal-field-check') as [$sel, $body]) {
+        if (strpos($sel, '.settings-page') === false) continue;
+        if ((t_decls($body)['flex-direction'] ?? '') === 'row') $rowFix = true;
+    }
+    t_ok('.settings-page .cal-field-check re-asserts row', $rowFix,
+         '.settings-page .cal-field sets column with no check-variant override');
+} else {
+    t_ok('.settings-page .cal-field does not force a column', true);
+}
+
+t_group('inline emphasis stays inline');
+/**
+ * A rule styling standalone hint text also matched `p em`, turning every inline
+ * <em> inside a paragraph into a padded, ruled block. The calendar help — one
+ * sentence naming Google Calendar, Outlook 365 and iCloud — shattered into a
+ * row per label with the trailing full stop orphaned on its own line.
+ *
+ * An <em> inside running text is emphasis, never a block.
+ */
+$blockEm = [];
+foreach (t_blocks_for($css, 'em') as [$sel, $body]) {
+    if (!preg_match('/\bp\s+em\b/', $sel)) continue;
+    if ((t_decls($body)['display'] ?? '') === 'block') $blockEm[] = $sel;
+}
+t_ok('no rule makes a paragraph\'s <em> a block', $blockEm === [], implode(' | ', $blockEm));
