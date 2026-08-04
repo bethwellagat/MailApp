@@ -315,8 +315,12 @@ if ('caches' in window) {
     pwBtn.addEventListener('click', function () {
         var show = pw.type === 'password';
         pw.type = show ? 'text' : 'password';
-        eyeOpen.hidden = show;
-        eyeOff.hidden  = !show;
+        // toggleAttribute, not `.hidden = `: these two are <svg>, i.e.
+        // SVGElement, and `hidden` is only a reflected IDL property on
+        // HTMLElement. Assigning it here set a plain JS property and left the
+        // attribute untouched, so the icon never actually swapped.
+        eyeOpen.toggleAttribute('hidden', show);
+        eyeOff.toggleAttribute('hidden', !show);
         pwBtn.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
         pw.focus();
     });

@@ -287,3 +287,83 @@ foreach (t_blocks_for($css, 'em') as [$sel, $body]) {
     if ((t_decls($body)['display'] ?? '') === 'block') $blockEm[] = $sel;
 }
 t_ok('no rule makes a paragraph\'s <em> a block', $blockEm === [], implode(' | ', $blockEm));
+
+t_group('the hidden attribute must actually hide');
+/**
+ * `hidden` is enforced from the browser's OWN stylesheet, and any author rule
+ * that sets `display` beats the entire UA sheet regardless of specificity. The
+ * reset's `svg { display: block }` is enough to defeat it, which is how the
+ * sign-in page came to paint the eye and the crossed-out eye at the same time.
+ *
+ * This had already been patched three times, one selector at a time. A single
+ * global rule is the only version that also covers the next element to use it.
+ */
+$globalHidden = false;
+foreach (t_blocks_for($css, '[hidden]') as [$sel, $body]) {
+    if (trim($sel) !== '[hidden]') continue;
+    if (preg_match('/display\s*:\s*none\s*!important/i', $body)) $globalHidden = true;
+}
+t_ok('a global [hidden] rule enforces display:none !important', $globalHidden,
+     'without it, any element-type display rule silently defeats the attribute');
+
+t_group('hidden is toggled by attribute, never by property, on SVG');
+/**
+ * `hidden` is a reflected IDL property on HTMLElement only. <svg> is an
+ * SVGElement, so `svg.hidden = true` sets a plain JS expando and never touches
+ * the attribute — the icon simply never changes. It fails silently, which is
+ * why it survived: the click handler ran, aria-label updated, and only the
+ * glyph stayed wrong.
+ */
+foreach (['index.php', 'inbox.php', 'settings.php'] as $page) {
+    $src = @file_get_contents(T_ROOT . '/' . $page);
+    if (!is_string($src)) continue;
+
+    /* Which ids belong to an <svg> element in this page's own markup? */
+    preg_match_all('/<svg\b[^>]*\bid="([^"]+)"/i', $src, $svgIds);
+    $svg = array_flip($svgIds[1]);
+
+    /* var NAME = document.getElementById('ID')  →  NAME maps to ID */
+    preg_match_all('/(?:var|let|const)\s+(\w+)\s*=\s*document\.getElementById\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $src, $vars, PREG_SET_ORDER);
+    $varToId = [];
+    foreach ($vars as $v) $varToId[$v[1]] = $v[2];
+
+    /* NAME.hidden = ...  — an assignment, not a read */
+    preg_match_all('/(\w+)\s*\.\s*hidden\s*=(?!=)/', $src, $assigns, PREG_SET_ORDER);
+    $bad = [];
+    foreach ($assigns as $a) {
+        $name = $a[1];
+        if (!isset($varToId[$name])) continue;
+        if (isset($svg[$varToId[$name]])) $bad[] = "$name → #{$varToId[$name]} is an <svg>";
+    }
+    t_ok("$page: no .hidden assignment on an <svg>", $bad === [], implode(' | ', $bad));
+}
+/* And the login toggle specifically uses the attribute API. */
+$login = @file_get_contents(T_ROOT . '/index.php');
+if (is_string($login)) {
+    t_ok('index.php toggles the eye icons by attribute',
+         strpos($login, "eyeOpen.toggleAttribute('hidden'") !== false
+         && strpos($login, "eyeOff.toggleAttribute('hidden'") !== false);
+}
+
+t_group('every page scope carries its own touch targets');
+/**
+ * The 44px work was done page by page — .mail-page, then .settings-page — and
+ * .login-page was missed entirely, leaving 39px fields and a 34px reveal button
+ * on the first screen a phone user ever touches. Each scope needs its own block
+ * precisely because the scoping convention stops one page's rules reaching
+ * another's.
+ */
+$clean = preg_replace('#/\*.*?\*/#s', '', $css);
+foreach (['.mail-page', '.settings-page', '.login-page'] as $scope) {
+    $found = false;
+    /* Coarse-pointer blocks: @media (max-width: 820px), (pointer: coarse) */
+    if (preg_match_all('/@media[^{]*pointer\s*:\s*coarse[^{]*\{(.*?)\n\}/s', $clean, $blocks)) {
+        foreach ($blocks[1] as $block) {
+            if (strpos($block, $scope) !== false && preg_match('/min-(height|width)\s*:\s*44px/', $block)) {
+                $found = true;
+                break;
+            }
+        }
+    }
+    t_ok("$scope has a 44px touch block", $found, 'no coarse-pointer rules for this scope');
+}
