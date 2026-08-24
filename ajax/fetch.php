@@ -4,6 +4,7 @@ require_once __DIR__ . '/../lib/accounts.php';
 accounts_boot();
 require_once __DIR__ . '/../lib/imap.php';
 require_once __DIR__ . '/../lib/mailhtml.php';
+require_once __DIR__ . '/../lib/threading.php';
 $action = $_GET['action'] ?? '';
 if ($action === 'attachment') {
     header('Cache-Control: no-store');
@@ -541,6 +542,18 @@ function find_folder($mbox, $ref, $keywords) {
     return resolve_folder($mbox, $ref, (array)$keywords);
 }
 
+/**
+ * The threading ids of one message, read from its raw headers.
+ *
+ * Extraction goes through the shared thread_ids_raw() so this agrees with the
+ * message list about what counts as an id — a mailer that writes References
+ * without angle brackets used to be invisible here and visible there, which is
+ * exactly how the two views drifted apart.
+ *
+ * Case is deliberately PRESERVED: these values become the In-Reply-To and
+ * References of replies this app sends, and the local part of a Message-ID is
+ * case-sensitive. Callers fold case at the point of comparison instead.
+ */
 function parse_thread_ids($rawHeaders) {
     $out = ['msg_id' => '', 'in_reply_to' => '', 'references' => []];
     if (!$rawHeaders) return $out;
@@ -548,59 +561,70 @@ function parse_thread_ids($rawHeaders) {
     $unfolded = preg_replace('/\r?\n[\t ]+/', ' ', $rawHeaders);
     foreach (preg_split('/\r?\n/', $unfolded) as $line) {
         if (preg_match('/^Message-ID:\s*(.*)$/i', $line, $m)) {
-            if (preg_match('/<([^>\s]+)>/', $m[1], $idM)) $out['msg_id'] = $idM[1];
+            $ids = thread_ids_raw($m[1]);
+            if ($ids) $out['msg_id'] = $ids[0];
         } elseif (preg_match('/^In-Reply-To:\s*(.*)$/i', $line, $m)) {
-            if (preg_match('/<([^>\s]+)>/', $m[1], $idM)) $out['in_reply_to'] = $idM[1];
+            $ids = thread_ids_raw($m[1]);
+            if ($ids) $out['in_reply_to'] = $ids[0];
         } elseif (preg_match('/^References:\s*(.*)$/i', $line, $m)) {
-            preg_match_all('/<([^>\s]+)>/', $m[1], $rM);
-            $out['references'] = $rM[1];
+            $out['references'] = thread_ids_raw($m[1]);
         }
     }
     return $out;
 }
 
 /**
- * Locate UIDs in $box whose Message-ID/In-Reply-To/References contains $needle.
- * Uses a static per-folder overview cache so multi-pass BFS only fetches once
- * per folder per request. Capped at MAX_OVERVIEW_SCAN messages — for large
- * folders (Inbox with thousands of messages) we cap at the most recent slice
- * because real conversations are almost always within recent history.
+ * UIDs in $box that mention message-id $needle — in their own Message-ID, their
+ * In-Reply-To, or anywhere in their References.
+ *
+ * Two things this used to get wrong:
+ *
+ * It compared with stripos(), i.e. by SUBSTRING. "abc@x" then matched a message
+ * referencing "xxabc@x", so the reading pane could pull in mail the list had
+ * put in a different conversation — the two disagreeing about what a thread is
+ * being the whole bug this change exists to end. Ids are now parsed with the
+ * shared thread_ids_in() and compared whole, exactly as thread_group() does.
+ *
+ * And it re-scanned every cached row for every id the BFS asked about, so a
+ * long thread cost ids × messages string searches. The scan now builds an index
+ * once per folder and every later lookup is a hash hit.
+ *
+ * Capped at MAX_SCAN messages: 1200 rather than 3000 because this overview is
+ * held in memory for EVERY folder a thread lookup touches, on a host with a 2GB
+ * per-account ceiling, and conversations reaching further back are vanishingly
+ * rare.
  */
 function find_thread_uids_in_folder($box, $folder, $needle) {
-    static $overviewCache = [];
-    // 1200 rather than 3000: this overview is fetched and held in memory for EVERY
-    // folder a thread lookup touches, on a host with a 2GB per-account ceiling.
-    // Conversations that reach back beyond the last ~1200 messages in a folder are
-    // vanishingly rare, and the cost is paid on every message open.
+    static $indexCache = [];
     $MAX_SCAN = 1200;
 
-    if (!isset($overviewCache[$folder])) {
+    if (!isset($indexCache[$folder])) {
+        $index = [];
         $check = @imap_check($box);
         $total = $check ? (int)$check->Nmsgs : 0;
-        if ($total === 0) {
-            $overviewCache[$folder] = [];
-        } else {
+        if ($total > 0) {
             $end   = $total;
             $start = max(1, $total - $MAX_SCAN + 1);
             $rows  = @imap_fetch_overview($box, "$start:$end", 0);
-            $overviewCache[$folder] = is_array($rows) ? $rows : [];
+            if (is_array($rows)) {
+                foreach ($rows as $om) {
+                    $u = (int)@imap_uid($box, $om->msgno);
+                    if ($u <= 0) continue;
+                    $ids = [];
+                    foreach (['message_id', 'in_reply_to', 'references'] as $hdr) {
+                        if (empty($om->$hdr)) continue;
+                        foreach (thread_ids_in($om->$hdr) as $id) $ids[$id] = true;
+                    }
+                    foreach ($ids as $id => $_) $index[$id][] = $u;
+                }
+            }
         }
+        $indexCache[$folder] = $index;
     }
 
-    $needleLow = strtolower($needle);
-    $hits      = [];
-    foreach ($overviewCache[$folder] as $om) {
-        $matched = false;
-        foreach (['message_id', 'in_reply_to', 'references'] as $hdr) {
-            if (empty($om->$hdr)) continue;
-            if (stripos($om->$hdr, $needle) !== false) { $matched = true; break; }
-        }
-        if ($matched) {
-            $u = (int)@imap_uid($box, $om->msgno);
-            if ($u > 0) $hits[] = $u;
-        }
-    }
-    return $hits;
+    $key = thread_norm_id($needle);
+    if ($key === '' || !isset($indexCache[$folder][$key])) return [];
+    return $indexCache[$folder][$key];
 }
 
 /**
@@ -798,57 +822,113 @@ if ($action === 'messages') {
         ok(['messages' => [], 'total' => 0, 'page' => 1, 'pages' => 1, 'folder' => $folder]);
     }
 
-    // Paginate over the WHOLE mailbox so every page is reachable. Each page is a
-    // slice of $perPage raw messages (newest first); conversations are grouped
-    // only WITHIN that slice. Grouping across the entire mailbox would collapse
-    // big same-reference threads (e.g. hundreds of delivery-failure bounces) into
-    // a few rows and hide everything else.
-    $pages = max(1, (int)ceil($total / $perPage));
-    $page  = min($page, $pages);
-    $end   = $total - (($page - 1) * $perPage);
-    $start = max(1, $end - $perPage + 1);
+    /* ---- one row per conversation ----
+       This list used to be flat: one row per message, with a comment saying
+       grouping was refused because it "collapses large same-reference floods
+       into one row and hides the rest of the page" and "caused split/short
+       pages". Both of those are symptoms of grouping WITHIN a page slice of raw
+       messages — take 25 messages, group them, and you get an unpredictable
+       number of rows, while a 3000-bounce flood eats the whole slice.
 
-    $messages = [];
-    $overview = @imap_fetch_overview($mbox, "$start:$end", 0);
+       The fix is to group first and paginate the CONVERSATIONS. A page is then
+       always $perPage rows, and a flood is one of them rather than all of them.
+
+       Grouping has to see further than one page, because two messages in a
+       thread are rarely 25 apart: scan a bounded recent window in a single
+       overview call. 1200 matches find_thread_uids_in_folder's window, which is
+       already paid on every message open, so this is a cost the app has long
+       accepted — and conversations reaching back further than that are
+       vanishingly rare. */
+    $WINDOW   = 1200;
+    $winStart = max(1, $total - $WINDOW + 1);
+    $older    = $winStart - 1;          // messages behind the window, still listed, ungrouped
+
+    $overview = @imap_fetch_overview($mbox, "$winStart:$total", 0);
     if (!is_array($overview)) {
         // Transient read error vs a genuinely empty slice — surface an error so
         // the client doesn't show "0 messages" for a mailbox that has some.
         @imap_close($mbox);
         fail('Could not read messages from "' . $folder . '". Please try again.');
     }
-    if ($overview) {
-        // Flat list — one row per message, newest first. Conversation grouping is
-        // intentionally NOT done in the list: it collapses large same-reference
-        // floods (e.g. thousands of delivery-failure bounces of a single send)
-        // into one row and hides the rest of the page. Threading still happens in
-        // the reading pane — opening any message fetches and shows its full
-        // conversation. (Per-page grouping also caused split/short pages.)
-        $overview = array_reverse($overview); // imap_fetch_overview returns oldest→newest
-        foreach ($overview as $m) {
-            $from = parse_addr($m->from ?? '');
-            $uid  = (int)imap_uid($mbox, $m->msgno);
-            $messages[] = [
-                'uid'          => $uid,
-                'subject'      => decode_header($m->subject ?? '') ?: '(no subject)',
-                'from_name'    => $from['name'],
-                'from_addr'    => $from['email'],
-                'date'         => $m->date ?? '',
-                'timestamp'    => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
-                'seen'         => !empty($m->seen),
-                'flagged'      => !empty($m->flagged),
-                'answered'     => !empty($m->answered),
-                'size'         => (int)($m->size ?? 0),
-                'message_id'   => isset($m->message_id) ? $m->message_id : '',
-                'thread_count' => 1,
-                'thread_uids'  => [$uid],
-            ];
-        }
-        usort($messages, function ($a, $b) { return $b['timestamp'] - $a['timestamp']; });
+
+    $rowOf = function ($m) use ($mbox) {
+        $from = parse_addr($m->from ?? '');
+        // imap_uid() on the msgno, not $m->uid: this overview is fetched by
+        // SEQUENCE, and that is the mapping this action has always used here.
+        $uid  = (int)imap_uid($mbox, $m->msgno);
+        if ($uid <= 0 && isset($m->uid)) $uid = (int)$m->uid;
+        return [
+            'uid'          => $uid,
+            'subject'      => decode_header($m->subject ?? '') ?: '(no subject)',
+            'from_name'    => $from['name'],
+            'from_addr'    => $from['email'],
+            'date'         => $m->date ?? '',
+            'timestamp'    => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
+            'seen'         => !empty($m->seen),
+            'flagged'      => !empty($m->flagged),
+            'answered'     => !empty($m->answered),
+            'size'         => (int)($m->size ?? 0),
+            'message_id'   => isset($m->message_id) ? $m->message_id : '',
+            'in_reply_to'  => isset($m->in_reply_to) ? $m->in_reply_to : '',
+            'references'   => isset($m->references) ? $m->references : '',
+            'thread_count' => 1,
+            'thread_uids'  => [$uid],
+        ];
+    };
+
+    $windowRows = [];
+    foreach ($overview as $m) $windowRows[] = $rowOf($m);
+
+    /* Drafts are the one folder that must stay flat. Two drafts replying to the
+       same thread share its References, so grouping them would collapse both
+       into one row and leave the older one with no way to be opened — the row
+       resumes a single UID. A draft is a document you are writing, not a
+       message in a conversation. */
+    $isDrafts = (bool)preg_match('/(^|[\/\.])drafts?$/i', $folder);
+
+    $convRows = [];
+    if ($isDrafts) {
+        // thread_group() is what puts rows newest-first everywhere else, so the
+        // ungrouped path has to sort for itself — the overview arrives
+        // oldest-first and would otherwise list Drafts upside down.
+        $convRows = $windowRows;
+        usort($convRows, function ($a, $b) {
+            if ($a['timestamp'] !== $b['timestamp']) return $b['timestamp'] - $a['timestamp'];
+            return $b['uid'] - $a['uid'];
+        });
+    } else {
+        foreach (thread_group($windowRows) as $g) $convRows[] = thread_row($g);
     }
+
+    // Every windowed message is newer than every message behind the window, so
+    // the conversations sort ahead of the ungrouped tail without comparing them.
+    $plan  = thread_page_plan(count($convRows), $older, $page, $perPage);
+    $page  = $plan['page'];
+    $pages = $plan['pages'];
+
+    $messages = array_slice($convRows, $plan['conv_offset'], $plan['conv_count']);
+
+    /* The tail is only reached in a mailbox larger than the window. Fetch just
+       the rows this page needs rather than the whole remainder — otherwise a
+       deep page in a big folder would read everything behind the window. */
+    if ($plan['tail_count'] > 0) {
+        $high = $winStart - 1 - $plan['tail_from'];      // newest-first, counting down
+        $low  = max(1, $high - $plan['tail_count'] + 1);
+        $tailOv = @imap_fetch_overview($mbox, "$low:$high", 0);
+        if (is_array($tailOv)) {
+            $tailRows = [];
+            foreach ($tailOv as $m) $tailRows[] = $rowOf($m);
+            $tailRows = array_reverse($tailRows);   // overview returns oldest→newest
+            foreach ($tailRows as $r) $messages[] = $r;
+        }
+    }
+
     @imap_close($mbox);
 
     ok([
         'messages' => $messages,
+        // The raw message count, not the conversation count: it is what the
+        // sidebar shows for this folder, and the two disagreeing reads as a bug.
         'total'    => $total,
         'page'     => $page,
         'pages'    => $pages,
@@ -897,6 +977,7 @@ if ($action === 'unified') {
         $mbox = open_box('INBOX');
         if (!$mbox) { @imap_errors(); @imap_alerts(); continue; } // skip unreachable account
 
+        $acctRows = [];
         $check = @imap_check($mbox);
         $total = $check ? (int)$check->Nmsgs : 0;
         if ($total > 0) {
@@ -907,7 +988,7 @@ if ($action === 'unified') {
                 foreach ($ov as $m) {
                     $from = parse_addr($m->from ?? '');
                     $uid  = (int)imap_uid($mbox, $m->msgno);
-                    $messages[] = [
+                    $acctRows[] = [
                         'uid'             => $uid,
                         'subject'         => decode_header($m->subject ?? '') ?: '(no subject)',
                         'from_name'       => $from['name'],
@@ -918,6 +999,9 @@ if ($action === 'unified') {
                         'flagged'         => !empty($m->flagged),
                         'answered'        => !empty($m->answered),
                         'size'            => (int)($m->size ?? 0),
+                        'message_id'      => isset($m->message_id) ? $m->message_id : '',
+                        'in_reply_to'     => isset($m->in_reply_to) ? $m->in_reply_to : '',
+                        'references'      => isset($m->references) ? $m->references : '',
                         'thread_count'    => 1,
                         'thread_uids'     => [$uid],
                         'has_attachments' => false, // skipped here to bound IMAP load
@@ -929,6 +1013,12 @@ if ($action === 'unified') {
             }
         }
         @imap_close($mbox);
+
+        // Group each account separately. Two accounts can hold copies of the
+        // same thread, but they are different mailboxes with different UIDs —
+        // merging them would produce a row whose actions span two connections,
+        // and the per-account badge on it would be a lie.
+        foreach (thread_group($acctRows) as $g) $messages[] = thread_row($g);
     }
 
     usort($messages, function ($a, $b) { return $b['timestamp'] - $a['timestamp']; });
@@ -1116,6 +1206,11 @@ if ($action === 'starred') {
             if ($ov) {
                 foreach ($ov as $m) {
                     $from = parse_addr($m->from ?? '');
+                    // Deliberately one row per message, not per conversation:
+                    // this view answers "which messages did I star?", and
+                    // collapsing a starred message into a conversation whose
+                    // newest member is not starred would show a row the user
+                    // never starred and hide the one they did.
                     $results[] = [
                         'uid'          => (int)$m->uid,
                         'folder'       => $f,
@@ -1234,6 +1329,9 @@ if ($action === 'search') {
                 if (isset($seenKey[$key])) continue;
                 $seenKey[$key] = true;
                 $from = parse_addr($m->from ?? '');
+                // One row per matching message, not per conversation: a search
+                // hit is a specific message, and grouping would show a row whose
+                // visible subject and sender never matched what was typed.
                 $results[] = [
                     'uid'          => $uid,
                     'folder'       => $f,
@@ -1434,6 +1532,27 @@ if ($action === 'thread') {
         }
     }
 
+    /* Opening a conversation puts every message in it on screen, so every
+       message in it has been read. Flagging only the clicked one was fine while
+       the list drew one row per message; now that a row is a conversation and
+       its unread state is the OR of its members, leaving the rest unseen made
+       the row spring back to bold on the next refresh and left the sidebar's
+       unread count disagreeing with the list. Counted per folder because a
+       thread reaches into Sent, whose count is a different number. */
+    $markedRead = [];
+    $toFlag     = [];
+    foreach ($messages as $i => $m) {
+        if (!empty($m['seen'])) continue;
+        $f = $m['folder'];
+        if (empty($boxes[$f])) continue;
+        $toFlag[$f][] = (int)$m['uid'];
+        $messages[$i]['seen'] = true;
+        $markedRead[$f] = ($markedRead[$f] ?? 0) + 1;
+    }
+    foreach ($toFlag as $f => $uidList) {
+        @imap_setflag_full($boxes[$f], implode(',', $uidList), '\\Seen', ST_UID);
+    }
+
     foreach ($boxes as $box) { if ($box) @imap_close($box); }
 
     contacts_harvest_messages($_SESSION['email'], $messages);
@@ -1443,6 +1562,9 @@ if ($action === 'thread') {
         'subject'     => $messages[0]['subject'] ?? '',
         'focused_uid' => $uid,
         'folders'     => $foldersToSearch,
+        // { folder: how many this open just marked read } — the client subtracts
+        // these from the sidebar rather than assuming one.
+        'marked_read' => (object)$markedRead,
     ]);
 }
 

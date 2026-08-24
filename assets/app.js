@@ -943,19 +943,27 @@
     // polls cost nothing unless new mail arrived. Not used for unified/search.
     async function loadAttachFlags(seq) {
         if (isUnifiedView() || state.searchActive) return;
-        // Probe only the representative (shown) UID of each conversation — one
-        // structure fetch per visible row, not per thread member. msgHasAttachment
-        // matches on it via thread_uids (the representative is always a member).
+        // Probe every member of every visible conversation, not just the row's
+        // representative: the attachment is usually on the message that STARTED
+        // the thread, not the latest reply, so probing only the representative
+        // dropped the paperclip and made the Attachments filter miss threads
+        // that plainly have one. msgHasAttachment already ORs over thread_uids.
         const want = [];
         for (const m of state.messages) {
-            const u = m.uid;
-            if (u == null || state.attachChecked.has(u)) continue;
-            want.push(u);
+            const uids = (m.thread_uids && m.thread_uids.length) ? m.thread_uids : [m.uid];
+            for (const u of uids) {
+                if (u == null || state.attachChecked.has(u)) continue;
+                want.push(u);
+            }
         }
         if (!want.length) return;
+        // Only the UIDs actually sent may be recorded as probed — marking the
+        // whole list would permanently skip everything past the cap, which now
+        // overflows far sooner than it did with one UID per row.
+        const asked = want.slice(0, 200);
         const data = await apiGet('attach_flags',
-            withAcct({ folder: state.currentFolder, uids: want.slice(0, 200).join(',') }, viewAcct()));
-        want.forEach(u => state.attachChecked.add(u)); // remember (incl. negatives) so we don't re-ask
+            withAcct({ folder: state.currentFolder, uids: asked.join(',') }, viewAcct()));
+        asked.forEach(u => state.attachChecked.add(u)); // remember (incl. negatives) so we don't re-ask
         if (seq !== loadMessagesSeq) return;            // a newer load superseded us
         if (!data || data.error || !data.flags) return;
         let changed = false;
@@ -1339,8 +1347,12 @@
         if (m.answered)        indicators += '<svg class="msg-indicator" width="12" height="12"><use href="#ic-replied"/></svg>';
         if (m.flagged)         indicators += '<svg class="msg-indicator msg-indicator-pin" width="12" height="12"><use href="#ic-pin"/></svg>';
 
+        // "in this folder", not "in conversation": the reading pane also gathers
+        // the thread's messages from Sent, so it legitimately shows a larger
+        // number, and a badge claiming to be the whole conversation would look
+        // like one of the two was miscounting.
         const countBadge = m.thread_count > 1
-            ? '<span class="msg-thread-count" title="' + m.thread_count + ' messages in conversation">' + m.thread_count + '</span>'
+            ? '<span class="msg-thread-count" title="' + m.thread_count + ' messages in this folder">' + m.thread_count + '</span>'
             : '';
 
         // In the unified inbox, tag each row with the owning account so the
@@ -1455,9 +1467,24 @@
             renderMessages();
             // Decrement the unread badge on the owning account's folder (its own
             // cached folder list, which the grouped sidebar renders from).
+            // A row is a conversation, so opening it can clear several unread
+            // messages at once, and they need not all live in this folder — the
+            // server reports what it actually marked, per folder. Assuming one
+            // left the badge counting messages the list no longer shows as unread.
             const fs = (msgAcct && state.accountFolders[msgAcct]) || state.folders;
-            const folder = fs.find(f => f.name.toLowerCase() === msgFolder.toLowerCase());
-            if (folder && folder.unread > 0) { folder.unread--; renderSidebar(); }
+            const marked = (data && data.marked_read) || {};
+            const names = Object.keys(marked).length ? Object.keys(marked) : [msgFolder];
+            let touched = false;
+            for (const name of names) {
+                const n = Object.keys(marked).length ? (marked[name] || 0) : 1;
+                if (n <= 0) continue;
+                const folder = fs.find(f => f.name.toLowerCase() === name.toLowerCase());
+                if (folder && folder.unread > 0) {
+                    folder.unread = Math.max(0, folder.unread - n);
+                    touched = true;
+                }
+            }
+            if (touched) renderSidebar();
         }
         updateActionBar();
     }
