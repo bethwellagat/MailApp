@@ -124,6 +124,12 @@ $prefs        = load_prefs($email);
     <symbol id="ic-collapse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>
     </symbol>
+    <symbol id="ic-unfold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" y1="12" x2="20" y2="12"/><polyline points="8 8 12 4 16 8"/><polyline points="8 16 12 20 16 16"/>
+    </symbol>
+    <symbol id="ic-fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" y1="12" x2="20" y2="12"/><polyline points="8 4 12 8 16 4"/><polyline points="8 20 12 16 16 20"/>
+    </symbol>
     <symbol id="ic-undo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-4"/></symbol>
     <symbol id="ic-redo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h4"/></symbol>
     <symbol id="ic-list-ol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-1.4 2-2.4 0-.7-.6-1.1-1.4-.9"/></symbol>
@@ -396,6 +402,11 @@ $prefs        = load_prefs($email);
                     </button>
                     <button class="reading-action-btn" id="printBtn" title="Print" aria-label="Print">
                         <svg class="icon"><use href="#ic-print"/></svg>
+                    </button>
+                    <!-- Only a conversation has anything to expand, so this stays
+                         hidden for a single message; renderThread() reveals it. -->
+                    <button class="reading-action-btn" id="expandAllBtn" title="Expand all messages" aria-label="Expand all messages" aria-expanded="false" hidden>
+                        <svg class="icon"><use href="#ic-unfold"/></svg>
                     </button>
                     <button class="reading-action-btn reading-action-unsub" id="unsubscribeBtn" title="Unsubscribe from this mailing list" hidden>
                         <svg class="icon"><use href="#ic-block"/></svg>

@@ -1444,11 +1444,13 @@
         $('readSubject').textContent = '';
         $('readThreadSummary').hidden = true;
         $('readThread').innerHTML = '<div class="list-loading" style="text-align:left;padding:8px 0;">Loading conversation…</div>';
+        updateExpandAllBtn();   // no cards yet — do not leave the last thread's toggle on screen
 
         const data = await apiGet('thread', withAcct({ folder: msgFolder, uid }, msgAcct));
         if (seq !== loadMessageSeq) return; // a newer message open superseded this one
         if (data.error) {
             $('readThread').innerHTML = '<div style="color:var(--c-error)">' + escapeHtml(data.error) + '</div>';
+            updateExpandAllBtn();
             updateActionBar();
             return;
         }
@@ -1992,6 +1994,97 @@
         }).join('');
 
         $('readThread').innerHTML = html;
+        updateExpandAllBtn();
+    }
+
+    /**
+     * Fill in one message's body.
+     *
+     * A conversation renders older messages as headers only and fetches each
+     * body the first time it is opened, so both a click on a header and Expand
+     * all arrive here rather than each carrying its own copy of the fetch.
+     *
+     * The in-flight guard matters now that two things can ask at once: without
+     * it, expanding all while a click is still loading fires a second request
+     * for the same message and the slower reply overwrites the newer one.
+     */
+    async function loadThreadMsgBody(card) {
+        const body = card && card.querySelector('.thread-msg-body');
+        if (!body || body.dataset.loaded === 'true' || body.dataset.loading === 'true') return;
+        const uid    = parseInt(card.dataset.uid, 10);
+        const folder = card.dataset.folder;
+        if (!uid || !folder) return;
+        body.dataset.loading = 'true';
+        body.innerHTML = '<div class="list-loading" style="text-align:left;padding:8px 0;">Loading message…</div>';
+        const data = await apiGet('message', withAcct({ folder, uid }, state.currentMsgAcct));
+        delete body.dataset.loading;
+        if (data.error) {
+            body.innerHTML = '<div style="color:var(--c-error)">' + escapeHtml(data.error) + '</div>';
+            return;
+        }
+        const msgForAtts = { folder, uid, acct: state.currentMsgAcct, attachments: data.attachments || [], invite: data.invite };
+        body.innerHTML = renderInviteCard(msgForAtts) + renderMsgAttachments(msgForAtts) + renderMessageBody(data.body || '');
+        body.dataset.loaded = 'true';
+        if (data.invite && state.thread) {
+            const m = state.thread.find(x => (x.uid | 0) === uid && x.folder === folder);
+            if (m) m.invite = data.invite;
+        }
+    }
+
+    function threadCards() {
+        return Array.from(document.querySelectorAll('#readThread .thread-msg'));
+    }
+
+    /**
+     * Point the toolbar toggle at whatever the cards are actually doing, so it
+     * stays right whether the change came from the button or from expanding
+     * cards one by one. Hidden unless there is more than one message: a
+     * conversation of one has nothing to expand.
+     */
+    function updateExpandAllBtn() {
+        const btn = $('expandAllBtn');
+        if (!btn) return;
+        const cards = threadCards();
+        if (cards.length < 2) { btn.hidden = true; return; }
+        btn.hidden = false;
+        const allOpen = cards.every(c => c.classList.contains('expanded'));
+        const label   = allOpen ? 'Collapse all messages' : 'Expand all messages';
+        btn.title = label;
+        btn.setAttribute('aria-label', label);
+        btn.setAttribute('aria-expanded', allOpen ? 'true' : 'false');
+        const use = btn.querySelector('use');
+        if (use) use.setAttribute('href', allOpen ? '#ic-fold' : '#ic-unfold');
+    }
+
+    /**
+     * Open or close every message in the conversation.
+     *
+     * The cards are toggled first so the whole thread responds to the click at
+     * once; the bodies then stream in behind that. They are fetched a few at a
+     * time rather than all together — a long ticket thread runs to a dozen
+     * messages, each body is a separate IMAP round-trip, and this app is built
+     * to be gentle with a shared host.
+     */
+    async function setThreadExpanded(expand) {
+        const cards = threadCards();
+        if (!cards.length) return;
+        cards.forEach(c => c.classList.toggle('expanded', expand));
+        updateExpandAllBtn();
+        if (!expand) return;
+
+        const pending = cards.filter(c => {
+            const b = c.querySelector('.thread-msg-body');
+            return b && b.dataset.loaded !== 'true';
+        });
+        if (!pending.length) return;
+
+        const LANES = 3;
+        let next = 0;
+        await Promise.all(
+            Array.from({ length: Math.min(LANES, pending.length) }, async () => {
+                while (next < pending.length) await loadThreadMsgBody(pending[next++]);
+            })
+        );
     }
 
     function updateActionBar() {
@@ -4152,26 +4245,15 @@
             if (!card) return;
             const wasExpanded = card.classList.contains('expanded');
             card.classList.toggle('expanded');
+            updateExpandAllBtn();          // the toolbar toggle mirrors the cards
             if (wasExpanded) return;
+            await loadThreadMsgBody(card);
+        });
 
-            const body = card.querySelector('.thread-msg-body');
-            if (!body || body.dataset.loaded === 'true') return;
-            const uid = parseInt(card.dataset.uid, 10);
-            const folder = card.dataset.folder;
-            if (!uid || !folder) return;
-            body.innerHTML = '<div class="list-loading" style="text-align:left;padding:8px 0;">Loading message…</div>';
-            const data = await apiGet('message', withAcct({ folder, uid }, state.currentMsgAcct));
-            if (data.error) {
-                body.innerHTML = '<div style="color:var(--c-error)">' + escapeHtml(data.error) + '</div>';
-                return;
-            }
-            const msgForAtts = { folder, uid, acct: state.currentMsgAcct, attachments: data.attachments || [], invite: data.invite };
-            body.innerHTML = renderInviteCard(msgForAtts) + renderMsgAttachments(msgForAtts) + renderMessageBody(data.body || '');
-            body.dataset.loaded = 'true';
-            if (data.invite && state.thread) {
-                const m = state.thread.find(x => (x.uid | 0) === uid && x.folder === folder);
-                if (m) m.invite = data.invite;
-            }
+        $('expandAllBtn').addEventListener('click', () => {
+            const cards = threadCards();
+            const allOpen = cards.length > 0 && cards.every(c => c.classList.contains('expanded'));
+            setThreadExpanded(!allOpen);
         });
 
         $('abDelete').addEventListener('click', actDelete);

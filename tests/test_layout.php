@@ -367,3 +367,48 @@ foreach (['.mail-page', '.settings-page', '.login-page'] as $scope) {
     }
     t_ok("$scope has a 44px touch block", $found, 'no coarse-pointer rules for this scope');
 }
+
+t_group('icons swapped in by script also exist');
+/**
+ * The guard above only sees icons written as href="#ic-…" in markup. app.js
+ * also swaps icons at runtime — setAttribute('href', open ? '#ic-fold' :
+ * '#ic-unfold') — and those references are invisible to a regex looking for an
+ * href attribute. Delete such a symbol and nothing fails; the button simply
+ * renders an empty box, and only in the state that swaps it in, which is
+ * exactly the kind of blank control this app has shipped before.
+ *
+ * So: every '#ic-…' string literal anywhere in app.js must resolve to a symbol
+ * defined in the page that script drives.
+ */
+$js   = @file_get_contents(T_ROOT . '/assets/app.js');
+$html = @file_get_contents(T_ROOT . '/inbox.php');
+if (is_string($js) && is_string($html)) {
+    preg_match_all('/<symbol[^>]*\bid="([^"]+)"/i', $html, $def);
+    preg_match_all('/[\'"]#(ic-[a-z0-9-]+)[\'"]/i', $js, $lit);
+    $refs    = array_values(array_unique($lit[1]));
+    $missing = array_values(array_diff($refs, $def[1]));
+    t_ok('every scripted icon literal is defined', $missing === [],
+         'undefined: ' . implode(', ', $missing));
+    t_ok('the scan found scripted icons to check', count($refs) > 0, 'found ' . count($refs));
+}
+
+t_group('the conversation expander is wired end to end');
+/**
+ * A toolbar button is three separate pieces — the markup, the two sprite
+ * symbols and the handler — and losing any one of them leaves a control that
+ * looks fine and does nothing.
+ */
+if (is_string($html) && is_string($js)) {
+    t_ok('the button exists',            strpos($html, 'id="expandAllBtn"') !== false);
+    t_ok('it starts hidden',             preg_match('/id="expandAllBtn"[^>]*\shidden/', $html) === 1,
+         'a single-message conversation has nothing to expand');
+    t_ok('it announces its state',       strpos($html, 'aria-expanded') !== false);
+    foreach (['ic-unfold', 'ic-fold'] as $sym) {
+        t_ok("sprite defines $sym", strpos($html, 'id="' . $sym . '"') !== false);
+    }
+    t_ok('a click handler is attached',  strpos($js, "\$('expandAllBtn').addEventListener") !== false);
+    t_ok('the toggle is kept in step',   substr_count($js, 'updateExpandAllBtn()') >= 4,
+         'renderThread, the loading and error paths, and the per-card click must all refresh it');
+    t_ok('bodies load through one shared path', substr_count($js, 'loadThreadMsgBody(') >= 3,
+         'the click handler and Expand all must not each carry their own fetch');
+}
