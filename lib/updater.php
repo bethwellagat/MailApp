@@ -95,10 +95,15 @@ function update_installed_label() {
     return $sha !== '' ? ($ver . ' · build ' . substr($sha, 0, 7)) : $ver;
 }
 
-/** HTTPS GET against the GitHub API with auth + UA. Returns [body, httpCode, error]. */
+/**
+ * HTTPS GET against the GitHub API with auth + UA.
+ * Returns [body, httpCode, error, headers] — headers lower-cased, because a 403
+ * only means "rejected" and the rate-limit headers are what say why.
+ */
 function _update_api_get($url, $token, $accept = 'application/vnd.github+json') {
-    if (!function_exists('curl_init')) return [null, 0, 'curl is not available on this server'];
+    if (!function_exists('curl_init')) return [null, 0, 'curl is not available on this server', []];
     $ch = curl_init($url);
+    $respHeaders = [];
     $headers = ['User-Agent: WebMail-Updater', 'Accept: ' . $accept, 'X-GitHub-Api-Version: 2022-11-28'];
     if ($token !== '') $headers[] = 'Authorization: Bearer ' . $token;
     curl_setopt_array($ch, [
@@ -112,12 +117,67 @@ function _update_api_get($url, $token, $accept = 'application/vnd.github+json') 
         CURLOPT_HTTPHEADER      => $headers,
         CURLOPT_PROTOCOLS       => CURLPROTO_HTTPS,
         CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+        CURLOPT_HEADERFUNCTION  => function ($ch, $line) use (&$respHeaders) {
+            $p = strpos($line, ':');
+            if ($p !== false) {
+                $respHeaders[strtolower(trim(substr($line, 0, $p)))] = trim(substr($line, $p + 1));
+            }
+            return strlen($line);   // must be the RAW length or curl aborts the transfer
+        },
     ]);
     $body = curl_exec($ch);
-    if ($body === false) { $e = curl_error($ch); curl_close($ch); return [null, 0, $e ?: 'request failed']; }
+    if ($body === false) { $e = curl_error($ch); curl_close($ch); return [null, 0, $e ?: 'request failed', []]; }
     $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    return [$body, $code, null];
+    return [$body, $code, null, $respHeaders];
+}
+
+/**
+ * Why GitHub said no.
+ *
+ * A 403 from this API is far more often a spent rate limit than an auth
+ * problem, and the updater used to report every 401/403 as "bad or missing
+ * token?". On shared hosting that reading is actively misleading: the app's
+ * own repo is public and needs no token at all, while the unauthenticated
+ * budget of 60 requests an hour is per IP — i.e. shared with every other site
+ * on the same server, any of which can exhaust it. People went looking for a
+ * credential problem that did not exist.
+ *
+ * Returns null when the response is not a refusal this function explains.
+ */
+function _update_reject_reason($code, array $headers, $body, $hasToken) {
+    $remaining = isset($headers['x-ratelimit-remaining']) ? (int)$headers['x-ratelimit-remaining'] : -1;
+    $reset     = isset($headers['x-ratelimit-reset'])     ? (int)$headers['x-ratelimit-reset']     : 0;
+    $text      = is_string($body) ? $body : '';
+
+    $limited = ($code === 429)
+        || (($code === 403) && ($remaining === 0 || stripos($text, 'rate limit') !== false));
+
+    if ($limited) {
+        $wait = '';
+        if ($reset > 0) {
+            $mins = (int)ceil(max(0, $reset - time()) / 60);
+            $wait = $mins <= 1 ? ' It resets in under a minute.' : ' It resets in about ' . $mins . ' minutes.';
+        }
+        $hint = $hasToken
+            ? ''
+            : ' This limit is per server IP and shared with any other site on it; adding a token in data/update.json raises it.';
+        return 'GitHub is rate-limiting this server, not refusing your credentials.' . $wait . $hint;
+    }
+
+    if ($code === 401) {
+        return $hasToken
+            ? 'GitHub rejected the token in data/update.json — it may be expired or revoked.'
+            : 'GitHub asked for credentials. If the repository is private, add a token in data/update.json.';
+    }
+
+    if ($code === 403) {
+        return $hasToken
+            ? 'GitHub refused the request. The token may lack access to this repository.'
+            : 'GitHub refused the request. If the repository is private, add a token in data/update.json.';
+    }
+
+    return null;
 }
 
 /** Look up the branch tip; compare with what's deployed. */
@@ -125,10 +185,13 @@ function update_check() {
     $cfg = update_config();
     if (!$cfg) return ['error' => 'Updates are not configured on this server.'];
     $url = 'https://api.github.com/repos/' . $cfg['repo'] . '/commits/' . rawurlencode($cfg['branch']);
-    [$body, $code, $err] = _update_api_get($url, $cfg['token']);
+    [$body, $code, $err, $hdrs] = _update_api_get($url, $cfg['token']);
     if ($err)            return ['error' => 'Could not reach GitHub: ' . $err];
     if ($code === 404)   return ['error' => 'Repository or branch not found — check repo / branch / token.'];
-    if ($code === 401 || $code === 403) return ['error' => 'GitHub rejected the request (bad or missing token?).'];
+    $why = _update_reject_reason($code, $hdrs, $body, $cfg['token'] !== '');
+    if ($why !== null)   return ['error' => $why];
+    // 502/503/504 are the upstream having a moment, not anything set up wrongly.
+    if ($code >= 500)    return ['error' => 'GitHub is having trouble right now (HTTP ' . $code . '). Try again in a moment.'];
     if ($code !== 200)   return ['error' => 'GitHub returned HTTP ' . $code . '.'];
     $data = @json_decode($body, true);
     $sha  = is_array($data) ? (string)($data['sha'] ?? '') : '';
@@ -346,8 +409,13 @@ function update_apply() {
     //    the sha we did check — a version label that does not match what is on
     //    disk. Pinning to $targetSha makes the download exactly what was verified.
     $url = 'https://api.github.com/repos/' . $cfg['repo'] . '/zipball/' . rawurlencode($targetSha);
-    [$zipData, $code, $err] = _update_api_get($url, $cfg['token']);
+    [$zipData, $code, $err, $hdrs] = _update_api_get($url, $cfg['token']);
     if ($err)          { _update_rrmdir($work); return ['error' => 'Download failed: ' . $err]; }
+    // The same refusals happen here — and a download that trips the rate limit
+    // half way through an update is exactly when a misleading message costs most.
+    $why = _update_reject_reason($code, $hdrs, $zipData, $cfg['token'] !== '');
+    if ($why !== null) { _update_rrmdir($work); return ['error' => 'Download failed. ' . $why]; }
+    if ($code >= 500)  { _update_rrmdir($work); return ['error' => 'Download failed: GitHub is having trouble right now (HTTP ' . $code . '). Try again in a moment.']; }
     if ($code !== 200) { _update_rrmdir($work); return ['error' => 'GitHub returned HTTP ' . $code . ' for the download.']; }
     $zipFile = $work . '/repo.zip';
     if (@file_put_contents($zipFile, $zipData) === false) { _update_rrmdir($work); return ['error' => 'Could not save the download.']; }

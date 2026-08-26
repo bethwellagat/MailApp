@@ -126,3 +126,72 @@ t_put("$rel/inbox.php", "x"); t_put("$rel/lib/a.php", "x"); t_put("$rel/assets/b
 t_put("$rel/data/should_not_list.json", "x"); t_put("$rel/tests/t.php", "x");
 $m = _update_file_list($rel, $EXCLUDE);
 t_eq('lists shipped files only', $m, ['assets/b.css', 'inbox.php', 'lib/a.php']);
+
+t_group('why GitHub said no');
+/**
+ * The updater reported every 401 and 403 as "GitHub rejected the request (bad
+ * or missing token?)". That reading sent people hunting for a credential
+ * problem that does not exist: this app's repo is public and needs no token,
+ * while a 403 from the GitHub API is far more often a spent rate limit — and
+ * the unauthenticated budget of 60 requests an hour is per IP, i.e. shared
+ * with every other site on the same server. The message has to separate
+ * "you are throttled" from "your token is wrong", because the two need
+ * opposite responses: wait, or go and fix configuration.
+ */
+$rl = ['x-ratelimit-remaining' => '0', 'x-ratelimit-reset' => (string)(time() + 15 * 60)];
+
+$m = _update_reject_reason(403, $rl, '{"message":"API rate limit exceeded"}', false);
+t_ok('403 with an exhausted budget is reported as throttling',
+     stripos($m, 'rate-limit') !== false, $m);
+t_ok('and explicitly not as a credential problem',
+     stripos($m, 'not refusing your credentials') !== false, $m);
+t_ok('it says roughly how long to wait', preg_match('/about \d+ minutes/', $m) === 1, $m);
+t_ok('and explains the limit is shared with the rest of the host',
+     stripos($m, 'per server IP') !== false, $m);
+
+/* GitHub also answers 429 for this, and the secondary limit says so only in
+   the body while the remaining header still looks healthy. */
+t_ok('429 is throttling too',
+     stripos(_update_reject_reason(429, [], '', false), 'rate-limit') !== false);
+t_ok('a secondary limit is read out of the body',
+     stripos(_update_reject_reason(403, ['x-ratelimit-remaining' => '57'],
+             'You have exceeded a secondary rate limit', false), 'rate-limit') !== false);
+
+t_group('...and when it really is the credentials');
+$m = _update_reject_reason(401, ['x-ratelimit-remaining' => '57'], '', true);
+t_ok('401 with a token blames the token', stripos($m, 'token') !== false, $m);
+t_ok('and does not call it rate limiting', stripos($m, 'rate-limit') === false, $m);
+
+$m = _update_reject_reason(401, ['x-ratelimit-remaining' => '57'], '', false);
+t_ok('401 without a token suggests adding one for a private repo',
+     stripos($m, 'private') !== false, $m);
+
+$m = _update_reject_reason(403, ['x-ratelimit-remaining' => '57'], 'Forbidden', true);
+t_ok('a plain 403 with budget left is treated as access, not throttling',
+     stripos($m, 'rate-limit') === false && stripos($m, 'access') !== false, $m);
+
+t_group('responses this classifier must not explain away');
+foreach ([200, 201, 304, 404, 500, 502, 503, 504] as $code) {
+    t_ok("HTTP $code is left to the caller",
+         _update_reject_reason($code, ['x-ratelimit-remaining' => '57'], '', false) === null,
+         'got: ' . var_export(_update_reject_reason($code, [], '', false), true));
+}
+/* A 500-series response must never be dressed up as a rate limit even if the
+   headers happen to be exhausted — a struggling server is not a throttle. */
+t_ok('a 500 with a spent budget is still not throttling',
+     _update_reject_reason(500, $rl, '', false) === null);
+
+t_group('the reset time is reported sanely');
+$soon = ['x-ratelimit-remaining' => '0', 'x-ratelimit-reset' => (string)(time() + 20)];
+t_ok('under a minute reads as under a minute',
+     stripos(_update_reject_reason(403, $soon, '', false), 'under a minute') !== false,
+     _update_reject_reason(403, $soon, '', false));
+$past = ['x-ratelimit-remaining' => '0', 'x-ratelimit-reset' => (string)(time() - 500)];
+/* Clamped at zero: a reset timestamp already behind us must not produce
+   "resets in about -8 minutes". Matching on a bare "-" would hit the hyphen in
+   "rate-limiting", so look for a negative NUMBER. */
+t_ok('a reset already in the past never reads as negative',
+     preg_match('/-\s*\d/', _update_reject_reason(403, $past, '', false)) === 0,
+     _update_reject_reason(403, $past, '', false));
+t_ok('a missing reset header just omits the wait',
+     stripos(_update_reject_reason(403, ['x-ratelimit-remaining' => '0'], '', false), 'resets') === false);
