@@ -412,3 +412,62 @@ if (is_string($html) && is_string($js)) {
     t_ok('bodies load through one shared path', substr_count($js, 'loadThreadMsgBody(') >= 3,
          'the click handler and Expand all must not each carry their own fetch');
 }
+
+t_group('the search field stays readable while you type in it');
+/**
+ * The search box used to turn WHITE on focus, because it sat on a coloured
+ * brand band — so a dark-theme rule forced its text to #1a1d23 to stay legible
+ * against that white. The iPadOS redesign gave the field a dark fill instead
+ * and never removed the colour rule, leaving near-black text on a dark fill:
+ * 1.32:1 measured, which reads as "I type and nothing appears".
+ *
+ * Two things keep that from coming back.
+ */
+$focusRules = [];
+foreach (t_blocks_for($css, '.topbar-search-input') as [$sel, $body]) {
+    if (strpos($sel, ':focus') === false) continue;
+    if (strpos($sel, '::placeholder') !== false) continue;
+    $focusRules[] = [$sel, $body];
+}
+t_ok('the focused search field has rules to check', $focusRules !== [], 'none found');
+
+/* 1. Nothing may force a dark colour onto it from a theme rule again. The field
+      is dark-filled in dark mode, so a dark colour there is illegible by
+      construction — and the page's own rule is the only one entitled to say
+      what the focused colours are. */
+$themeForced = [];
+foreach ($focusRules as [$sel, $body]) {
+    if (strpos($sel, 'theme-dark') === false) continue;
+    $c = t_decls($body)['color'] ?? '';
+    if ($c === '') continue;
+    /* A literal hex darker than mid-grey is the shape of the old bug. */
+    if (preg_match('/^#([0-9a-f]{6})$/i', trim($c), $m)) {
+        $v = hexdec($m[1]);
+        $lumish = ((($v >> 16) & 255) + (($v >> 8) & 255) + ($v & 255)) / 3;
+        if ($lumish < 128) $themeForced[] = "$sel → color: $c";
+    }
+}
+t_ok('no dark-theme rule forces a dark colour on the focused search field',
+     $themeForced === [], implode(' | ', $themeForced));
+
+/* 2. The page states the focused colours itself, rather than inheriting them
+      from the base rule by winning a source-order tie. Both selectors are
+      (0,2,0) without the `body.` prefix, so re-ordering the file would hand the
+      white background — and its dark text — straight back. */
+$own = null;
+foreach ($focusRules as [$sel, $body]) {
+    if (strpos($sel, '.mail-page') === false) continue;
+    $own = [$sel, t_decls($body)];
+}
+t_ok('the mail page owns the focused search state', $own !== null,
+     'no .mail-page rule for .topbar-search-input:focus');
+if ($own !== null) {
+    [$sel, $decls] = $own;
+    t_ok('it declares its own background', isset($decls['background']),
+         'without it the base rule turns the field white: ' . $sel);
+    t_ok('it declares its own text colour', isset($decls['color']),
+         'without it the base rule paints dark text: ' . $sel);
+    t_ok('it wins on specificity, not on source order',
+         strpos($sel, 'body.mail-page') !== false,
+         'plain .mail-page ties with .topbar-search-input:focus — got: ' . $sel);
+}

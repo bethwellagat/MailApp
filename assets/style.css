@@ -215,8 +215,6 @@ html.theme-dark .form-input:-webkit-autofill:focus {
   -webkit-box-shadow: 0 0 0 1000px var(--c-bg) inset;
 }
 
-/* Search box sits on the brand band and stays white on focus — keep its text dark. */
-html.theme-dark .topbar-search-input:focus { color: #1a1d23; }
 
 /* Login is reachable before any saved theme exists (resolves to the OS setting). */
 html.theme-dark .login-page {
@@ -5790,11 +5788,27 @@ html.theme-dark .mail-page .reading-pane {
   font-size: 14px;
   color: var(--m-label);
 }
-.mail-page .topbar-search-input::placeholder { color: var(--m-label-3); }
-.mail-page .topbar-search-input:focus {
+/* label-2, not label-3: the search field's fill is lighter than the surfaces
+   label-3 was chosen against, and on it the placeholder measured 4.47 in light
+   theme — under the 4.5 this app holds itself to. A placeholder is text you
+   have to read to know what the field is for. */
+.mail-page .topbar-search-input::placeholder { color: var(--m-label-2); }
+/* The focused state is declared in full, and with `body.` in front so it wins
+   on SPECIFICITY rather than on being further down the file.
+   The base .topbar-search-input:focus rule turns the field white and its text
+   dark — correct when the search box sat on a coloured brand band, wrong here,
+   where the field keeps its dark fill. Only source order was keeping that white
+   background off it, and a matching dark-theme rule forced the text to #1a1d23
+   on top of the dark fill: 1.32:1, which is what "black and invisible while
+   typing" looks like measured. Inheriting any of that again would bring it
+   straight back. */
+body.mail-page .topbar-search-input:focus {
   outline: none;
+  background: var(--m-fill);
+  color: var(--m-label);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--m-blue) 22%, transparent);
 }
+body.mail-page .topbar-search-input:focus::placeholder { color: var(--m-label-2); }
 .mail-page .topbar-icon-light {
   border: 0; background: transparent; color: var(--m-blue);
   border-radius: 8px; width: 32px; height: 32px;
