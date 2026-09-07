@@ -244,3 +244,34 @@ function thread_page_plan($convCount, $olderCount, $page, $perPage) {
         'tail_count'  => $tailTake,
     ];
 }
+
+/**
+ * The sequence ranges to read when scanning back from the newest message.
+ *
+ * Returns [[lo, hi], …] newest chunk first, covering at most $window messages
+ * in pieces of $chunk. Split into pieces so a slow host can be noticed between
+ * commands and the scan abandoned early — asking one IMAP server for 1200
+ * envelopes in a single command is what took a mailbox off the air.
+ *
+ * Pure, because the arithmetic is the part that is easy to get wrong by one and
+ * impossible to see wrong: a gap silently drops messages out of the grouping,
+ * an overlap silently double-counts them.
+ */
+function thread_scan_chunks($total, $window, $chunk) {
+    $total  = max(0, (int)$total);
+    $window = max(0, (int)$window);
+    $chunk  = max(1, (int)$chunk);
+    $want   = min($window, $total);
+
+    $out    = [];
+    $cursor = $total;
+    $got    = 0;
+    while ($got < $want && $cursor >= 1) {
+        $take = min($chunk, $want - $got);
+        $lo   = max(1, $cursor - $take + 1);
+        $out[] = [$lo, $cursor];
+        $got  += ($cursor - $lo + 1);
+        $cursor = $lo - 1;
+    }
+    return $out;
+}

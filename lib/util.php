@@ -582,3 +582,48 @@ if (!function_exists('gen_uuid')) {
         return substr($h, 0, 8) . '-' . substr($h, 8, 4) . '-' . substr($h, 12, 4) . '-' . substr($h, 16, 4) . '-' . substr($h, 20, 12);
     }
 }
+
+if (!function_exists('json_fatal_guard')) {
+    /**
+     * Make a PHP fatal come back as JSON.
+     *
+     * An endpoint that has already sent Content-Type: application/json and then
+     * hits a fatal — memory exhausted, max_execution_time, an uncaught error —
+     * emits PHP's own HTML error page (or nothing at all) after the header. The
+     * client calls r.json() on that, it throws, and every such failure reaches
+     * the user as the same four useless words: "Invalid server response". A real
+     * mailbox stopped loading for exactly this reason and the message named
+     * neither the cause nor the endpoint.
+     *
+     * Registered as a shutdown function so it also runs for errors PHP will not
+     * let you catch. It only speaks up if the request died on a fatal AND the
+     * response body is still empty, so a normal reply is never touched.
+     */
+    function json_fatal_guard() {
+        register_shutdown_function(function () {
+            $e = error_get_last();
+            if (!$e || !in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) return;
+
+            // Never overwrite a response that was already sent successfully.
+            $buffered = 0;
+            while (ob_get_level() > 0) { $buffered += ob_get_length(); ob_end_flush(); }
+            if ($buffered > 0 || headers_sent()) {
+                // Body already started: appending JSON would corrupt it. Nothing
+                // useful left to do except let it end.
+                return;
+            }
+
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            // The message is the diagnosis — "Allowed memory size exhausted" or
+            // "Maximum execution time exceeded" says exactly what to change. The
+            // file/line are the app's own, not user data.
+            echo json_encode([
+                'error' => 'The server stopped while building this response: ' . $e['message'],
+                'fatal' => true,
+                'where' => basename((string)$e['file']) . ':' . (int)$e['line'],
+            ]);
+        });
+    }
+}

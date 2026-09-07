@@ -477,3 +477,72 @@ sort($seenUids);
 $allUids = array_map(fn($m) => $m['uid'], $inbox);
 sort($allUids);
 t_eq('and between them every message is reachable', $seenUids, $allUids);
+
+t_group('scanning back from the newest message');
+/**
+ * The list reads recent messages in chunks so a slow host can be noticed
+ * between commands. A gap in that walk silently drops messages out of the
+ * grouping; an overlap silently reads them twice. Both are invisible on screen,
+ * so the arithmetic is asserted here instead.
+ */
+$flatten = function (array $chunks) {
+    $seen = [];
+    foreach ($chunks as [$lo, $hi]) for ($i = $lo; $i <= $hi; $i++) $seen[] = $i;
+    return $seen;
+};
+
+$bad = [];
+foreach ([0, 1, 5, 99, 100, 101, 400, 401, 5000] as $total) {
+    foreach ([1, 100, 400] as $window) {
+        foreach ([1, 7, 100] as $chunk) {
+            $c    = thread_scan_chunks($total, $window, $chunk);
+            $seen = $flatten($c);
+            $want = min($window, $total);
+            // exactly the $want NEWEST messages, each once, newest chunk first
+            $expect = [];
+            for ($i = $total; $i > $total - $want; $i--) $expect[] = $i;
+            sort($expect);
+            $got = $seen; sort($got);
+            if ($got !== $expect)                       $bad[] = "coverage $total/$window/$chunk";
+            if (count($seen) !== count(array_unique($seen))) $bad[] = "overlap $total/$window/$chunk";
+            foreach ($c as [$lo, $hi]) {
+                if ($lo < 1 || $hi > $total || $lo > $hi)     $bad[] = "range $total/$window/$chunk";
+                if ($hi - $lo + 1 > $chunk)                  $bad[] = "oversized $total/$window/$chunk";
+            }
+        }
+    }
+}
+t_ok('every shape scans the newest slice exactly once', $bad === [],
+     implode(' | ', array_slice(array_unique($bad), 0, 5)));
+
+t_group('the scan is capped and ordered');
+$c = thread_scan_chunks(5000, 400, 100);
+t_eq('a big mailbox reads only the window', count($flatten($c)), 400);
+t_eq('in chunk-sized pieces', count($c), 4);
+t_eq('starting at the newest message', $c[0][1], 5000);
+t_ok('and working backwards', $c[0][0] > $c[1][0], json_encode(array_slice($c, 0, 2)));
+t_eq('stopping at the window edge', $c[3][0], 4601);
+
+t_group('a scan can stop early without breaking the tail arithmetic');
+/* The action may abandon the walk on a slow host, so the window is whatever was
+   actually read. Two chunks of 100 out of a 5000-message folder must leave the
+   remaining 4800 addressable as the ungrouped tail. */
+$c        = thread_scan_chunks(5000, 400, 100);
+$scanned  = 0;
+foreach (array_slice($c, 0, 2) as [$lo, $hi]) $scanned += $hi - $lo + 1;
+t_eq('two chunks read 200', $scanned, 200);
+$winStart = 5000 - $scanned + 1;
+$older    = $winStart - 1;
+t_eq('the window starts where the read stopped', $winStart, 4801);
+t_eq('and everything older is still listed', $older, 4800);
+$plan = thread_page_plan(50, $older, 1, 25);   // 50 conversations from those 200
+t_eq('page 1 is still a full page', $plan['conv_count'] + $plan['tail_count'], 25);
+t_ok('and the folder is still fully reachable',
+     $plan['rows'] === 50 + 4800, 'rows=' . $plan['rows']);
+
+t_group('an empty or tiny folder needs no special case');
+t_eq('no messages, no chunks', thread_scan_chunks(0, 400, 100), []);
+t_eq('one message, one chunk',  thread_scan_chunks(1, 400, 100), [[1, 1]]);
+t_eq('a folder smaller than the window is read whole',
+     thread_scan_chunks(5, 400, 100), [[1, 5]]);
+t_ok('a zero chunk size cannot loop forever', count(thread_scan_chunks(10, 400, 0)) === 10);

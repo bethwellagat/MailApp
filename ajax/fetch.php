@@ -11,6 +11,11 @@ if ($action === 'attachment') {
 } else {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
+    // A fatal after this header would emit PHP's HTML error page, the client's
+    // r.json() would throw, and the user would see only "Invalid server
+    // response" — no cause, no endpoint. Make the failure say what happened.
+    require_once __DIR__ . '/../lib/util.php';
+    json_fatal_guard();
 }
 
 if (empty($_SESSION['email']) || empty($_SESSION['imap_host'])) {
@@ -834,22 +839,84 @@ if ($action === 'messages') {
        always $perPage rows, and a flood is one of them rather than all of them.
 
        Grouping has to see further than one page, because two messages in a
-       thread are rarely 25 apart: scan a bounded recent window in a single
-       overview call. 1200 matches find_thread_uids_in_folder's window, which is
-       already paid on every message open, so this is a cost the app has long
-       accepted — and conversations reaching back further than that are
-       vanishingly rare. */
-    $WINDOW   = 1200;
-    $winStart = max(1, $total - $WINDOW + 1);
-    $older    = $winStart - 1;          // messages behind the window, still listed, ungrouped
+       thread are rarely 25 apart — so a bounded window of recent messages is
+       scanned before grouping.
 
-    $overview = @imap_fetch_overview($mbox, "$winStart:$total", 0);
-    if (!is_array($overview)) {
-        // Transient read error vs a genuinely empty slice — surface an error so
-        // the client doesn't show "0 messages" for a mailbox that has some.
-        @imap_close($mbox);
-        fail('Could not read messages from "' . $folder . '". Please try again.');
+       That window was 1200, chosen to match find_thread_uids_in_folder's. The
+       comparison was wrong: that window is paid on a single message open, this
+       one on every folder open. On a busy mailbox behind a slow IMAP server,
+       asking for 1200 envelopes in one command was enough to run the request
+       out of time or memory — and the endpoint then died mid-response, leaving
+       the user with an empty list and the words "Invalid server response".
+
+       So: 400, read in chunks, abandoned early if the host is slow. A
+       conversation's messages arrive close together, so 400 still catches
+       essentially all of them, and a page of mail late beats no page of mail. */
+    $WINDOW = 400;
+    $CHUNK  = 100;      // one command per chunk, so a slow host can be noticed between them
+    $BUDGET = 6.0;      // seconds spent reading envelopes before settling for what we have
+
+    $overview   = [];
+    $scanned    = 0;
+    $startedAt  = microtime(true);
+    $readFailed = false;
+
+    foreach (thread_scan_chunks($total, $WINDOW, $CHUNK) as [$lo, $hi]) {
+        $rows = @imap_fetch_overview($mbox, "$lo:$hi", 0);
+        if (!is_array($rows)) { if ($scanned === 0) $readFailed = true; break; }
+        foreach ($rows as $r) $overview[] = $r;
+        $scanned += count($rows);
+        // Grouping is a nicety; showing the mail is not. If this host is slow,
+        // group what we have rather than spending the whole request budget here.
+        if ((microtime(true) - $startedAt) > $BUDGET) break;
     }
+
+    /* Could not read even the first chunk. Rather than fail — which leaves the
+       list empty and the mailbox looking broken — fall back to exactly what this
+       endpoint did before conversations existed: a flat page of raw messages.
+       Ungrouped mail is a degraded view; no mail is an outage. */
+    if ($readFailed || $scanned === 0) {
+        $pages = max(1, (int)ceil($total / $perPage));
+        $page  = min($page, $pages);
+        $end   = $total - (($page - 1) * $perPage);
+        $start = max(1, $end - $perPage + 1);
+        $flat  = @imap_fetch_overview($mbox, "$start:$end", 0);
+        if (!is_array($flat)) {
+            @imap_close($mbox);
+            fail('Could not read messages from "' . $folder . '". Please try again.');
+        }
+        $rowsOut = [];
+        foreach (array_reverse($flat) as $m) {
+            $from = parse_addr($m->from ?? '');
+            $uid  = (int)imap_uid($mbox, $m->msgno);
+            if ($uid <= 0 && isset($m->uid)) $uid = (int)$m->uid;
+            $rowsOut[] = [
+                'uid' => $uid,
+                'subject'   => decode_header($m->subject ?? '') ?: '(no subject)',
+                'from_name' => $from['name'], 'from_addr' => $from['email'],
+                'date'      => $m->date ?? '',
+                'timestamp' => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
+                'seen'      => !empty($m->seen), 'flagged' => !empty($m->flagged),
+                'answered'  => !empty($m->answered), 'size' => (int)($m->size ?? 0),
+                'message_id'=> isset($m->message_id) ? $m->message_id : '',
+                'thread_count' => 1, 'thread_uids' => [$uid],
+            ];
+        }
+        usort($rowsOut, fn($a, $b) => $b['timestamp'] - $a['timestamp']);
+        @imap_close($mbox);
+        ok([
+            'messages' => $rowsOut, 'total' => $total, 'page' => $page,
+            'pages' => $pages, 'folder' => $folder,
+            // So the client (and a future reader of a bug report) can tell that
+            // this page is deliberately ungrouped rather than mis-grouped.
+            'grouped' => false,
+        ]);
+    }
+
+    // The window is whatever was actually read, not what was asked for — the
+    // tail arithmetic below depends on these two agreeing.
+    $winStart = $total - $scanned + 1;
+    $older    = $winStart - 1;          // messages behind the window, still listed, ungrouped
 
     $rowOf = function ($m) use ($mbox) {
         $from = parse_addr($m->from ?? '');
