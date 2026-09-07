@@ -627,3 +627,99 @@ if (!function_exists('json_fatal_guard')) {
         });
     }
 }
+
+if (!function_exists('mail_to_utf8')) {
+    /**
+     * Convert mail text from a SENDER-DECLARED charset into UTF-8, safely.
+     *
+     * mb_convert_encoding() throws a ValueError on PHP 8 when it does not
+     * recognise the charset name — and the "@" that used to guard these calls
+     * suppresses diagnostics, not exceptions, so the guard had quietly done
+     * nothing since the PHP 8 upgrade. One message whose From header announced
+     * "windows-1256" took an entire inbox off the air: the list builds every
+     * row through decode_header(), so a single bad label killed the response
+     * for all 400 messages being scanned, not just its own row.
+     *
+     * mbstring's repertoire is narrower than people assume — it knows neither
+     * windows-1256 nor windows-1250, gb2312 or big5 — while iconv handles all
+     * of them. So: mbstring when it genuinely knows the name, iconv otherwise,
+     * and failing both, the bytes scrubbed to valid UTF-8. The one thing this
+     * must never do is throw, because the caller is a loop over a mailbox and
+     * the sender chooses the input.
+     */
+    function mail_to_utf8($text, $charset) {
+        $text = (string)$text;
+        if ($text === '') return '';
+        $cs = trim((string)$charset);
+        if ($cs === '' || strcasecmp($cs, 'default') === 0 || strcasecmp($cs, 'UTF-8') === 0
+            || strcasecmp($cs, 'utf8') === 0) {
+            return mail_scrub_utf8($text);
+        }
+
+        $enc = mail_charset_canon($cs);
+        if ($enc !== null) {
+            try {
+                $out = mb_convert_encoding($text, 'UTF-8', $enc);
+                if (is_string($out) && $out !== '') return $out;
+            } catch (\Throwable $e) { /* fall through to iconv */ }
+        }
+
+        if (function_exists('iconv')) {
+            $out = @iconv($cs, 'UTF-8//IGNORE', $text);
+            if (is_string($out) && $out !== '') return $out;
+        }
+
+        // Unknown charset and no converter: keep the text rather than lose the
+        // message, but make sure what we keep is valid UTF-8 — see the note on
+        // mail_scrub_utf8().
+        return mail_scrub_utf8($text);
+    }
+
+    /**
+     * Every name mbstring will actually accept, its own plus its aliases.
+     * Checked up front because asking it to convert and catching the throw is
+     * both slower and, on some builds, noisier than looking first.
+     */
+    function mail_charset_canon($enc) {
+        static $known = null;
+        if ($known === null) {
+            /* mb_list_encodings() also returns things that are not charsets at
+               all — Base64, UUENCODE, HTML-ENTITIES, Quoted-Printable, 7bit,
+               8bit — and asking mb_encoding_aliases() about those raises a
+               deprecation notice on PHP 8.3+. That notice would print straight
+               into a JSON response on any host with display_errors on: the very
+               way a stray byte breaks the body, reintroduced by the fix for it.
+               Skip them; a mail header never legitimately names one. */
+            static $notCharsets = ['base64', 'uuencode', 'html-entities', 'quoted-printable', '7bit', '8bit'];
+            $known = [];
+            foreach (mb_list_encodings() as $e) {
+                $lower = strtolower($e);
+                $known[$lower] = $e;
+                if (in_array($lower, $notCharsets, true)) continue;
+                $aliases = [];
+                try { $aliases = @mb_encoding_aliases($e) ?: []; } catch (\Throwable $x) { $aliases = []; }
+                foreach ($aliases as $a) $known[strtolower($a)] = $e;
+            }
+        }
+        $k = strtolower(trim((string)$enc));
+        return $known[$k] ?? null;
+    }
+
+    /**
+     * Make a string safe to hand to json_encode().
+     *
+     * json_encode() returns FALSE on invalid UTF-8, and these endpoints echo
+     * its result directly — so a single stray byte from a mislabelled header
+     * produces an empty body and, once again, "Invalid server response". This
+     * strips what cannot be represented instead.
+     */
+    function mail_scrub_utf8($text) {
+        $text = (string)$text;
+        if ($text === '' || mb_check_encoding($text, 'UTF-8')) return $text;
+        if (function_exists('iconv')) {
+            $out = @iconv('UTF-8', 'UTF-8//IGNORE', $text);
+            if (is_string($out)) return $out;
+        }
+        return preg_replace('/[^\x09\x0A\x0D\x20-\x7E]/', '', $text);
+    }
+}

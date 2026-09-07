@@ -5,6 +5,11 @@ accounts_boot();
 require_once __DIR__ . '/../lib/imap.php';
 require_once __DIR__ . '/../lib/mailhtml.php';
 require_once __DIR__ . '/../lib/threading.php';
+// Unconditional: mail_to_utf8() lives here and decode_header() calls it, and
+// decode_header() is reached from the attachment path too (part_filename).
+// Requiring it only on the JSON branch would leave that path calling an
+// undefined function — trading one fatal for another.
+require_once __DIR__ . '/../lib/util.php';
 $action = $_GET['action'] ?? '';
 if ($action === 'attachment') {
     header('Cache-Control: no-store');
@@ -14,7 +19,6 @@ if ($action === 'attachment') {
     // A fatal after this header would emit PHP's HTML error page, the client's
     // r.json() would throw, and the user would see only "Invalid server
     // response" — no cause, no endpoint. Make the failure say what happened.
-    require_once __DIR__ . '/../lib/util.php';
     json_fatal_guard();
 }
 
@@ -55,18 +59,29 @@ function valid_mailbox_name($name) { return imap_valid_mailbox($name); } // shar
 
 function open_box($folder = 'INBOX', $opts = 0) { return imap_open_box($folder, $opts); } // shared: lib/imap.php
 
+/* JSON_INVALID_UTF8_SUBSTITUTE on both: json_encode() returns FALSE if any
+   string in the payload is not valid UTF-8, and these echo its result straight
+   out — so one stray byte from a mislabelled header produced an empty body and,
+   once again, the client's unhelpful "Invalid server response". Substituting the
+   bad bytes is strictly better than answering nothing at all. */
 function fail($msg, $code = 500) {
     http_response_code($code);
     @imap_errors();
     @imap_alerts();
-    echo json_encode(['error' => $msg]);
+    echo json_encode(['error' => $msg], JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 
 function ok($data) {
     @imap_errors();
     @imap_alerts();
-    echo json_encode($data);
+    $json = json_encode($data, JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Could not encode the response: ' . json_last_error_msg()]);
+        exit;
+    }
+    echo $json;
     exit;
 }
 
@@ -76,13 +91,10 @@ function decode_header($raw) {
     if (!$parts) return $raw;
     $out = '';
     foreach ($parts as $p) {
-        $charset = ($p->charset === 'default' || !$p->charset) ? 'UTF-8' : $p->charset;
-        $text = $p->text;
-        if (strtoupper($charset) !== 'UTF-8') {
-            $converted = @mb_convert_encoding($text, 'UTF-8', $charset);
-            if ($converted !== false) $text = $converted;
-        }
-        $out .= $text;
+        // mail_to_utf8() rather than mb_convert_encoding(): the charset here is
+        // whatever the SENDER wrote, and an unknown one throws on PHP 8 — which
+        // "@" does not suppress. One "windows-1256" header emptied a whole inbox.
+        $out .= mail_to_utf8($p->text, $p->charset ?? '');
     }
     return $out;
 }
@@ -253,8 +265,7 @@ function decode_part_body($mbox, $uid, $section, $encoding, $charset) {
         $data = quoted_printable_decode($data);
     }
     if ($charset && strtoupper($charset) !== 'UTF-8') {
-        $converted = @mb_convert_encoding($data, 'UTF-8', $charset);
-        if ($converted !== false) $data = $converted;
+        $data = mail_to_utf8($data, $charset);   // sender-declared: never trust it to be known
     } else {
         if (!mb_check_encoding($data, 'UTF-8')) {
             // No declared charset and the bytes aren't UTF-8. 'auto' detection

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../lib/util.php';
 require_once __DIR__ . '/../lib/session.php'; session_boot();
 require_once __DIR__ . '/../lib/accounts.php';
 accounts_boot();
@@ -99,10 +100,9 @@ function _cal_decode_section($mbox, $uid, $section, $encoding, $charset) {
     if ($data === false || $data === '') return '';
     if ($encoding === ENCBASE64)              $data = base64_decode($data);
     elseif ($encoding === ENCQUOTEDPRINTABLE) $data = quoted_printable_decode($data);
-    if ($charset && strtoupper($charset) !== 'UTF-8') {
-        $c = @mb_convert_encoding($data, 'UTF-8', $charset);
-        if ($c !== false) $data = $c;
-    }
+    // Same hazard as a mail body: the charset is declared by whoever produced
+    // the invite, and an unknown one throws on PHP 8.
+    if ($charset && strtoupper($charset) !== 'UTF-8') $data = mail_to_utf8($data, $charset);
     return $data;
 }
 
