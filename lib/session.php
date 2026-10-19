@@ -49,6 +49,26 @@ if (!function_exists('session_boot')) {
         require_once __DIR__ . '/util.php';
         ensure_data_guards();
         data_janitor(); // gated to once an hour install-wide; a no-op otherwise
+        // The scheduler wakes from ordinary traffic: after this response has
+        // gone, one cheap check decides whether a background run is due.
+        register_shutdown_function('cron_tick_shutdown');
+    }
+}
+
+if (!function_exists('cron_tick_shutdown')) {
+    /**
+     * Runs after the response. Never throws, never prints; stands aside when
+     * the request died of a fatal so the fatal guard can still answer.
+     */
+    function cron_tick_shutdown() {
+        try {
+            $e = error_get_last();
+            if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) return;
+            require_once __DIR__ . '/cron.php';
+            cron_tick();
+        } catch (\Throwable $t) {
+            // a scheduler problem must never become the visitor's problem
+        }
     }
 }
 

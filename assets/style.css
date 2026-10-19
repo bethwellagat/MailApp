@@ -7178,3 +7178,12 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 }
 .settings-page .settings-log .err { color: var(--ip-red-ink); }
 .settings-page .settings-row-value.mono { font-family: var(--font-mono); font-size: 13px; }
+
+/* ---- Settings: an optional block folds away ----
+   The host cron is no longer required, so it sits behind a disclosure; the
+   marker is drawn here so every browser shows the same one. */
+.settings-page .settings-details { margin: 6px 0 0; }
+.settings-page .settings-details > summary { cursor: pointer; font-size: 13px; color: var(--ip-blue); padding: 6px 0; list-style: none; user-select: none; }
+.settings-page .settings-details > summary::-webkit-details-marker { display: none; }
+.settings-page .settings-details > summary::before { content: '\25B8\00A0'; }
+.settings-page .settings-details[open] > summary::before { content: '\25BE\00A0'; }

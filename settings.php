@@ -716,7 +716,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         <section id="tasks" class="settings-section">
             <header class="settings-section-header">
                 <h2>Background tasks</h2>
-                <p class="settings-section-desc">Scheduled sends, out-of-office replies, snoozes and filters run from this app while it is open. To run them when nobody is signed in, the server has to be able to open the mailbox on its own &mdash; which means keeping that account's password here, sealed. Turn it on per account below. Turning it off deletes the stored password at once; it is also deleted automatically when nothing is pending.</p>
+                <p class="settings-section-desc">Scheduled sends, out-of-office replies, snoozes and filters run on their own once an account is switched on: the app keeps itself awake on the server and runs them every five minutes. No cron job is needed. To do that, the server has to be able to open the mailbox on its own &mdash; which means keeping that account's password here, sealed. Turning it off deletes the stored password at once; it is also deleted automatically when nothing is pending.</p>
             </header>
 
             <div class="settings-alert settings-alert-danger" id="tasksBackendNote" hidden>
@@ -737,6 +737,14 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     <div class="settings-row-label">Status</div>
                     <div class="settings-row-value" id="tasksCronStatus">Checking&hellip;</div>
                 </div>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint" id="tasksCronDetail"></p>
+                </div>
+                <details class="settings-details" id="tasksCronDetails">
+                <summary>Host cron job (optional)</summary>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint">Not needed: the app wakes itself. If your host offers Cron Jobs, adding one makes the timing exact and keeps it running through server restarts.</p>
+                </div>
                 <div id="tasksSetup" hidden>
                     <div class="settings-row-stack">
                         <p class="settings-inline-hint">In your hosting panel's <strong>Cron Jobs</strong> (cPanel, DirectAdmin, Plesk) set the schedule to <strong>every five minutes</strong> and paste <strong>one</strong> of these as the command. On a plain crontab, put <code id="tasksSchedule">*/5 * * * *</code> in front of it.</p>
@@ -754,8 +762,9 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     </div>
                 </div>
                 <div class="settings-row-stack" id="tasksNoAdmin" hidden>
-                    <p class="settings-inline-hint">Only <strong id="tasksAdminEmail"></strong> can set the scheduler up for this installation. Your account can still be opted in above; it runs once the scheduler is running.</p>
+                    <p class="settings-inline-hint">Only <strong id="tasksAdminEmail"></strong> can see the cron commands for this installation.</p>
                 </div>
+                </details>
             </div>
         </section>
 
@@ -769,6 +778,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 <div class="settings-row"><div class="settings-row-label">IMAP extension</div><div class="settings-row-value" id="diagImap">&hellip;</div></div>
                 <div class="settings-row"><div class="settings-row-label">Credential sealing</div><div class="settings-row-value" id="diagSeal">&hellip;</div></div>
                 <div class="settings-row"><div class="settings-row-label">Scheduler</div><div class="settings-row-value" id="diagCron">&hellip;</div></div>
+                <div class="settings-row"><div class="settings-row-label">Self-wake</div><div class="settings-row-value" id="diagWake">&hellip;</div></div>
                 <div class="settings-row"><div class="settings-row-label">Log file</div><div class="settings-row-value" id="diagLogStatus">&hellip;</div></div>
             </div>
             <div class="settings-card" id="diagLogCard">
@@ -2125,15 +2135,29 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         $('tasksBackendNote').hidden = !!d.backend;
 
         // scheduler status — the same words in both panes
-        // A silent scheduler is only a fault once somebody is relying on it.
-        const anyOn = (d.accounts || []).some(a => a.enabled);
-        let status, kind = '';
-        if (d.last_run && !d.stale) { status = 'Running — last run ' + ago(d.last_run) + '.'; kind = 'ok'; }
-        else if (!d.last_run)       { status = anyOn ? 'Not running — the scheduler has never reported in.' : 'Not set up — nothing has run yet.'; kind = anyOn ? 'error' : ''; }
-        else                        { status = (anyOn ? 'Not running' : 'Stopped') + ' — last run ' + ago(d.last_run) + '; expected every 5 minutes.'; kind = anyOn ? 'error' : ''; }
-        $('tasksCronStatus').textContent = status;
-        $('tasksCronStatus').className = 'settings-row-value' + (kind ? ' settings-status ' + kind : '');
-        $('diagCron').textContent = status;
+        // The server decides the state (lib/cron.php cron_status_words); the
+        // page only puts words to it, with the same words in both panes.
+        const s    = d.status || { state: 'off', detail: '' };
+        const last = d.last_run ? ago(d.last_run) : 'never';
+        const next = (d.next_due > 0) ? ' Next in ' + (d.next_due < 90 ? d.next_due + ' s' : Math.round(d.next_due / 60) + ' min') + '.' : '';
+        const words = ({
+            off:      ['Off', ''],
+            starting: ['Starting — the first run is on its way.', ''],
+            self:     ['Self-running — last run ' + last + '.' + next, 'ok'],
+            cron:     ['Running (host cron) — last run ' + last + '.', 'ok'],
+            running:  ['Running — last run ' + last + '.' + next, 'ok'],
+            stopped:  ['Not running — last run ' + last + '.', 'error'],
+        })[s.state] || ['Unknown', ''];
+        $('tasksCronStatus').textContent = words[0];
+        $('tasksCronStatus').className = 'settings-row-value' + (words[1] ? ' settings-status ' + words[1] : '');
+        $('tasksCronDetail').textContent = s.detail || '';
+        $('diagCron').textContent = words[0];
+        const tr = d.trigger || {};
+        const wakeNames = { local: 'loopback (127.0.0.1)', 'local-noverify': 'loopback (127.0.0.1, unverified TLS)', public: 'its own address',
+                            inline: 'in-process, after each response', sync: 'inside background polls only', none: 'none', '': 'not checked yet' };
+        $('diagWake').textContent = (wakeNames[tr.method] !== undefined ? wakeNames[tr.method] : tr.method)
+            + (tr.error ? ' — ' + tr.error : '')
+            + (d.chain && d.chain.mode === 'unsupported' ? ' — chain unsupported: ' + d.chain.reason : (d.hop_len ? ' — hop ' + d.hop_len + ' s' : ''));
 
         // setup lines — admins only
         $('tasksSetup').hidden = !d.is_admin;

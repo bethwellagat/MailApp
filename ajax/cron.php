@@ -58,6 +58,8 @@ function cron_status_payload($isAdmin) {
         $accounts[] = ['id' => (string)$a['id'], 'email' => (string)$a['email'], 'enabled' => cred_enabled($a['id'])];
     }
     $state = cron_state();
+    $now   = cron_now();
+    $anyOn = (bool)array_filter($accounts, fn($a) => $a['enabled']);
     // The token is shown to whoever may set the cron up — the same people who
     // may edit the workspace. Anyone else sees that the scheduler exists and
     // whether it is running, which is all they need to opt their account in.
@@ -71,7 +73,14 @@ function cron_status_payload($isAdmin) {
         'backend'   => cred_backend(),
         'accounts'  => $accounts,
         'last_run'  => (string)$state['last_run'],
-        'stale'     => cron_is_stale($state['last_run']),
+        'stale'     => cron_is_stale($state['last_run'], $now),
+        'status'    => cron_status_words($state, $now, $anyOn),
+        'next_due'  => cron_seconds_until_due($state, $now),
+        'trigger'   => ['method' => (string)$state['trigger']['method'], 'error' => (string)$state['trigger']['error'], 'checked' => (int)$state['trigger']['checked']],
+        'chain'     => ['mode' => (string)$state['chain']['mode'], 'reason' => (string)$state['chain']['reason'], 'alive' => cron_chain_alive($state, $now), 'phase' => (string)$state['hop_phase']],
+        'hop_len'   => (int)$state['hop_len'],
+        'base_url'  => $isAdmin ? (string)$state['base_url'] : '',
+        'finish_request' => cron_can_finish_request(),
         'runs'      => array_slice((array)$state['runs'], -5),
         'token'     => $token,
         'url'       => $url,
@@ -100,6 +109,22 @@ if ($action === 'enable' || $action === 'disable') {
         if (cred_backend() === null) cron_err('This server\'s PHP has neither libsodium nor OpenSSL, so credentials cannot be sealed.', 500);
         if (!cred_enable($acct))     cron_err('Could not store the credential — is the data folder writable by the web server?', 500);
         app_log('info', 'background tasks enabled', ['account' => $acct['email'], 'by' => $me]);
+        // Start now rather than at the next visit: learn our address from this
+        // signed-in request, find a way to reach cron.php, and kick the first
+        // run or hop over the loopback. Methods that must wait for the
+        // response to go (inline, sync) are left to the tick at shutdown.
+        cron_learn_base_url();
+        $st = cron_state();
+        if ($st['trigger']['method'] === '' || (cron_now() - (int)$st['trigger']['checked']) > 3600) cron_probe();
+        $st = cron_state();
+        $kicked = false;
+        if (cron_is_loopback_method($st['trigger']['method']) && !cron_chain_alive($st, cron_now()) && !cron_run_in_progress()) {
+            $kicked = !empty(cron_trigger(cron_due($st, cron_now()) ? 'run' : 'hop', 'enable')['ok']);
+        }
+        // Kicked: this request's own shutdown tick may rest. Not kicked (inline,
+        // sync): let it fire now rather than up to a minute from now.
+        if ($kicked) @touch(app_data_root() . '/cron.tick', cron_now());
+        else         @unlink(app_data_root() . '/cron.tick');
     } else {
         if (!cred_disable($id))      cron_err('Could not remove the stored credential.', 500);
         app_log('info', 'background tasks disabled', ['account' => $acct['email'], 'by' => $me]);

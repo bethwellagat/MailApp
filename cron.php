@@ -4,22 +4,21 @@
  *
  * Runs the unattended jobs (scheduled sends, out-of-office replies, snooze
  * wake-ups, filters) for every account that opted in under Settings →
- * Background tasks. Until this existed those jobs ran only from an open
- * browser tab; a message scheduled for 8 am left when the first person opened
- * their inbox.
+ * Background tasks. Three callers reach it:
  *
- * Two ways to call it, both every five minutes (Settings → Background tasks
- * prints the exact lines; they are not written here because a cron schedule
- * begins with the two characters that end a PHP comment):
+ *   the app itself   Every ordinary request ends with a tick (lib/cron.php)
+ *                    that, when a run is due, calls this file in the
+ *                    background with ?token&run=1 — and each run books a hop
+ *                    (?token&hop=1): a background request that waits until
+ *                    the next run is due and runs again. No cron job needed.
+ *   a host cron      Optional. `php -q cron.php` from the CLI needs no token;
+ *                    the URL form needs the token Settings shows.
+ *   the probe        ?token&probe=1 answers without running anything; it is
+ *                    how the app finds a way to reach itself.
  *
- *   php -q /home/<user>/public_html/cron.php
- *   curl -fsS "https://your.domain/cron.php?token=…"
- *
- * The URL form needs the token Settings shows; the CLI form needs none,
- * because reaching the CLI already means being the hosting account. Nothing
- * here starts a PHP session: each account's sealed credentials are opened
- * and mirrored into the request's own $_SESSION array, which is just the
- * place every job already looks.
+ * Nothing here starts a PHP session: each account's sealed credentials are
+ * opened and mirrored into the request's own $_SESSION array, which is just
+ * the place every job already looks.
  */
 
 @ini_set('display_errors', '0');
@@ -47,9 +46,13 @@ if (!$isCli) {
         echo json_encode(['error' => 'Forbidden']);
         exit;
     }
+    if (!empty($_GET['probe'])) {
+        echo json_encode(['ok' => true, 'probe' => true, 'php' => PHP_VERSION, 'imap' => cron_imap_available()]), "\n";
+        exit;
+    }
 }
 
-if (!function_exists('imap_open')) {
+if (!cron_imap_available()) {
     if (!$isCli) http_response_code(500);
     echo json_encode(['error' => 'PHP IMAP extension is not enabled']), "\n";
     exit($isCli ? 1 : 0);
@@ -58,6 +61,27 @@ if (!function_exists('imap_open')) {
 ensure_data_guards();
 require_once __DIR__ . '/lib/jobs.php';
 
-$summary = cron_run_all();
+if (!$isCli && !empty($_GET['hop'])) {
+    $r = cron_hop('chain');
+    echo json_encode($r, JSON_INVALID_UTF8_SUBSTITUTE), "\n";
+    exit;
+}
+
+$via = 'url';
+if ($isCli) {
+    $via = 'cli';
+} elseif (!empty($_GET['run'])) {
+    $via = (string)($_GET['via'] ?? '');
+    if (!in_array($via, ['tick', 'enable', 'chain', 'inline'], true)) $via = 'tick';
+}
+// A host cron may fire more often than needed; the app's own triggers
+// already checked. Either way two runs cannot overlap (cron_run_all locks).
+if ($via === 'url' && !cron_due(cron_state(), cron_now(), CRON_INTERVAL - 60)) {
+    echo json_encode(['ok' => true, 'skipped' => 'not due yet', 'last_run' => cron_state()['last_run']]), "\n";
+    exit;
+}
+
+$summary = cron_run_all(CRON_BUDGET_SECONDS, $via);
+if (!in_array($via, ['cli', 'url'], true)) cron_book_next_hop();   // a run the app started begins the chain
 echo json_encode($summary, JSON_INVALID_UTF8_SUBSTITUTE), "\n";
 if ($isCli) exit(empty($summary['errors']) ? 0 : 1);

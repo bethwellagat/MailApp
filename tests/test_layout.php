@@ -588,3 +588,21 @@ if (is_string($h)) {
     t_ok('writes carry the CSRF token',   preg_match("/ajax\\/cron\\.php.*?'X-CSRF-Token': window\\.__CSRF__/s", $h) === 1);
     t_ok('a failed switch is reverted, not pretended', strpos($h, 'cb.checked = !cb.checked') !== false);
 }
+
+t_group('the scheduler wakes itself');
+$sess = (string)@file_get_contents(T_ROOT . '/lib/session.php');
+t_ok('every request ends with a tick',          strpos($sess, "register_shutdown_function('cron_tick_shutdown')") !== false && strpos($sess, 'function cron_tick_shutdown') !== false);
+t_ok('…that stands aside after a fatal',        preg_match('/function cron_tick_shutdown.*?error_get_last\(\)/s', $sess) === 1);
+$c = (string)@file_get_contents(T_ROOT . '/cron.php');
+t_ok('cron.php answers probes without running',  strpos($c, "'probe' => true") !== false);
+t_ok('…runs hops',                               strpos($c, 'cron_hop(') !== false);
+t_ok('…and rate-limits a URL-driven run',        strpos($c, 'cron_due(') !== false);
+$l = (string)@file_get_contents(T_ROOT . '/lib/cron.php');
+t_ok('a hop survives its caller hanging up',     preg_match('/function cron_hop\(.*?ignore_user_abort\(true\)/s', $l) === 1);
+t_ok('a run closes any visitor session before mirroring credentials', preg_match('/function cron_run_all\(.*?session_write_close\(\).*?cron_mirror_account\(/s', $l) === 1);
+t_ok('the address is learned only from a signed-in request', preg_match('/function cron_learn_base_url\(.*?\$_SESSION\[\'email\'\]/s', $l) === 1);
+t_ok('the loopback keeps the token on this machine first', preg_match("/'name' => 'local', 'connect' => '127\\.0\\.0\\.1'/", $l) === 1);
+$h = (string)@file_get_contents(T_ROOT . '/settings.php');
+t_ok('the pane promises no cron job',            strpos($h, 'No cron job is needed') !== false);
+t_ok('the host cron is tucked away as optional', strpos($h, '<details class="settings-details"') !== false && strpos($h, 'Host cron job (optional)') !== false);
+t_ok('the state comes from the server',          strpos($h, 'd.status') !== false && strpos($l, 'function cron_status_words') !== false);
