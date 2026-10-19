@@ -675,3 +675,15 @@ t_group('lists: a sorted list is shown in the server\'s order');
 $js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
 t_ok('date headings and the pinned section only in date order', preg_match('/const byDate = .*?state\.listSort\.by === \'date\'.*?const group = byDate \? dateGroupLabel/s', $js) === 1);
 t_ok('the sender sort is named for what IMAP sorts by: the address', strpos((string)@file_get_contents(T_ROOT . '/inbox.php'), 'Sender address A–Z') !== false && strpos($js, "'by sender address'") !== false);
+
+t_group('contacts: richer fields, wired');
+$h = (string)@file_get_contents(T_ROOT . '/settings.php');
+foreach (['contactPhone', 'contactCompany', 'contactRole', 'contactGroupsInput', 'contactNotes'] as $id) {
+    t_ok("the contact form has #$id, read and filled", strpos($h, 'id="' . $id . '"') !== false && substr_count($h, "\$('" . $id . "')") >= 2);
+}
+t_ok('import, export and duplicates are reachable', strpos($h, 'action=import') !== false && strpos($h, 'action=export&amp;format=vcf') !== false && strpos($h, 'action=export&amp;format=csv') !== false && strpos($h, "api('duplicates')") !== false && strpos($h, 'action=merge') !== false);
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('a group in compose becomes its members', preg_match('/function acChoose.*?c\.group\s*\?\s*\(c\.emails/s', $js) === 1 && strpos($js, 'ac-item-group') !== false);
+$a = (string)@file_get_contents(T_ROOT . '/ajax/contacts.php');
+t_ok('an import file is bounded and parsed by content', strpos($a, '4 * 1048576') !== false && strpos($a, 'contacts_parse_any(') !== false);
+t_ok('export downloads as a file', strpos($a, 'Content-Disposition: attachment') !== false);

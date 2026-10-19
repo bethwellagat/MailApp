@@ -676,7 +676,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         <section id="contacts" class="settings-section">
             <header class="settings-section-header">
                 <h2>Contacts</h2>
-                <p class="settings-section-desc">Addresses suggested while you type a recipient. They are collected automatically from mail you send and conversations you open — this is where you can correct a name, add someone before you have written to them, or remove an address you don't want suggested.</p>
+                <p class="settings-section-desc">Addresses suggested while you type a recipient. They are collected automatically from mail you send and conversations you open — this is where you can correct a name, add someone before you have written to them, or remove an address you don't want suggested. A contact can also carry a phone, company, role, notes and <strong>groups</strong>; typing a group's name in To expands it to everyone in it.</p>
             </header>
 
             <div class="settings-card">
@@ -690,6 +690,17 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     </button>
                     <span class="settings-status" id="contactStatus" role="status" aria-live="polite"></span>
                 </div>
+                <div class="contact-tools">
+                    <div class="contact-groups" id="contactGroups"></div>
+                    <div class="contact-io">
+                        <label class="btn contact-import-label" for="contactImportFile">Import .vcf / .csv</label>
+                        <input type="file" id="contactImportFile" accept=".vcf,.vcard,.csv,text/vcard,text/csv,text/plain" hidden>
+                        <a class="btn" href="ajax/contacts.php?action=export&amp;format=vcf" download>Export vCard</a>
+                        <a class="btn" href="ajax/contacts.php?action=export&amp;format=csv" download>Export CSV</a>
+                        <button type="button" class="btn" id="contactDupBtn">Find duplicates</button>
+                    </div>
+                </div>
+                <div class="contact-dups" id="contactDups" hidden></div>
                 <form class="contact-form" id="contactForm" hidden>
                     <input type="hidden" id="contactOriginal" value="">
                     <div class="contact-form-row">
@@ -700,6 +711,33 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                         <label class="cal-field">
                             <span class="cal-field-label">Email address</span>
                             <input type="email" id="contactEmail" class="cal-field-input" maxlength="200" placeholder="jane@example.com" autocomplete="off" required>
+                        </label>
+                    </div>
+                    <div class="contact-form-row">
+                        <label class="cal-field">
+                            <span class="cal-field-label">Phone</span>
+                            <input type="tel" id="contactPhone" class="cal-field-input" maxlength="40" placeholder="+971 50 …" autocomplete="off">
+                        </label>
+                        <label class="cal-field">
+                            <span class="cal-field-label">Company</span>
+                            <input type="text" id="contactCompany" class="cal-field-input" maxlength="80" autocomplete="off">
+                        </label>
+                        <label class="cal-field">
+                            <span class="cal-field-label">Role</span>
+                            <input type="text" id="contactRole" class="cal-field-input" maxlength="80" autocomplete="off">
+                        </label>
+                    </div>
+                    <div class="contact-form-row">
+                        <label class="cal-field">
+                            <span class="cal-field-label">Groups <span class="rule-field-hint">(comma-separated; a group name typed in To becomes everyone in it)</span></span>
+                            <input type="text" id="contactGroupsInput" class="cal-field-input" maxlength="400" placeholder="Dubai, Recruiters" autocomplete="off" list="contactGroupNames">
+                            <datalist id="contactGroupNames"></datalist>
+                        </label>
+                    </div>
+                    <div class="contact-form-row">
+                        <label class="cal-field">
+                            <span class="cal-field-label">Notes</span>
+                            <textarea id="contactNotes" class="cal-field-input contact-notes" maxlength="1000" rows="3"></textarea>
                         </label>
                     </div>
                     <div class="contact-form-actions">
@@ -1274,7 +1312,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         if (!listEl) return;
         const form   = $('contactForm'), nameEl = $('contactName'), emailEl = $('contactEmail'),
               origEl = $('contactOriginal'), statusEl = $('contactStatus');
-        let contacts = [];
+        let contacts = [], groups = [], groupFilter = '';
 
         const esc = (v) => String(v == null ? '' : v)
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -1291,10 +1329,24 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         // several screens of mostly-empty space.
         function visible() {
             const q = ($('contactFilter').value || '').trim().toLowerCase();
-            if (!q) return contacts;
-            return contacts.filter(c =>
+            let rows = contacts;
+            if (groupFilter) rows = rows.filter(c => (c.groups || []).some(g => g.toLowerCase() === groupFilter.toLowerCase()));
+            if (!q) return rows;
+            return rows.filter(c =>
                 (c.email || '').toLowerCase().includes(q) ||
-                (c.name  || '').toLowerCase().includes(q));
+                (c.name  || '').toLowerCase().includes(q) ||
+                (c.company || '').toLowerCase().includes(q) ||
+                (c.role || '').toLowerCase().includes(q) ||
+                (c.phone || '').toLowerCase().includes(q) ||
+                (c.groups || []).some(g => g.toLowerCase().includes(q)));
+        }
+        function renderGroups() {
+            const el = $('contactGroups');
+            const dl = $('contactGroupNames');
+            if (dl) dl.innerHTML = groups.map(g => '<option value="' + esc(g.name) + '">').join('');
+            if (!groups.length) { el.innerHTML = ''; return; }
+            el.innerHTML = '<button type="button" class="contact-group-chip' + (!groupFilter ? ' on' : '') + '" data-group="">Everyone</button>' +
+                groups.map(g => '<button type="button" class="contact-group-chip' + (groupFilter.toLowerCase() === g.name.toLowerCase() ? ' on' : '') + '" data-group="' + esc(g.name) + '">' + esc(g.name) + ' <span class="contact-group-n">' + g.count + '</span></button>').join('');
         }
 
         function render() {
@@ -1320,10 +1372,15 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             listEl.className = 'rules-list contacts-grid';
             listEl.innerHTML = rows.map(c => {
                 const label = c.name || c.email;
+                const detail = [c.role, c.company].filter(Boolean).join(' · ');
+                const chips = (c.groups || []).map(g => '<span class="contact-group-tag">' + esc(g) + '</span>').join('');
                 return '<div class="contact-card" data-email="' + esc(c.email) + '">' +
                     '<div class="contact-card-main">' +
                         '<div class="contact-card-name">' + esc(label) + '</div>' +
                         (c.name ? '<div class="contact-card-mail">' + esc(c.email) + '</div>' : '') +
+                        (detail ? '<div class="contact-card-detail">' + esc(detail) + '</div>' : '') +
+                        (c.phone ? '<div class="contact-card-detail">' + esc(c.phone) + '</div>' : '') +
+                        (chips ? '<div class="contact-card-groups">' + chips + '</div>' : '') +
                     '</div>' +
                     '<div class="contact-card-actions">' +
                         '<button type="button" class="cal-feed-btn" data-contact-edit="' + esc(c.email) + '" title="Edit" aria-label="Edit ' + esc(label) + '">' +
@@ -1354,6 +1411,11 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             origEl.value  = c ? c.email : '';
             nameEl.value  = c ? (c.name || '') : '';
             emailEl.value = c ? c.email : '';
+            $('contactPhone').value   = c ? (c.phone || '') : '';
+            $('contactCompany').value = c ? (c.company || '') : '';
+            $('contactRole').value    = c ? (c.role || '') : '';
+            $('contactGroupsInput').value = c ? (c.groups || []).join(', ') : (groupFilter || '');
+            $('contactNotes').value   = c ? (c.notes || '') : '';
             (c ? nameEl : emailEl).focus();
         }
         function closeForm() { form.hidden = true; origEl.value = ''; form.reset(); }
@@ -1368,10 +1430,16 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 email: emailEl.value.trim(),
                 name: nameEl.value.trim(),
                 original_email: origEl.value,
+                phone: $('contactPhone').value.trim(),
+                company: $('contactCompany').value.trim(),
+                role: $('contactRole').value.trim(),
+                groups: $('contactGroupsInput').value.trim(),
+                notes: $('contactNotes').value,
             }, 'POST');
             if (d.error) { say(d.error, true); return; }
             contacts = d.contacts || [];
-            render(); closeForm(); say('Saved');
+            groups = d.groups || groupsFrom(contacts);
+            renderGroups(); render(); closeForm(); say('Saved');
         });
 
         listEl.addEventListener('click', async (e) => {
@@ -1388,14 +1456,77 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             const d = await api('delete', { email: email }, 'POST');
             if (d.error) { say(d.error, true); return; }
             contacts = d.contacts || [];
-            render(); say('Removed');
+            groups = d.groups || groupsFrom(contacts);
+            renderGroups(); render(); say('Removed');
+        });
+
+        // Groups are a view of the book; rebuild them when the server did not send them.
+        function groupsFrom(list) {
+            const m = new Map();
+            list.forEach(c => (c.groups || []).forEach(g => { const k = g.toLowerCase(); if (!m.has(k)) m.set(k, { name: g, count: 0 }); m.get(k).count++; }));
+            return Array.from(m.values()).sort((a, b) => a.name.localeCompare(b.name));
+        }
+        $('contactGroups').addEventListener('click', (e) => {
+            const chip = e.target.closest('.contact-group-chip');
+            if (!chip) return;
+            groupFilter = chip.dataset.group || '';
+            renderGroups(); render();
+        });
+
+        // Import: the file goes up as-is; the server tells vCard from CSV by content.
+        $('contactImportFile').addEventListener('change', async (e) => {
+            const f = e.target.files && e.target.files[0];
+            if (!f) return;
+            say('Importing ' + f.name + '…');
+            const fd = new FormData();
+            fd.append('file', f);
+            const r = await fetch('ajax/contacts.php?action=import', { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': window.__CSRF__ }, body: fd });
+            let d; try { d = await r.json(); } catch (x) { d = { error: 'Invalid server response' }; }
+            e.target.value = '';
+            if (d.error) { say(d.error, true); return; }
+            contacts = d.contacts || []; groups = d.groups || groupsFrom(contacts);
+            renderGroups(); render();
+            const n = d.result || {};
+            say('Imported: ' + (n.added || 0) + ' added, ' + (n.updated || 0) + ' updated, ' + (n.skipped || 0) + ' unchanged or skipped.');
+        });
+
+        // Duplicates: the server proposes, the person decides.
+        async function showDuplicates(list) {
+            const box = $('contactDups');
+            if (!list) { const d = await api('duplicates'); if (d.error) { say(d.error, true); return; } list = d.duplicates || []; }
+            box.hidden = false;
+            if (!list.length) { box.innerHTML = '<div class="cal-feed-empty">No likely duplicates found.</div>'; return; }
+            box.innerHTML = '<div class="contact-dups-title">Possible duplicates — the first in each row is kept and gains what the others have.</div>' +
+                list.map((g, i) => '<div class="contact-dup-row" data-i="' + i + '">' +
+                    '<div class="contact-dup-main"><div class="contact-dup-reason">' + esc(g.reason) + '</div><div class="contact-dup-emails">' +
+                    g.contacts.map((em, j) => '<span class="contact-dup-email' + (j === 0 ? ' keep' : '') + '">' + esc(em) + '</span>').join(' ') + '</div></div>' +
+                    '<button type="button" class="btn btn-primary" data-merge="' + i + '">Merge</button></div>').join('');
+            box._list = list;
+        }
+        $('contactDupBtn').addEventListener('click', () => showDuplicates(null));
+        $('contactDups').addEventListener('click', async (e) => {
+            const b = e.target.closest('[data-merge]');
+            if (!b) return;
+            const g = ($('contactDups')._list || [])[parseInt(b.dataset.merge, 10)];
+            if (!g) return;
+            b.disabled = true;
+            const fd = new FormData();
+            fd.append('keep', g.contacts[0]);
+            g.contacts.slice(1).forEach(em => fd.append('others[]', em));
+            const r = await fetch('ajax/contacts.php?action=merge', { method: 'POST', credentials: 'same-origin', headers: { 'X-CSRF-Token': window.__CSRF__ }, body: fd });
+            let d; try { d = await r.json(); } catch (x) { d = { error: 'Invalid server response' }; }
+            if (d.error) { say(d.error, true); b.disabled = false; return; }
+            contacts = d.contacts || []; groups = d.groups || groupsFrom(contacts);
+            renderGroups(); render(); say('Merged');
+            showDuplicates(d.duplicates || []);
         });
 
         (async () => {
             const d = await api('all');
             if (d.error) { listEl.innerHTML = '<div class="cal-feed-empty">Could not load contacts.</div>'; return; }
             contacts = d.contacts || [];
-            render();
+            groups = d.groups || groupsFrom(contacts);
+            renderGroups(); render();
         })();
     })();
 

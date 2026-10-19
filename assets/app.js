@@ -2750,6 +2750,13 @@
         if (!ac.items.length) { acClose(); return; }
         const box = acEnsureBox();
         box.innerHTML = ac.items.map((c, i) => {
+            if (c.group) {
+                // A group: one token that becomes every member.
+                return '<div class="ac-item ac-item-group' + (i === ac.active ? ' active' : '') + '" role="option" data-idx="' + i + '">' +
+                           '<span class="ac-item-name">' + escapeHtml(c.group) + '</span>' +
+                           '<span class="ac-item-email">' + c.count + (c.count === 1 ? ' person' : ' people') + '</span>' +
+                       '</div>';
+            }
             const name = c.name && c.name.trim() ? c.name.trim() : '';
             const main = name ? escapeHtml(name) : escapeHtml(c.email);
             const sub  = name ? '<span class="ac-item-email">' + escapeHtml(c.email) + '</span>' : '';
@@ -2768,7 +2775,10 @@
         if (!c || !ac.input) return;
         const input = ac.input;
         const { start, end } = acTokenBounds(input.value, acCaret(input));
-        const formatted = (c.name && c.name.trim()) ? (c.name.trim() + ' <' + c.email + '>') : c.email;
+        const formatted = c.group
+            ? (c.emails || []).filter(e => !input.value.toLowerCase().includes(e.toLowerCase())).join(', ')
+            : ((c.name && c.name.trim()) ? (c.name.trim() + ' <' + c.email + '>') : c.email);
+        if (formatted === '') { acClose(); return; }   // every member of the group is already in the field
         const left  = input.value.slice(0, start).replace(/[\s,;]+$/, '');
         const right = input.value.slice(end).replace(/^[\s,;]+/, '');
         let result = '';
