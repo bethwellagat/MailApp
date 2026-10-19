@@ -159,6 +159,10 @@ if ('serviceWorker' in navigator) {
             <span class="snav-icon snav-icon-blue"><svg class="icon"><use href="#ic-user"/></svg></span>
             <span>Account</span>
         </a>
+        <a class="settings-nav-item" href="#security" data-target="security">
+            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span>Security</span>
+        </a>
         <a class="settings-nav-item" href="#signature" data-target="signature">
             <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-pen"/></svg></span>
             <span>Signature</span>
@@ -344,6 +348,34 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     </label>
                 </div>
                 <span class="settings-status" id="remoteImagesStatus"></span>
+            </div>
+        </section>
+
+        <section id="security" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Security</h2>
+                <p class="settings-section-desc">Which devices stay signed in. A remembered device keeps your account sealed under a secret that exists only in that browser's cookie &mdash; the server holds the lock, the browser holds the key &mdash; and the secret changes every time it is used, so a copied cookie stops working the first time the real device returns. Signing out forgets the device.</p>
+            </header>
+            <div class="settings-card">
+                <div class="settings-toggles">
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="secThisDevice">
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-label">Stay signed in on this device for 30 days</span>
+                    </label>
+                </div>
+                <div class="settings-inline-edit"><span class="settings-status" id="secThisStatus"></span></div>
+            </div>
+            <div class="settings-card">
+                <h3 class="settings-card-title">Remembered devices</h3>
+                <div class="dev-list" id="secDevices"><p class="settings-inline-hint">Loading&hellip;</p></div>
+                <div class="settings-inline-edit">
+                    <button type="button" class="btn" id="secForgetAll">Sign out everywhere</button>
+                    <span class="settings-status" id="secStatus"></span>
+                </div>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint">"Sign out everywhere" forgets every remembered device; this session carries on until you sign out.</p>
+                </div>
             </div>
         </section>
 
@@ -2387,6 +2419,73 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         const rule = cachedRules.find(x => x.id === id);
         if (rule) rule.enabled = cb.checked;
     });
+})();
+</script>
+<script nonce="<?= csp_nonce() ?>">
+/* === Security: remembered devices === */
+(function () {
+    const $ = id => document.getElementById(id);
+    if (!$('secDevices')) return;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const say = (el, msg, kind) => { el.textContent = msg || ''; el.className = 'settings-status' + (kind ? ' ' + kind : ''); };
+    const ago = (ts) => { if (!ts) return 'never'; const s = Math.max(0, Math.round(Date.now() / 1000 - ts)); if (s < 60) return 'just now'; if (s < 3600) return Math.round(s / 60) + ' min ago'; if (s < 86400) return Math.round(s / 3600) + ' h ago'; return Math.round(s / 86400) + ' d ago'; };
+    const inDays = (ts) => Math.max(0, Math.round((ts - Date.now() / 1000) / 86400)) + ' d';
+    const post = async (body) => {
+        const r = await fetch('ajax/security.php', { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.__CSRF__ }, body: new URLSearchParams(body).toString() });
+        if (r.status === 401) { window.location = 'index'; return { error: 'Signed out' }; }
+        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    };
+    function paint(d) {
+        $('secThisDevice').checked = !!d.this_device;
+        $('secThisDevice').disabled = !d.backend;
+        const list = d.devices || [];
+        $('secDevices').innerHTML = list.length ? list.map(x =>
+            '<div class="dev-row' + (x.current ? ' current' : '') + '">' +
+                '<div class="dev-main"><div class="dev-name">' + esc(x.device) + (x.current ? ' <span class="dev-tag">this device</span>' : '') + '</div>' +
+                '<div class="dev-sub">Remembered ' + ago(x.created) + ' · last used ' + ago(x.last_used) + ' · expires in ' + inDays(x.expires) + '</div></div>' +
+                '<button type="button" class="btn" data-forget="' + esc(x.id) + '">Forget</button></div>').join('')
+            : '<p class="settings-inline-hint">No device is remembered. Tick "Stay signed in" when you sign in, or switch it on above for this one.</p>';
+        $('secForgetAll').disabled = !list.length;
+    }
+    async function load() {
+        const r = await fetch('ajax/security.php?action=devices', { credentials: 'same-origin' }).then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        if (r.error) { $('secDevices').innerHTML = '<p class="settings-inline-hint">' + esc(r.error) + '</p>'; return; }
+        paint(r);
+    }
+    $('secThisDevice').addEventListener('change', async (e) => {
+        const on = e.target.checked;
+        e.target.disabled = true;
+        say($('secThisStatus'), 'Saving…');
+        let d;
+        if (on) d = await post({ action: 'remember_this' });
+        else {
+            const cur = await fetch('ajax/security.php?action=devices', { credentials: 'same-origin' }).then(x => x.json()).catch(() => ({}));
+            const me = (cur.devices || []).find(x => x.current);
+            d = me ? await post({ action: 'forget', id: me.id }) : cur;
+        }
+        e.target.disabled = false;
+        if (d.error) { e.target.checked = !on; say($('secThisStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('secThisStatus'), on ? 'This device stays signed in for 30 days.' : 'This device will ask you to sign in next time.', 'ok');
+    });
+    $('secDevices').addEventListener('click', async (e) => {
+        const b = e.target.closest('[data-forget]');
+        if (!b) return;
+        b.disabled = true;
+        const d = await post({ action: 'forget', id: b.dataset.forget });
+        if (d.error) { say($('secStatus'), d.error, 'error'); b.disabled = false; return; }
+        paint(d);
+        say($('secStatus'), 'Forgotten.', 'ok');
+    });
+    $('secForgetAll').addEventListener('click', async () => {
+        if (!window.confirm('Forget every remembered device? Each will ask for the password next time.')) return;
+        const d = await post({ action: 'forget_all' });
+        if (d.error) { say($('secStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('secStatus'), 'Every device forgotten.', 'ok');
+    });
+    load();
 })();
 </script>
 <script nonce="<?= csp_nonce() ?>">

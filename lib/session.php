@@ -44,6 +44,11 @@ if (!function_exists('session_boot')) {
 
         session_start();
         session_enforce_lifetime();
+        // No signed-in session, but a remembered device? Sign it in (lib/remember.php).
+        if (empty($_SESSION['email']) && !empty($_COOKIE['mailapp_remember'])) {
+            require_once __DIR__ . '/remember.php';
+            remember_boot();
+        }
         // Self-heal data/'s web-deny files (one stat() once they exist). Kept here
         // so every entry point gets it without per-file wiring.
         require_once __DIR__ . '/util.php';

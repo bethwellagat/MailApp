@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/lib/session.php'; session_boot();
+require_once __DIR__ . '/lib/remember.php';
+remember_forget_current();   // a signed-out device is not a remembered one
 $_SESSION = [];
 
 if (ini_get('session.use_cookies')) {

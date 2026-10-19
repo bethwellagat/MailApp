@@ -116,6 +116,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['login_time']   = time();
             $_SESSION['last_seen']    = time();
 
+            // "Stay signed in": seal the account under a secret that lives only in
+            // this browser's cookie (lib/remember.php).
+            if (!empty($_POST['remember'])) {
+                require_once __DIR__ . '/lib/remember.php';
+                $issued = remember_issue($_SESSION, (string)($_SERVER['HTTP_USER_AGENT'] ?? ''));
+                if ($issued && remember_set_cookie($issued['cookie'], $issued['expires'])) $_SESSION['remember_selector'] = $issued['selector'];
+            }
+
             // A display name saved in Settings is the source of truth: prefer it
             // over whatever was typed on the login form, so the choice survives
             // logout/login. (The login field only seeds the very first sign-in,
@@ -235,6 +243,11 @@ if ('caches' in window) {
             </div>
         </div>
 
+        <label class="checkbox-row remember-row">
+            <input type="checkbox" name="remember" value="1" <?= !empty($_POST['remember']) ? 'checked' : '' ?>>
+            <span>Stay signed in on this device for 30 days</span>
+        </label>
+
         <button type="button" class="advanced-toggle <?= $advanced_open ? 'open' : '' ?>" id="advancedToggle" aria-expanded="<?= $advanced_open ? 'true' : 'false' ?>" aria-controls="advancedFields">
             <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><polyline points="9 6 15 12 9 18"/></svg>
             <span>Advanced settings</span>
@@ -284,7 +297,7 @@ if ('caches' in window) {
 
         <div class="login-secure">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
-            <span>Credentials are never stored. Session-only authentication.</span>
+            <span>Credentials live only in your session &mdash; unless you choose to stay signed in, when they are sealed under a key only this browser holds.</span>
         </div>
     </form>
 

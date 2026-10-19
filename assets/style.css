@@ -7292,3 +7292,14 @@ html.theme-dark .mail-page .msg-label { color: hsl(var(--lh) 80% 80%); backgroun
 .settings-page .contact-dup-email.keep { font-weight: 700; }
 /* ---- Compose: a group in the suggestions ---- */
 .mail-page .ac-item-group .ac-item-name::before { content: '\1F465\00A0'; }
+
+/* ---- Login: stay signed in ---- */
+.login-page .remember-row { margin: -4px 0 14px; font-size: 13px; }
+/* ---- Settings: remembered devices ---- */
+.settings-page .dev-list { display: flex; flex-direction: column; }
+.settings-page .dev-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.settings-page .dev-row + .dev-row { border-top: 1px solid var(--ip-sep); }
+.settings-page .dev-main { flex: 1; min-width: 0; }
+.settings-page .dev-name { font-weight: 600; }
+.settings-page .dev-tag { font-size: 11px; font-weight: 600; color: var(--ip-blue); margin-left: 6px; }
+.settings-page .dev-sub { font-size: 12.5px; color: var(--ip-label-2); }

@@ -687,3 +687,19 @@ t_ok('a group in compose becomes its members', preg_match('/function acChoose.*?
 $a = (string)@file_get_contents(T_ROOT . '/ajax/contacts.php');
 t_ok('an import file is bounded and parsed by content', strpos($a, '4 * 1048576') !== false && strpos($a, 'contacts_parse_any(') !== false);
 t_ok('export downloads as a file', strpos($a, 'Content-Disposition: attachment') !== false);
+
+t_group('stay signed in: wired, and only the cookie can open it');
+$sess = (string)@file_get_contents(T_ROOT . '/lib/session.php');
+t_ok('session_boot signs a remembered device in', strpos($sess, 'remember_boot()') !== false && preg_match('/session_enforce_lifetime\(\);.*?remember_boot\(\)/s', $sess) === 1);
+$ix = (string)@file_get_contents(T_ROOT . '/index.php');
+t_ok('the login form offers it and issues on success', strpos($ix, 'name="remember"') !== false && preg_match("/login_throttle_record\\(\\\$email, true\\);.*?remember_issue\\(/s", $ix) === 1);
+$lo = (string)@file_get_contents(T_ROOT . '/logout.php');
+t_ok('logout forgets the device', strpos($lo, 'remember_forget_current()') !== false);
+$rm = (string)@file_get_contents(T_ROOT . '/lib/remember.php');
+t_ok('the cookie is HttpOnly and SameSite', strpos($rm, "'httponly' => true, 'samesite' => 'Lax'") !== false);
+t_ok('the key is derived from the secret on every use', strpos($rm, "hash('sha256', (string)\$secret, true)") !== false && strpos($rm, 'remember_key($t[\'secret\'])') !== false && strpos($rm, "remember_key(\$token['secret'])") !== false);
+t_ok('a wrong secret revokes the device', preg_match('/function remember_open.*?remember_revoke\(\$token\[\'selector\'\]\).*?wrong secret/s', $rm) === 1);
+$h = (string)@file_get_contents(T_ROOT . '/settings.php');
+t_ok('Security pane and nav', strpos($h, 'data-target="security"') !== false && strpos($h, '<section id="security"') !== false && strpos($h, 'id="secForgetAll"') !== false);
+$a = (string)@file_get_contents(T_ROOT . '/ajax/security.php');
+t_ok('the endpoint needs a session and CSRF on writes, and never shows selectors', strpos($a, "empty(\$_SESSION['email'])") !== false && strpos($a, 'csrf_require()') !== false && strpos($a, 'remember_list(') !== false);
