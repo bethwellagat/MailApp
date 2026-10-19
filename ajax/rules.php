@@ -54,6 +54,7 @@ if ($action === 'add' && $method === 'POST') {
     $body = input_json_r();
     $clean = sanitize_rule($body);
     if (!$clean) fail_r('A rule needs at least one match criterion and one action.', 400);
+    if ($qe = rule_query_errors($clean['match']['query'])) fail_r('Search query: ' . implode('; ', $qe), 400);
     $clean['id'] = rule_uuid();
     // Serialize the load→modify→save so a concurrent save (another tab, or the
     // background sweep) can't lose this rule. Released before the slow IMAP work
@@ -87,6 +88,7 @@ if ($action === 'update' && $method === 'POST') {
     if (!$id) fail_r('id required', 400);
     $clean = sanitize_rule($body);
     if (!$clean) fail_r('A rule needs at least one match criterion and one action.', 400);
+    if ($qe = rule_query_errors($clean['match']['query'])) fail_r('Search query: ' . implode('; ', $qe), 400);
     $clean['id'] = $id;
     $lk   = store_lock(_rules_file($email));
     $data = load_rules($email);

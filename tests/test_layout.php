@@ -643,3 +643,14 @@ t_ok('…and never offers an undo it cannot honour', preg_match('/function actDe
 t_ok('the remembered order is restored before the first load', strpos($js, 'loadListSort();') !== false && strpos($js, "localStorage.getItem('mailapp.listSort')") !== false);
 t_ok('spam from inside Junk is "Not spam"', preg_match('/function actSpam.*?inJunk\\(\\) \\? \'INBOX\' : junk\\.name/s', $js) === 1);
 t_ok('folder actions carry the account they belong to', preg_match("/apiPost\\('rename_folder', withAcct\\(/", $js) === 1 && preg_match("/apiPost\\('delete_folder', withAcct\\(/", $js) === 1);
+
+t_group('rules: richer conditions, wired');
+$h = (string)@file_get_contents(T_ROOT . '/settings.php');
+foreach (['ruleMode', 'ruleCc', 'ruleLarger', 'ruleSmaller', 'ruleOlder', 'ruleNewer', 'ruleQuery'] as $id) {
+    t_ok("the filter modal has #$id, read and filled", strpos($h, 'id="' . $id . '"') !== false && substr_count($h, "\$('" . $id . "')") >= 2);
+}
+t_ok('the list says "or" for any-mode rules', strpos($h, "r.match.mode === 'any'") !== false);
+$a = (string)@file_get_contents(T_ROOT . '/ajax/rules.php');
+t_ok('a query the parser rejects is refused on add and update', substr_count($a, 'rule_query_errors(') >= 2);
+$l = (string)@file_get_contents(T_ROOT . '/lib/rules.php');
+t_ok('the rule query is translated by the search translator, not a second parser', strpos($l, 'search_to_imap(search_parse(') !== false);

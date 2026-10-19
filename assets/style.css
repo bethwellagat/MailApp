@@ -7216,3 +7216,11 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 .mail-page .list-sort[hidden] { display: none; }
 .mail-page .list-select-folder { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--c-brand-active); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
 .mail-page .list-select-folder[hidden] { display: none; }
+
+/* ---- Settings: filter modal, richer conditions ---- */
+.settings-page .rule-mode-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.settings-page .rule-mode-select { width: auto; padding: 4px 8px; font-size: 13px; }
+.settings-page .rule-field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.settings-page .rule-field-hint { font-size: 12px; color: var(--ip-label-2); font-weight: 400; }
+.settings-page .rule-when b { font-weight: 700; color: var(--ip-label); }
+@media (max-width: 480px) { .settings-page .rule-field-pair { grid-template-columns: 1fr; } }

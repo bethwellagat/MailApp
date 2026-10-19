@@ -883,7 +883,13 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             </button>
         </header>
         <div class="cal-modal-body">
-            <div class="rule-section-label">When mail arrives matching</div>
+            <div class="rule-section-label rule-mode-row">
+                <span>When mail arrives matching</span>
+                <select id="ruleMode" class="cal-field-input rule-mode-select" aria-label="How conditions combine">
+                    <option value="all">all of these</option>
+                    <option value="any">any of these</option>
+                </select>
+            </div>
             <label class="cal-field">
                 <span class="cal-field-label">From</span>
                 <input type="text" id="ruleFrom" class="cal-field-input" placeholder="someone@example.com or partial match">
@@ -891,6 +897,10 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             <label class="cal-field">
                 <span class="cal-field-label">To</span>
                 <input type="text" id="ruleTo" class="cal-field-input" placeholder="me@... or alias">
+            </label>
+            <label class="cal-field">
+                <span class="cal-field-label">Cc</span>
+                <input type="text" id="ruleCc" class="cal-field-input" placeholder="copied to…">
             </label>
             <label class="cal-field">
                 <span class="cal-field-label">Subject</span>
@@ -906,7 +916,32 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             </label>
             <label class="cal-field cal-field-check">
                 <input type="checkbox" id="ruleHasAttachment">
-                <span>Has attachment</span>
+                <span>Has attachment <span class="rule-field-hint">(always required when ticked)</span></span>
+            </label>
+            <div class="rule-field-pair">
+                <label class="cal-field">
+                    <span class="cal-field-label">Larger than</span>
+                    <input type="text" id="ruleLarger" class="cal-field-input" placeholder="e.g. 5M or 500K" autocomplete="off">
+                </label>
+                <label class="cal-field">
+                    <span class="cal-field-label">Smaller than</span>
+                    <input type="text" id="ruleSmaller" class="cal-field-input" placeholder="e.g. 50K" autocomplete="off">
+                </label>
+            </div>
+            <div class="rule-field-pair">
+                <label class="cal-field">
+                    <span class="cal-field-label">Older than (days)</span>
+                    <input type="number" id="ruleOlder" class="cal-field-input" min="0" max="3650" placeholder="e.g. 30">
+                </label>
+                <label class="cal-field">
+                    <span class="cal-field-label">Newer than (days)</span>
+                    <input type="number" id="ruleNewer" class="cal-field-input" min="0" max="3650" placeholder="e.g. 7">
+                </label>
+            </div>
+            <label class="cal-field">
+                <span class="cal-field-label">Search query</span>
+                <input type="text" id="ruleQuery" class="cal-field-input" placeholder="from:boss is:unread -subject:newsletter larger:1M" autocomplete="off" spellcheck="false">
+                <span class="rule-field-hint">The same operators as the search box; anything you can search for can be filtered.</span>
             </label>
             <div class="rule-preview" id="rulePreview"></div>
 
@@ -1957,17 +1992,32 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         return name.split(/[.\\/]/).map((p, i, a) => i === a.length - 1 ? p.charAt(0).toUpperCase() + p.slice(1) : p).join(' / ');
     }
 
+    // Bytes back to what was typed: 5242880 → 5M, 51200 → 50K (mirrors rule_size_text).
+    function sizeText(b) {
+        b = parseInt(b, 10) || 0;
+        if (b <= 0) return '';
+        if (b % 1048576 === 0) return (b / 1048576) + 'M';
+        if (b % 1024 === 0) return (b / 1024) + 'K';
+        return String(b);
+    }
     function readModalForm() {
         return {
             id: editingRuleId,
             enabled: true,
             match: {
+                mode:           $('ruleMode').value,
                 from:           $('ruleFrom').value.trim(),
                 to:             $('ruleTo').value.trim(),
+                cc:             $('ruleCc').value.trim(),
                 subject:        $('ruleSubject').value.trim(),
                 has_words:      $('ruleHasWords').value.trim(),
                 not_words:      $('ruleNotWords').value.trim(),
                 has_attachment: $('ruleHasAttachment').checked,
+                larger:         $('ruleLarger').value.trim(),
+                smaller:        $('ruleSmaller').value.trim(),
+                older_than:     parseInt($('ruleOlder').value, 10) || 0,
+                newer_than:     parseInt($('ruleNewer').value, 10) || 0,
+                query:          $('ruleQuery').value.trim(),
             },
             actions: {
                 skip_inbox: $('ruleSkipInbox').checked,
@@ -1979,12 +2029,19 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         };
     }
     function fillModalForm(rule) {
+        $('ruleMode').value         = rule?.match?.mode === 'any' ? 'any' : 'all';
         $('ruleFrom').value         = rule?.match?.from         || '';
         $('ruleTo').value           = rule?.match?.to           || '';
+        $('ruleCc').value           = rule?.match?.cc           || '';
         $('ruleSubject').value      = rule?.match?.subject      || '';
         $('ruleHasWords').value     = rule?.match?.has_words    || '';
         $('ruleNotWords').value     = rule?.match?.not_words    || '';
         $('ruleHasAttachment').checked = !!rule?.match?.has_attachment;
+        $('ruleLarger').value       = sizeText(rule?.match?.larger);
+        $('ruleSmaller').value      = sizeText(rule?.match?.smaller);
+        $('ruleOlder').value        = rule?.match?.older_than ? String(rule.match.older_than) : '';
+        $('ruleNewer').value        = rule?.match?.newer_than ? String(rule.match.newer_than) : '';
+        $('ruleQuery').value        = rule?.match?.query        || '';
         $('ruleSkipInbox').checked  = !!rule?.actions?.skip_inbox;
         $('ruleMarkRead').checked   = !!rule?.actions?.mark_read;
         $('ruleStar').checked       = !!rule?.actions?.star;
@@ -2016,14 +2073,21 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         if (r.match.subject)        c.push('Subject: <em>' + escapeHtml(r.match.subject) + '</em>');
         if (r.match.has_words)      c.push('Has: <em>' + escapeHtml(r.match.has_words) + '</em>');
         if (r.match.not_words)      c.push('Not: <em>' + escapeHtml(r.match.not_words) + '</em>');
+        if (r.match.cc)             c.push('Cc: <em>' + escapeHtml(r.match.cc) + '</em>');
+        if (r.match.larger)         c.push('Larger than <em>' + escapeHtml(sizeText(r.match.larger)) + '</em>');
+        if (r.match.smaller)        c.push('Smaller than <em>' + escapeHtml(sizeText(r.match.smaller)) + '</em>');
+        if (r.match.older_than)     c.push('Older than <em>' + r.match.older_than + ' day' + (r.match.older_than === 1 ? '' : 's') + '</em>');
+        if (r.match.newer_than)     c.push('Newer than <em>' + r.match.newer_than + ' day' + (r.match.newer_than === 1 ? '' : 's') + '</em>');
+        if (r.match.query)          c.push('Query: <em>' + escapeHtml(r.match.query) + '</em>');
         if (r.match.has_attachment) c.push('Has attachment');
+        const joiner = (r.match.mode === 'any' && c.length > 1) ? ' <b>or</b> ' : ' · ';
         const a = [];
         if (r.actions.skip_inbox) a.push('Skip Inbox');
         if (r.actions.mark_read)  a.push('Mark read');
         if (r.actions.star)       a.push('Star');
         if (r.actions.move_to)    a.push('Move to <em>' + escapeHtml(r.actions.move_to) + '</em>');
         if (r.actions.delete)     a.push('Delete');
-        return { when: c.join(' · '), then: a.join(' · ') };
+        return { when: c.join(joiner), then: a.join(' · ') };
     }
     function rowFromRule(r) {
         const wrap = document.createElement('div');
