@@ -1075,7 +1075,9 @@
     }
     function sortLabel(by, dir) {
         const asc = dir === 'asc';
-        return { date: asc ? 'oldest first' : 'newest first', from: 'by sender' + (asc ? ' A–Z' : ' Z–A'),
+        // IMAP SORT FROM orders by the sender's address, not the display name
+        // (RFC 5256), so that is what the label says.
+        return { date: asc ? 'oldest first' : 'newest first', from: 'by sender address' + (asc ? ' A–Z' : ' Z–A'),
                  subject: 'by subject' + (asc ? ' A–Z' : ' Z–A'), size: asc ? 'smallest first' : 'largest first' }[by] || '';
     }
     function loadListSort() {
@@ -1509,7 +1511,11 @@
             return;
         }
 
-        const showPinnedSection = state.listFilter === 'all' || state.listFilter === 'flagged';
+        // Date headings and the pinned section describe a list in date order.
+        // Sorted by sender, subject or size, the server's order is the point —
+        // "Last Week" between two senders would only say the list was jumbled.
+        const byDate = state.searchActive || isUnifiedView() || !state.listSort || state.listSort.by === 'date';
+        const showPinnedSection = byDate && (state.listFilter === 'all' || state.listFilter === 'flagged');
         const pinned = showPinnedSection ? filtered.filter(m => m.flagged) : [];
         const others = showPinnedSection ? filtered.filter(m => !m.flagged) : filtered;
 
@@ -1520,8 +1526,8 @@
         }
         let lastGroup = null;
         for (const m of others) {
-            const group = dateGroupLabel(m.timestamp);
-            if (group !== lastGroup) {
+            const group = byDate ? dateGroupLabel(m.timestamp) : null;
+            if (group !== null && group !== lastGroup) {
                 html += '<div class="list-group-header">' + escapeHtml(group) + '</div>';
                 lastGroup = group;
             }

@@ -377,8 +377,8 @@ $prefs        = load_prefs($email);
                 <select class="list-sort" id="listSortSelect" aria-label="Sort messages" title="Sort">
                     <option value="date:desc">Newest first</option>
                     <option value="date:asc">Oldest first</option>
-                    <option value="from:asc">Sender A–Z</option>
-                    <option value="from:desc">Sender Z–A</option>
+                    <option value="from:asc">Sender address A–Z</option>
+                    <option value="from:desc">Sender address Z–A</option>
                     <option value="subject:asc">Subject A–Z</option>
                     <option value="subject:desc">Subject Z–A</option>
                     <option value="size:desc">Largest first</option>

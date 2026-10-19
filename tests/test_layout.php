@@ -670,3 +670,8 @@ t_ok('a filter can add a label', strpos($h, 'id="ruleLabel"') !== false && subst
 $a = (string)@file_get_contents(T_ROOT . '/ajax/labels.php');
 t_ok('the endpoint needs a session and CSRF on writes', strpos($a, "empty(\$_SESSION['email'])") !== false && strpos($a, 'csrf_require()') !== false);
 t_ok('flags come from one KEYWORD search per label, not one per message', strpos((string)@file_get_contents(T_ROOT . '/lib/labels.php'), "'KEYWORD ' . label_keyword(\$l)") !== false);
+
+t_group('lists: a sorted list is shown in the server\'s order');
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('date headings and the pinned section only in date order', preg_match('/const byDate = .*?state\.listSort\.by === \'date\'.*?const group = byDate \? dateGroupLabel/s', $js) === 1);
+t_ok('the sender sort is named for what IMAP sorts by: the address', strpos((string)@file_get_contents(T_ROOT . '/inbox.php'), 'Sender address A–Z') !== false && strpos($js, "'by sender address'") !== false);
