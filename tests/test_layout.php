@@ -610,5 +610,5 @@ t_ok('the probe follows a pretty-URL redirect',  preg_match('/function cron_prob
 t_ok('a trigger uses the path the probe found',  preg_match("/function cron_trigger\(.*?\\\$t\['path'\]/s", $l) === 1);
 t_ok('a credential outlives an empty queue',     strpos($l, 'CRED_IDLE_SECONDS') !== false && strpos($h, 'after 30 days with nothing pending') !== false);
 $a = (string)@file_get_contents(T_ROOT . '/ajax/cron.php');
-t_ok('switching on re-probes unless a loopback is confirmed', preg_match("/action === 'enable'.*?if \(!cron_is_loopback_method\(\\$st\['trigger'\]\['method'\]\).*?cron_probe\(\)/s", $a) === 1);
+t_ok('switching on re-probes unless a loopback is confirmed', strpos($a, 'if (!cron_is_loopback_method($st[\'trigger\'][\'method\']) || (cron_now() - (int)$st[\'trigger\'][\'checked\']) > 3600) cron_probe();') !== false && strpos($a, "action === 'enable'") !== false);
 t_ok('an admin can re-check on demand',           preg_match("/action === 'reprobe'.*?isAdmin.*?cron_probe\(\)/s", $a) === 1 && strpos($h, "action: 'reprobe'") !== false);
