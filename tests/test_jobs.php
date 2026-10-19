@@ -183,7 +183,7 @@ t_ok('nothing pending → the credential is kept, and the quiet spell noted', em
 cred_set_idle('run1', time() - 31 * 86400);
 $sum2 = cron_run_all();
 t_ok('31 days with nothing pending → the credential is dropped', in_array('runner@x.com', $sum2['expired'], true) && !cred_enabled('run1'));
-t_ok('the run was recorded', cron_state()['last_run'] === $sum['at']);
+t_ok('the latest run was recorded', cron_state()['last_run'] === $sum2['at']);   // $sum2 ran after $sum, possibly a second later
 t_ok('and the log says so', (bool)array_filter(app_log_tail(50), fn($l) => str_contains($l, 'cron: run complete')));
 t_ok('nothing that looks like the password reached the log', !array_filter(app_log_tail(200), fn($l) => str_contains($l, 'pw-runner')));
 $again = cron_run_all();

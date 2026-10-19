@@ -612,3 +612,17 @@ t_ok('a credential outlives an empty queue',     strpos($l, 'CRED_IDLE_SECONDS')
 $a = (string)@file_get_contents(T_ROOT . '/ajax/cron.php');
 t_ok('switching on re-probes unless a loopback is confirmed', strpos($a, 'if (!cron_is_loopback_method($st[\'trigger\'][\'method\']) || (cron_now() - (int)$st[\'trigger\'][\'checked\']) > 3600) cron_probe();') !== false && strpos($a, "action === 'enable'") !== false);
 t_ok('an admin can re-check on demand',           preg_match("/action === 'reprobe'.*?isAdmin.*?cron_probe\(\)/s", $a) === 1 && strpos($h, "action: 'reprobe'") !== false);
+
+t_group('templates: wired end to end');
+$ib = (string)@file_get_contents(T_ROOT . '/inbox.php');
+t_ok('compose has a Templates button and its menu', strpos($ib, 'id="composeTplBtn"') !== false && strpos($ib, 'id="composeTplMenu"') !== false);
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('the page asks the server to render, never substitutes itself', strpos($js, "action: 'render'") !== false && preg_match('#replace\(/\\\{#', $js) === 0);
+t_ok('an inserted template never duplicates the signature', preg_match("/function saveCurrentAsTemplate.*?querySelectorAll\('\.email-signature'\).*?remove\(\)/s", $js) === 1);
+$h = (string)@file_get_contents(T_ROOT . '/settings.php');
+t_ok('Templates pane and nav', strpos($h, 'data-target="templates"') !== false && strpos($h, '<section id="templates"') !== false);
+t_ok('the signature toolbar handler is scoped to its own pane', strpos($h, "querySelectorAll('#signature .sig-tool')") !== false && strpos($h, "querySelectorAll('.sig-tool')") === false);
+$a = (string)@file_get_contents(T_ROOT . '/ajax/templates.php');
+t_ok('the endpoint needs a session and CSRF on writes', strpos($a, "empty(\$_SESSION['email'])") !== false && strpos($a, 'csrf_require()') !== false);
+$l = (string)@file_get_contents(T_ROOT . '/lib/templates.php');
+t_ok('bodies pass through the signature sanitiser', strpos($l, 'sanitize_signature_html(') !== false);

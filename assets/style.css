@@ -7187,3 +7187,23 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 .settings-page .settings-details > summary::-webkit-details-marker { display: none; }
 .settings-page .settings-details > summary::before { content: '\25B8\00A0'; }
 .settings-page .settings-details[open] > summary::before { content: '\25BE\00A0'; }
+
+/* ---- Compose: templates menu ----
+   Opens below the toolbar button (the send menu opens above its button); the
+   list scrolls inside itself so fifty templates never push the compose. */
+.mail-page .compose-tpl-wrap { position: relative; display: inline-flex; }
+.mail-page .compose-tool-text { font-size: 12px; margin-left: 4px; }
+.mail-page .templates-menu { top: calc(100% + 4px); bottom: auto; left: 0; right: auto; min-width: 260px; max-width: min(360px, 90vw); max-height: 320px; overflow-y: auto; }
+.mail-page .send-menu-empty { padding: 10px 12px; font-size: 13px; color: var(--c-text-muted); }
+@media (max-width: 480px) { .mail-page .compose-tool-text { display: none; } }
+
+/* ---- Settings: templates ---- */
+.settings-page .tpl-list { display: flex; flex-direction: column; }
+.settings-page .tpl-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.settings-page .tpl-row + .tpl-row { border-top: 1px solid var(--ip-sep); }
+.settings-page .tpl-row-main { flex: 1; min-width: 0; }
+.settings-page .tpl-row-name { font-weight: 600; }
+.settings-page .tpl-row-sub { font-size: 13px; color: var(--ip-label-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.settings-page .tpl-editor { min-height: 160px; }
+.settings-page .tpl-toolbar { flex-wrap: wrap; }
+.settings-page .tpl-var { width: auto; padding: 0 8px; font-family: var(--font-mono); font-size: 11px; }

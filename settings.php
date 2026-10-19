@@ -162,6 +162,10 @@ if ('serviceWorker' in navigator) {
             <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-pen"/></svg></span>
             <span>Signature</span>
         </a>
+        <a class="settings-nav-item" href="#templates" data-target="templates">
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-edit-s"/></svg></span>
+            <span>Templates</span>
+        </a>
         <a class="settings-nav-item" href="#workspace" data-target="workspace">
             <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-server"/></svg></span>
             <span>Workspace</span>
@@ -381,6 +385,53 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     <span>Save signature</span>
                 </button>
                 <span class="settings-status" id="signatureStatus"></span>
+            </div>
+        </section>
+
+        <section id="templates" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Templates</h2>
+                <p class="settings-section-desc">Canned replies, inserted from the <strong>Templates</strong> button in the compose window. Write <code>{first_name}</code>, <code>{name}</code>, <code>{email}</code>, <code>{subject}</code>, <code>{date}</code>, <code>{my_name}</code> or <code>{my_email}</code> and they are filled in from the message you are writing; <code>{first_name|there}</code> falls back to "there" when the recipient's name is not known.</p>
+            </header>
+            <div class="settings-card">
+                <div class="rules-list-header">
+                    <span class="settings-inline-hint" id="tplCount">Loading&hellip;</span>
+                    <button type="button" class="cal-modal-btn cal-modal-btn-primary" id="tplNewBtn"><svg class="icon" width="14" height="14"><use href="#ic-plus"/></svg><span>New template</span></button>
+                </div>
+                <div class="tpl-list" id="tplList"></div>
+            </div>
+            <div class="settings-card" id="tplEditor" hidden>
+                <h3 class="settings-card-title" id="tplEditorTitle">New template</h3>
+                <div class="settings-row settings-row-stack">
+                    <label class="settings-row-label" for="tplName">Name</label>
+                    <input type="text" id="tplName" class="settings-inline-input" maxlength="80" placeholder="e.g. Interview invitation" autocomplete="off">
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <label class="settings-row-label" for="tplSubject">Subject <span class="settings-inline-hint">(optional; used when the message has no subject yet)</span></label>
+                    <input type="text" id="tplSubject" class="settings-inline-input" maxlength="200" placeholder="e.g. Interview: {subject}" autocomplete="off">
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <span class="settings-row-label">Body</span>
+                    <div class="signature-toolbar tpl-toolbar">
+                        <button type="button" class="sig-tool" data-cmd="bold" title="Bold"><b>B</b></button>
+                        <button type="button" class="sig-tool" data-cmd="italic" title="Italic"><i>I</i></button>
+                        <button type="button" class="sig-tool" data-cmd="underline" title="Underline"><u>U</u></button>
+                        <button type="button" class="sig-tool" data-cmd="createLink" title="Insert link"><svg class="icon" width="14" height="14"><use href="#ic-link"/></svg></button>
+                        <span class="sig-tool-divider"></span>
+                        <button type="button" class="sig-tool tpl-var" data-var="{first_name|there}" title="The recipient's first name, or “there”">{first_name}</button>
+                        <button type="button" class="sig-tool tpl-var" data-var="{name}" title="The recipient's full name">{name}</button>
+                        <button type="button" class="sig-tool tpl-var" data-var="{subject}" title="The message subject">{subject}</button>
+                        <button type="button" class="sig-tool tpl-var" data-var="{date}" title="Today's date">{date}</button>
+                        <button type="button" class="sig-tool tpl-var" data-var="{my_name}" title="Your name">{my_name}</button>
+                    </div>
+                    <div class="signature-editor tpl-editor" id="tplBody" contenteditable="true" data-placeholder="Hi {first_name|there}, …"></div>
+                </div>
+                <div class="settings-inline-edit">
+                    <button type="button" class="btn" id="tplDeleteBtn" hidden>Delete</button>
+                    <button type="button" class="btn" id="tplCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="tplSaveBtn">Save template</button>
+                    <span class="settings-status" id="tplStatus"></span>
+                </div>
             </div>
         </section>
 
@@ -985,7 +1036,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         }
     }
 
-    document.querySelectorAll('.sig-tool').forEach((b) => {
+    document.querySelectorAll('#signature .sig-tool').forEach((b) => {
         b.addEventListener('mousedown', (e) => {
             e.preventDefault();
             const cmd = b.dataset.cmd;
@@ -2086,6 +2137,99 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         const rule = cachedRules.find(x => x.id === id);
         if (rule) rule.enabled = cb.checked;
     });
+})();
+</script>
+<script nonce="<?= csp_nonce() ?>">
+/* === Templates ===
+   A list and an editor. Everything saved goes through ajax/templates.php,
+   which sanitises the body the way the signature is sanitised. */
+(function () {
+    const $ = id => document.getElementById(id);
+    if (!$('tplList')) return;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const say = (msg, kind) => { const el = $('tplStatus'); el.textContent = msg || ''; el.className = 'settings-status' + (kind ? ' ' + kind : ''); };
+    const call = async (action, body, asJson) => {
+        const r = await fetch('ajax/templates.php?action=' + action, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': asJson ? 'application/json' : 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.__CSRF__ },
+            body: asJson ? JSON.stringify(body) : new URLSearchParams(body).toString(),
+        });
+        if (r.status === 401) { window.location = 'index'; return { error: 'Signed out' }; }
+        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    };
+    let list = [], editing = null;
+
+    function render() {
+        $('tplCount').textContent = list.length ? list.length + ' template' + (list.length === 1 ? '' : 's') : 'No templates yet.';
+        $('tplList').innerHTML = list.map(t => {
+            const tmp = document.createElement('div'); tmp.innerHTML = t.body || '';
+            const snippet = (t.subject || tmp.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 90);
+            return '<div class="tpl-row" data-id="' + esc(t.id) + '">' +
+                '<div class="tpl-row-main"><div class="tpl-row-name">' + esc(t.name) + '</div>' +
+                (snippet ? '<div class="tpl-row-sub">' + esc(snippet) + '</div>' : '') + '</div>' +
+                '<button type="button" class="btn" data-edit="' + esc(t.id) + '">Edit</button></div>';
+        }).join('');
+    }
+    async function load() {
+        const r = await fetch('ajax/templates.php?action=list', { credentials: 'same-origin' }).then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        if (r.error) { $('tplCount').textContent = r.error; return; }
+        list = r.templates || [];
+        render();
+    }
+    function open(t) {
+        editing = t ? t.id : null;
+        $('tplEditorTitle').textContent = t ? 'Edit template' : 'New template';
+        $('tplName').value = t ? t.name : '';
+        $('tplSubject').value = t ? (t.subject || '') : '';
+        $('tplBody').innerHTML = t ? (t.body || '') : '';
+        $('tplDeleteBtn').hidden = !t;
+        $('tplEditor').hidden = false;
+        say('');
+        $('tplName').focus();
+    }
+    function close() { $('tplEditor').hidden = true; editing = null; }
+
+    $('tplNewBtn').addEventListener('click', () => open(null));
+    $('tplCancelBtn').addEventListener('click', close);
+    $('tplList').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-edit]');
+        if (!b) return;
+        const t = list.find(x => x.id === b.dataset.edit);
+        if (t) open(t);
+    });
+    $('tplSaveBtn').addEventListener('click', async () => {
+        say('Saving…');
+        const r = await call('save', { id: editing || '', name: $('tplName').value, subject: $('tplSubject').value, body: $('tplBody').innerHTML }, true);
+        if (r.error) { say(r.error, 'error'); return; }
+        list = r.templates || list;
+        render();
+        close();
+    });
+    $('tplDeleteBtn').addEventListener('click', async () => {
+        if (!editing || !window.confirm('Delete this template?')) return;
+        const r = await call('delete', { id: editing });
+        if (r.error) { say(r.error, 'error'); return; }
+        list = r.templates || [];
+        render();
+        close();
+    });
+    // The body toolbar: formatting, and a click on a variable types it at the caret.
+    const editor = $('tplBody');
+    document.querySelectorAll('#templates .sig-tool').forEach((b) => {
+        b.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            editor.focus();
+            if (b.dataset.var) { document.execCommand('insertText', false, b.dataset.var); return; }
+            const cmd = b.dataset.cmd;
+            if (cmd === 'createLink') {
+                const url = window.prompt('Link to:');
+                if (url) document.execCommand('createLink', false, url);
+            } else {
+                document.execCommand(cmd, false, null);
+            }
+        });
+    });
+    load();
 })();
 </script>
 <script nonce="<?= csp_nonce() ?>">

@@ -607,6 +607,11 @@ $prefs        = load_prefs($email);
         <span class="compose-tool-divider"></span>
         <button class="compose-tool" id="composeAttach" title="Attach file" aria-label="Attach file" type="button"><svg class="icon" width="14" height="14"><use href="#ic-paperclip"/></svg></button>
         <input type="file" id="composeFileInput" multiple hidden>
+        <span class="compose-tool-divider"></span>
+        <span class="compose-tpl-wrap">
+            <button class="compose-tool compose-tool-tpl" id="composeTplBtn" title="Templates" aria-label="Templates" aria-haspopup="menu" aria-expanded="false" type="button"><svg class="icon" width="14" height="14"><use href="#ic-draft"/></svg><span class="compose-tool-text">Templates</span></button>
+            <div class="send-menu templates-menu hidden" id="composeTplMenu" role="menu" aria-label="Templates"></div>
+        </span>
     </div>
     <div class="compose-body" id="composeBody" contenteditable="true" data-placeholder="Write your message…"></div>
     <div class="compose-attachments" id="composeAttachmentsList"></div>

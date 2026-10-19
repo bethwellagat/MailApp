@@ -3381,6 +3381,108 @@
             : 'Filter created. New matching mail will be filtered automatically.');
     }
 
+    /* ---------- Templates (canned replies) ---------- */
+    // The server renders a template with the recipient's details filled in
+    // (lib/templates.php: {first_name}, {subject}, {date}, …); the page only
+    // lists them, inserts the result at the caret, and offers "save as".
+    let tplCache = null;
+    async function loadTemplates(force) {
+        if (tplCache && !force) return tplCache;
+        const r = await fetch('ajax/templates.php?action=list', { credentials: 'same-origin' })
+            .then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        tplCache = r.error ? [] : (r.templates || []);
+        return tplCache;
+    }
+    function renderTplMenu(list) {
+        let h = '';
+        if (!list.length) h += '<div class="send-menu-empty">No templates yet. Write a message, then save it as one.</div>';
+        list.forEach((t) => {
+            h += '<button class="send-menu-item" type="button" role="menuitem" data-tpl-id="' + escapeAttr(t.id) + '"><div>' +
+                 '<div class="send-menu-label">' + escapeHtml(t.name) + '</div>' +
+                 (t.subject ? '<div class="send-menu-sub">' + escapeHtml(t.subject) + '</div>' : '') + '</div></button>';
+        });
+        h += '<div class="send-menu-divider"></div>';
+        h += '<button class="send-menu-item" type="button" role="menuitem" data-tpl-action="save"><div><div class="send-menu-label">Save as template…</div><div class="send-menu-sub">Keep this subject and body for next time</div></div></button>';
+        h += '<button class="send-menu-item" type="button" role="menuitem" data-tpl-action="manage"><div><div class="send-menu-label">Manage templates</div><div class="send-menu-sub">Names, subjects and {variables}</div></div></button>';
+        $('composeTplMenu').innerHTML = h;
+    }
+    function composeSay(text, kind) {
+        $('composeStatus').textContent = text;
+        $('composeStatus').className = 'compose-status' + (kind ? ' ' + kind : '');
+    }
+    async function insertTemplate(id) {
+        const form = new URLSearchParams({ action: 'render', id, to: $('composeTo').value, subject: $('composeSubject').value });
+        const r = await fetch('ajax/templates.php', {
+            method: 'POST', credentials: 'same-origin',
+            headers: csrfHeaders({ 'Content-Type': 'application/x-www-form-urlencoded' }),
+            body: form.toString(),
+        }).then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        if (r.error) { composeSay(r.error, 'error'); return; }
+        if (r.subject && !$('composeSubject').value.trim()) $('composeSubject').value = r.subject;
+        const editor = $('composeBody');
+        editor.focus();
+        const sel = window.getSelection();
+        const inEditor = sel && sel.rangeCount > 0 && editor.contains(sel.getRangeAt(0).commonAncestorContainer);
+        if (!inEditor) {
+            // Nothing selected in the body: insert at the top, above any
+            // signature or quoted text the compose opened with.
+            const range = document.createRange();
+            range.setStart(editor, 0);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+        }
+        document.execCommand('insertHTML', false, r.body + '<p><br></p>');
+        composeSay('Inserted "' + r.name + '".', '');
+    }
+    async function saveCurrentAsTemplate() {
+        const name = window.prompt('Template name:', $('composeSubject').value.trim().slice(0, 60));
+        if (name == null || !name.trim()) return;
+        // The signature is appended on its own when a template is inserted;
+        // keeping it inside the template would double it.
+        const tmp = document.createElement('div');
+        tmp.innerHTML = $('composeBody').innerHTML;
+        tmp.querySelectorAll('.email-signature').forEach(n => n.remove());
+        const r = await fetch('ajax/templates.php?action=save', {
+            method: 'POST', credentials: 'same-origin',
+            headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ name: name.trim(), subject: $('composeSubject').value, body: tmp.innerHTML }),
+        }).then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        if (r.error) { composeSay(r.error, 'error'); return; }
+        tplCache = r.templates || null;
+        composeSay('Saved as template "' + name.trim() + '".', '');
+    }
+    function closeTplMenu() {
+        $('composeTplMenu').classList.add('hidden');
+        $('composeTplBtn').setAttribute('aria-expanded', 'false');
+    }
+    // The toolbar wraps on a phone, so the button can sit anywhere in a row:
+    // open the menu under it, then slide it left just enough to stay inside
+    // the compose window.
+    function placeTplMenu() {
+        const menu  = $('composeTplMenu');
+        const wrap  = $('composeTplBtn').parentElement.getBoundingClientRect();
+        const modal = $('composeModal').getBoundingClientRect();
+        menu.style.left = '0px';
+        const w = menu.getBoundingClientRect().width;
+        let left = 0;
+        const overflow = (wrap.left + w) - (modal.right - 8);
+        if (overflow > 0) left = -overflow;
+        const minLeft = (modal.left + 8) - wrap.left;
+        if (left < minLeft) left = minLeft;
+        menu.style.left = Math.round(left) + 'px';
+    }
+    async function toggleTplMenu() {
+        const menu = $('composeTplMenu');
+        if (!menu.classList.contains('hidden')) { closeTplMenu(); return; }
+        renderTplMenu(await loadTemplates(false));
+        menu.classList.remove('hidden');
+        placeTplMenu();
+        $('composeTplBtn').setAttribute('aria-expanded', 'true');
+        const first = menu.querySelector('.send-menu-item');
+        if (first) first.focus();
+    }
+
     /* ---------- Block sender ---------- */
     // Creates a server-side rule (reusing the filter engine) that diverts the
     // sender's mail to Junk/Spam — or deletes it when no junk folder exists —
@@ -4217,6 +4319,21 @@
             const el = $(id); if (el) el.addEventListener('input', scheduleDraftSave);
         });
 
+        if ($('composeTplBtn')) {
+            $('composeTplBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleTplMenu(); });
+            $('composeTplMenu').addEventListener('click', (e) => {
+                const item = e.target.closest('.send-menu-item');
+                if (!item) return;
+                closeTplMenu();
+                if (item.dataset.tplId) insertTemplate(item.dataset.tplId);
+                else if (item.dataset.tplAction === 'save') saveCurrentAsTemplate();
+                else if (item.dataset.tplAction === 'manage') window.location.href = 'settings#templates';
+            });
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#composeTplMenu') && !e.target.closest('#composeTplBtn')) closeTplMenu();
+            });
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTplMenu(); });
+        }
         if ($('sendChevBtn')) {
             $('sendChevBtn').addEventListener('click', (e) => {
                 e.stopPropagation();
