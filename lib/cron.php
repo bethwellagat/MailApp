@@ -27,6 +27,7 @@ require_once __DIR__ . '/credstore.php';
 const CRON_BUDGET_SECONDS = 50;      // leave headroom under a 60 s execution limit
 const CRON_STALE_SECONDS  = 900;     // a 5-minute cron that has not run in 15 min is "not running"
 const CRON_RUNS_KEPT      = 20;
+const CRON_SCHEDULE  = '*/5 * * * *';   // every five minutes
 
 function cron_file() { return app_data_root() . '/cron.json'; }
 
@@ -72,15 +73,23 @@ function cron_url($baseUrl, $token) {
     return rtrim((string)$baseUrl, '/') . '/cron.php?token=' . rawurlencode((string)$token);
 }
 
-/** The line to paste into cPanel → Cron Jobs: every five minutes, quietly. */
-function cron_cpanel_line($cronPath, $phpBin = 'php') {
-    return '*/5 * * * * ' . $phpBin . ' -q ' . escapeshellarg((string)$cronPath) . ' >/dev/null 2>&1';
+/**
+ * The command alone — what a hosting panel's Cron Jobs form (cPanel,
+ * DirectAdmin, Plesk) takes in its command field, the schedule being its own
+ * fields there. The *_line() forms below prepend the schedule for a plain
+ * crontab.
+ */
+function cron_php_cmd($cronPath, $phpBin = 'php') {
+    return $phpBin . ' -q ' . escapeshellarg((string)$cronPath) . ' >/dev/null 2>&1';
 }
 
-/** The same schedule as a curl line, for hosts whose cron cannot run PHP directly. */
-function cron_curl_line($url) {
-    return '*/5 * * * * curl -fsS ' . escapeshellarg((string)$url) . ' >/dev/null 2>&1';
+/** The same job through the web server's PHP, for hosts whose CLI php lacks the IMAP extension. */
+function cron_curl_cmd($url) {
+    return 'curl -fsS ' . escapeshellarg((string)$url) . ' >/dev/null 2>&1';
 }
+
+function cron_cpanel_line($cronPath, $phpBin = 'php') { return CRON_SCHEDULE . ' ' . cron_php_cmd($cronPath, $phpBin); }
+function cron_curl_line($url)                          { return CRON_SCHEDULE . ' ' . cron_curl_cmd($url); }
 
 /** True when the scheduler has not reported in for longer than CRON_STALE_SECONDS. */
 function cron_is_stale($lastRunIso, $now = null, $maxAge = CRON_STALE_SECONDS) {

@@ -584,7 +584,7 @@ if (is_string($h)) {
     t_ok('Background tasks pane and nav',  strpos($h, 'data-target="tasks"') !== false && strpos($h, '<section id="tasks"') !== false);
     t_ok('Diagnostics pane and nav',       strpos($h, 'data-target="diagnostics"') !== false && strpos($h, '<section id="diagnostics"') !== false);
     t_ok('a switch per account is rendered from the server\'s answer', strpos($h, "d.accounts.map(") !== false);
-    t_ok('the cron lines come from the server, never guessed in JS', strpos($h, "d.cpanel") !== false && strpos($h, "d.curl") !== false);
+    t_ok('the cron commands come from the server, never guessed in JS', strpos($h, "d.php_cmd") !== false && strpos($h, "d.curl_cmd") !== false && strpos($h, "d.schedule") !== false);
     t_ok('writes carry the CSRF token',   preg_match("/ajax\\/cron\\.php.*?'X-CSRF-Token': window\\.__CSRF__/s", $h) === 1);
     t_ok('a failed switch is reverted, not pretended', strpos($h, 'cb.checked = !cb.checked') !== false);
 }

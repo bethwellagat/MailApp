@@ -120,6 +120,10 @@ t_ok('a non-string never passes', !cron_token_ok(null, 'abc') && !cron_token_ok(
 
 t_group('what Settings prints');
 t_eq('the URL',    cron_url('https://outlook.example.co.ke/', 'tok en'), 'https://outlook.example.co.ke/cron.php?token=tok%20en');
+t_eq('the command alone, for a panel\'s Cron Jobs form', cron_php_cmd('/home/u/public_html/cron.php'), "php -q '/home/u/public_html/cron.php' >/dev/null 2>&1");
+t_eq('the curl command alone', cron_curl_cmd('https://h/cron.php?token=t'), "curl -fsS 'https://h/cron.php?token=t' >/dev/null 2>&1");
+t_ok('a path with a quote cannot break out of the command', str_contains(cron_php_cmd("/home/o'neil/cron.php"), "'/home/o'\\''neil/cron.php'"));
+t_eq('the crontab line is the schedule in front of the command', cron_cpanel_line('/x/cron.php'), CRON_SCHEDULE . ' ' . cron_php_cmd('/x/cron.php'));
 t_eq('the cPanel line', cron_cpanel_line('/home/u/public_html/cron.php'), "*/5 * * * * php -q '/home/u/public_html/cron.php' >/dev/null 2>&1");
 t_eq('a specific php binary', cron_cpanel_line('/x/cron.php', '/usr/local/bin/php'), "*/5 * * * * /usr/local/bin/php -q '/x/cron.php' >/dev/null 2>&1");
 t_eq('the curl line', cron_curl_line('https://h/cron.php?token=t'), "*/5 * * * * curl -fsS 'https://h/cron.php?token=t' >/dev/null 2>&1");

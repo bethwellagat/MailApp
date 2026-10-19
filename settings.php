@@ -731,26 +731,26 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 <div class="settings-inline-edit"><span class="settings-status" id="tasksAcctStatus"></span></div>
             </div>
 
-            <h3 class="settings-card-title">Scheduler</h3>
             <div class="settings-card">
+                <h3 class="settings-card-title">Scheduler</h3>
                 <div class="settings-row">
                     <div class="settings-row-label">Status</div>
                     <div class="settings-row-value" id="tasksCronStatus">Checking&hellip;</div>
                 </div>
                 <div id="tasksSetup" hidden>
                     <div class="settings-row-stack">
-                        <p class="settings-inline-hint">Add <strong>one</strong> of these to your host's cron (cPanel &rarr; Cron Jobs). Both run every five minutes.</p>
+                        <p class="settings-inline-hint">In your hosting panel's <strong>Cron Jobs</strong> (cPanel, DirectAdmin, Plesk) set the schedule to <strong>every five minutes</strong> and paste <strong>one</strong> of these as the command. On a plain crontab, put <code id="tasksSchedule">*/5 * * * *</code> in front of it.</p>
                         <pre class="settings-cron-line" id="tasksCpanel"></pre>
                         <pre class="settings-cron-line" id="tasksCurl"></pre>
                     </div>
                     <div class="settings-inline-edit">
-                        <button type="button" class="btn" id="tasksCopyCpanel">Copy PHP line</button>
-                        <button type="button" class="btn" id="tasksCopyCurl">Copy curl line</button>
+                        <button type="button" class="btn" id="tasksCopyCpanel">Copy PHP command</button>
+                        <button type="button" class="btn" id="tasksCopyCurl">Copy curl command</button>
                         <button type="button" class="btn" id="tasksRegen">New token</button>
                         <span class="settings-status" id="tasksStatus"></span>
                     </div>
                     <div class="settings-row-stack">
-                        <p class="settings-inline-hint">The curl line carries a token that lets anyone who has it trigger a run (and nothing else). If it leaks, make a new one and update the cron.</p>
+                        <p class="settings-inline-hint">If the PHP command answers that the IMAP extension is missing (some hosts' command-line PHP lacks it), use the curl command instead: it runs through the web server's PHP, the one this app already uses. The curl command carries a token that lets anyone who has it trigger a run (and nothing else); if it leaks, make a new one and update the cron.</p>
                     </div>
                 </div>
                 <div class="settings-row-stack" id="tasksNoAdmin" hidden>
@@ -771,15 +771,13 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 <div class="settings-row"><div class="settings-row-label">Scheduler</div><div class="settings-row-value" id="diagCron">&hellip;</div></div>
                 <div class="settings-row"><div class="settings-row-label">Log file</div><div class="settings-row-value" id="diagLogStatus">&hellip;</div></div>
             </div>
-            <div id="diagLogCard">
-            <h3 class="settings-card-title">Recent log</h3>
-            <div class="settings-card">
+            <div class="settings-card" id="diagLogCard">
+                <h3 class="settings-card-title">Recent log</h3>
                 <div class="settings-inline-edit">
                     <button type="button" class="btn" id="diagRefresh">Refresh</button>
                     <span class="settings-status" id="diagStatus"></span>
                 </div>
                 <pre class="settings-log" id="diagLog">Loading&hellip;</pre>
-            </div>
             </div>
             <div class="settings-alert settings-alert-info" id="diagNoAdmin" hidden>
                 <p>Only <strong id="diagAdminEmail"></strong> can read the log for this installation.</p>
@@ -2141,8 +2139,9 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         $('tasksSetup').hidden = !d.is_admin;
         $('tasksNoAdmin').hidden = !!d.is_admin;
         if (d.is_admin) {
-            $('tasksCpanel').textContent = d.cpanel || '';
-            $('tasksCurl').textContent   = d.curl || '';
+            $('tasksSchedule').textContent = d.schedule || '*/5 * * * *';
+            $('tasksCpanel').textContent   = d.php_cmd || '';
+            $('tasksCurl').textContent     = d.curl_cmd || '';
         } else {
             $('tasksAdminEmail').textContent = d.admin_email || '';
         }
