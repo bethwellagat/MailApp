@@ -115,7 +115,9 @@ if ($action === 'enable' || $action === 'disable') {
         // response to go (inline, sync) are left to the tick at shutdown.
         cron_learn_base_url();
         $st = cron_state();
-        if ($st['trigger']['method'] === '' || (cron_now() - (int)$st['trigger']['checked']) > 3600) cron_probe();
+        // Switching on is the moment somebody is watching: unless a loopback is
+        // already confirmed, look for one again now rather than in a day.
+        if (!cron_is_loopback_method($st['trigger']['method']) || (cron_now() - (int)$st['trigger']['checked']) > 3600) cron_probe();
         $st = cron_state();
         $kicked = false;
         if (cron_is_loopback_method($st['trigger']['method']) && !cron_chain_alive($st, cron_now()) && !cron_run_in_progress()) {
@@ -137,6 +139,15 @@ if ($action === 'regenerate_token') {
     if (!$isAdmin) cron_err('Only ' . app_admin_email() . ' can change the scheduler for this installation.', 403);
     if (cron_regenerate_token() === '') cron_err('Could not write the new token — is the data folder writable?', 500);
     app_log('info', 'scheduler token regenerated', ['by' => $me]);
+    cron_ok(cron_status_payload($isAdmin));
+}
+
+if ($action === 'reprobe') {
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') cron_err('POST required', 405);
+    if (!$isAdmin) cron_err('Only ' . app_admin_email() . ' can re-check the scheduler for this installation.', 403);
+    cron_learn_base_url();
+    $r = cron_probe();
+    app_log('info', 'scheduler: wake method re-checked', ['by' => $me, 'method' => $r['method']]);
     cron_ok(cron_status_payload($isAdmin));
 }
 

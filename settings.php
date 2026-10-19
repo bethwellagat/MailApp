@@ -784,6 +784,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             <div class="settings-card" id="diagLogCard">
                 <h3 class="settings-card-title">Recent log</h3>
                 <div class="settings-inline-edit">
+                    <button type="button" class="btn" id="diagReprobe">Re-check self-wake</button>
                     <button type="button" class="btn" id="diagRefresh">Refresh</button>
                     <span class="settings-status" id="diagStatus"></span>
                 </div>
@@ -2228,6 +2229,14 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         say($('tasksStatus'), 'New token. Update the cron line on your host.', 'ok');
     });
     $('diagRefresh').addEventListener('click', loadLog);
+    $('diagReprobe').addEventListener('click', async () => {
+        say($('diagStatus'), 'Looking for a way to reach cron.php…');
+        const d = await post({ action: 'reprobe' });
+        if (d.error) { say($('diagStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('diagStatus'), 'Checked.', 'ok');
+        loadLog();
+    });
 
     load();
 })();
