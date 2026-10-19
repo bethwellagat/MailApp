@@ -7145,3 +7145,36 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
   /* On a phone the sort control wraps under the chips; let it take the row. */
   .mail-page .search-sort-wrap { margin-left: 0; }
 }
+
+/* ---- Settings: Background tasks + Diagnostics ----
+   Two blocks of monospace: a cron line to copy, and the log to read. Both
+   scroll inside themselves so a long line never widens the page. */
+.settings-page .settings-cron-line {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--ip-fill);
+  color: var(--ip-label);
+  padding: 10px 12px;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 6px 0;
+  user-select: all;
+}
+.settings-page .settings-log {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--ip-fill);
+  color: var(--ip-label-2);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin: 8px 0 0;
+}
+.settings-page .settings-log .err { color: var(--ip-red-ink); }
+.settings-page .settings-row-value.mono { font-family: var(--font-mono); font-size: 13px; }

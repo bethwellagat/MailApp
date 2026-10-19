@@ -18,6 +18,7 @@ if (!function_exists('imap_open')) {
 }
 
 require_once __DIR__ . '/../lib/snooze.php';
+require_once __DIR__ . '/../lib/jobs.php';
 require_once __DIR__ . '/../lib/csrf.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 @ini_set('memory_limit', '128M'); // cap this background endpoint; it never handles large attachments
@@ -53,57 +54,7 @@ function input_json_snz() {
     return is_array($d) ? $d : [];
 }
 
-/** Fetch Message-ID for each src uid. Returns map src_uid => message-id. */
-function fetch_message_ids($mbox, $uids) {
-    $out = [];
-    foreach ($uids as $uid) {
-        $headers = @imap_fetchheader($mbox, (int)$uid, FT_UID);
-        if (!$headers) continue;
-        if (preg_match('/^Message-ID:\s*(.+)$/im', $headers, $m)) {
-            $id = trim($m[1]);
-            // Strip surrounding < >
-            if (preg_match('/<([^>]+)>/', $id, $m2)) $id = $m2[1];
-            $out[(int)$uid] = $id;
-        }
-    }
-    return $out;
-}
 
-/**
- * Find UIDs in a mailbox whose Message-ID equals $messageId.
- * NOTE: imap_search('HEADER Message-ID ...') is silently broken via c-client on
- * some Dovecot builds — it returns no hits even for IDs that exist (see the same
- * note in ajax/fetch.php's thread lookup). Snooze wake relied on it, so snoozed
- * mail could fail to resurface / come back already-read. Scan the folder overview
- * and match message_id client-side instead — reliable across servers.
- */
-function find_uids_by_message_id($mbox, $messageId) {
-    if (!$messageId) return [];
-    // Returns [] when the message is definitively NOT in this mailbox, and NULL
-    // when we could not read the mailbox to find out. The caller must not treat
-    // those the same: the wake sweep resolves (and deletes) a snooze record when
-    // the message is gone, so a transient read failure used to discard the record
-    // while the mail was still sitting in Later — it then never came back on its
-    // own, even though the folder still held it.
-    $check = @imap_check($mbox);
-    if (!$check) return null;
-    $total = (int)$check->Nmsgs;
-    if ($total === 0) return [];
-    $MAX_SCAN = 5000;
-    $start = max(1, $total - $MAX_SCAN + 1);
-    $rows  = @imap_fetch_overview($mbox, $start . ':' . $total, 0);
-    if (!is_array($rows)) return null;
-    $want = strtolower(trim($messageId, '<> '));
-    $hits = [];
-    foreach ($rows as $om) {
-        if (empty($om->message_id)) continue;
-        if (strtolower(trim($om->message_id, '<> ')) === $want) {
-            $u = (int)@imap_uid($mbox, $om->msgno);
-            if ($u > 0) $hits[] = $u;
-        }
-    }
-    return $hits;
-}
 
 /* ============================================================
    Routes
@@ -241,89 +192,11 @@ if ($action === 'cancel' && $method === 'POST') {
 }
 
 if ($action === 'wake' && $method === 'POST') {
-    // Cross-tab throttle: the wake sweep + its IMAP work runs at most once every
-    // ~2 min total, not once per tab per poll (the in-app cron). See poll_gate().
-    if (!poll_gate($email, 'snooze', 120)) ok_snz(['ok' => true, 'count' => 0, 'throttled' => true]);
-    // Process due snoozes and move them back to their original folder.
-    // A due entry is dropped from the list only when it is resolved: either
-    // moved back successfully, or no longer present in the Later folder. Entries
-    // whose move fails (or whose Later folder can't be opened) are RETAINED so
-    // the next poll retries them, rather than stranding the message in Later.
-    $count = 0;
-    // Take a consistent snapshot under the lock, then release it for the slow
-    // IMAP work — we must not hold the lock across multiple network round-trips
-    // or an interactive add/cancel would block. We reconcile against a fresh
-    // read at the end, so concurrent changes are preserved.
-    $lock = snooze_lock($email);
-    $data = load_snoozes($email);
-    snooze_unlock($lock);
-    $now  = gmdate('c');
-    $byMove = []; // due now — attempt to move back
-    foreach ($data['snoozes'] as $s) {
-        if (empty($s['wake_at']) || $s['wake_at'] > $now) continue; // not yet due
-        $byMove[] = $s;
-    }
-    if (empty($byMove)) { ok_snz(['ok' => true, 'count' => 0]); }
-
-    // Group by later_folder so we open it once
-    $byLater = [];
-    foreach ($byMove as $s) {
-        $key = $s['later_folder'];
-        if (!isset($byLater[$key])) $byLater[$key] = [];
-        $byLater[$key][] = $s;
-    }
-    $resolved = []; // record-id => true for due entries that are done (moved back,
-                    // or already gone from Later). Entries whose move fails / whose
-                    // Later folder won't open are simply left out → retried next poll.
-    $movedBy  = []; // dest_folder => [message-id, ...] successfully moved
-    foreach ($byLater as $laterFolder => $items) {
-        $mbox = open_box_snz($laterFolder);
-        if (!$mbox) continue; // couldn't open Later — leave these for the next poll
-        $wokenUids = []; // everything this sweep moved out of Later, for the expunge
-        foreach ($items as $s) {
-            $foundUids = find_uids_by_message_id($mbox, $s['message_id']);
-            if ($foundUids === null) continue;                               // couldn't read → retry next poll
-            if (!$foundUids) { $resolved[$s['id'] ?? ''] = true; continue; } // definitely gone → resolved
-            $set = implode(',', $foundUids);
-            $moved = @imap_mail_move($mbox, $set, $s['original_folder'], CP_UID);
-            if ($moved) {
-                $count++;
-                $resolved[$s['id'] ?? ''] = true;
-                $movedBy[$s['original_folder']][] = $s['message_id'];
-                foreach ($foundUids as $fu) $wokenUids[] = $fu;
-            }
-            // move failed → not resolved; retained by the reconcile below
-        }
-        expunge_only($mbox, $wokenUids);
-        @imap_close($mbox);
-    }
-
-    // Mark successfully-moved messages unread in their destination folders
-    foreach ($movedBy as $dest => $ids) {
-        $mbox = open_box_snz($dest);
-        if (!$mbox) continue;
-        foreach ($ids as $mid) {
-            $uids = find_uids_by_message_id($mbox, $mid);
-            if ($uids) @imap_clearflag_full($mbox, implode(',', $uids), '\\Seen', ST_UID);
-        }
-        @imap_close($mbox);
-    }
-
-    // Reconcile under the lock against the LATEST list: drop only the entries we
-    // resolved, keeping everything else — including records another request may
-    // have added/removed while we were doing IMAP. This is what prevents the
-    // lost-update that a whole-list overwrite from our stale snapshot would cause.
-    if ($resolved) {
-        $lock = snooze_lock($email);
-        $data = load_snoozes($email);
-        $data['snoozes'] = array_values(array_filter(
-            $data['snoozes'],
-            fn($s) => empty($s['id']) || !isset($resolved[$s['id']])
-        ));
-        save_snoozes($email, $data);
-        snooze_unlock($lock);
-    }
-    ok_snz(['ok' => true, 'count' => $count]);
+    // The sweep itself lives in lib/jobs.php so the scheduler can run it with
+    // no browser open; this endpoint is the signed-in way to trigger it.
+    $r = job_snooze_wake($email);
+    if (!empty($r['error'])) fail_snz($r['error']);
+    ok_snz($r);
 }
 
 fail_snz('Unknown action: ' . $action, 400);

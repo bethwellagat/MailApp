@@ -13,6 +13,7 @@ if (empty($_SESSION['email']) || empty($_SESSION['smtp_host'])) {
 
 require_once __DIR__ . '/../lib/outbox.php';
 require_once __DIR__ . '/../lib/mailer.php';
+require_once __DIR__ . '/../lib/jobs.php';
 require_once __DIR__ . '/../lib/csrf.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 session_write_close(); // release the session lock early — avoids request serialization (see fetch.php)
@@ -59,87 +60,11 @@ if ($action === 'retry' && $method === 'POST') {
 }
 
 if ($action === 'process' && $method === 'POST') {
-    // Guard against concurrent sweeps double-sending the same queued message
-    // (e.g. the 60s poll firing while an Undo-commit also triggers a process,
-    // or two open tabs). A non-blocking exclusive lock means a second sweep
-    // simply reports sent=0 rather than racing on the same files.
-    $lock = @fopen(_outbox_dir($email) . '/.process.lock', 'c');
-    if (!$lock || !@flock($lock, LOCK_EX | LOCK_NB)) {
-        if ($lock) @fclose($lock);
-        ok_ob(['ok' => true, 'sent' => 0, 'errors' => []]);
-    }
-
-    $now    = gmdate('c');
-    $nowTs  = time();
-    $MAX_ATTEMPTS = 8;
-    $messages = list_outbox_messages($email);
-    $sent = 0;
-    $errors = [];
-    $purged = 0;
-    // Retention: a message that gave up retrying stays on disk for ever, and a
-    // queued record holds the FULL MIME body — message text plus any attachment
-    // bytes — in the clear under data/. Long after the user has seen it fail and
-    // moved on, that is just sensitive content sitting at rest. Keep failures long
-    // enough to notice and act on (30 days), then drop them.
-    $PURGE_FAILED_AFTER = 30 * 86400;
-    foreach ($messages as $meta) {
-        if (!empty($meta['failed'])) {
-            $stamp = strtotime((string)($meta['queued_at'] ?? $meta['send_at'] ?? ''));
-            if ($stamp !== false && ($nowTs - $stamp) > $PURGE_FAILED_AFTER) {
-                if (delete_outbox_message($email, $meta['id'])) $purged++;
-                continue;
-            }
-        }
-        if (empty($meta['send_at']) || $meta['send_at'] > $now) continue;
-        // Bounded retry: stop hammering a permanently-rejected message, and
-        // honour exponential backoff between attempts. Without this a 5xx /
-        // bad-credentials message retries every minute forever, silently.
-        if (!empty($meta['failed'])) continue;
-        if (!empty($meta['next_attempt_at']) && strtotime($meta['next_attempt_at']) > $nowTs) continue;
-        $rec = load_outbox_message($email, $meta['id']);
-        if (!$rec || empty($rec['rcpts']) || empty($rec['message'])) {
-            delete_outbox_message($email, $meta['id']);
-            continue;
-        }
-        // Already handed to the mail server on an earlier run that died before it
-        // finished tidying up. Finish the bookkeeping — never transmit again.
-        if (!empty($rec['sent_at'])) {
-            append_to_sent(outbox_sent_copy($rec));
-            delete_outbox_message($email, $rec['id']);
-            continue;
-        }
-        $r = smtp_send($_SESSION['smtp_host'], $email, $rec['rcpts'], $rec['message'], $email, $_SESSION['password']);
-        if ($r['ok']) {
-            // Mark delivered BEFORE filing the Sent copy. Filing is an IMAP append
-            // that can take seconds on a large message, and the record was only
-            // removed afterwards — so a script killed in between (execution-time
-            // limit, dropped connection) left a record the next sweep would send
-            // AGAIN, delivering the message twice. Recording delivery first shrinks
-            // that window to one small local write.
-            $rec['sent_at'] = gmdate('c');
-            save_outbox_message($email, $rec);
-            append_to_sent(outbox_sent_copy($rec));
-            delete_outbox_message($email, $rec['id']);
-            $sent++;
-        } else {
-            // Record the attempt, schedule a backoff, and give up after the cap
-            // (the file stays so the user can see it failed and cancel/retry).
-            $rec['attempts']   = (int)($rec['attempts'] ?? 0) + 1;
-            $rec['last_error'] = $r['error'];
-            if ($rec['attempts'] >= $MAX_ATTEMPTS) {
-                $rec['failed'] = true;
-            } else {
-                $delayMin = min(60, 1 << $rec['attempts']); // 2,4,8,… capped at 60 min
-                $rec['next_attempt_at'] = gmdate('c', $nowTs + $delayMin * 60);
-            }
-            save_outbox_message($email, $rec);
-            $errors[] = ['id' => $rec['id'], 'error' => $r['error'], 'attempts' => $rec['attempts'], 'failed' => !empty($rec['failed'])];
-        }
-    }
-
-    @flock($lock, LOCK_UN);
-    @fclose($lock);
-    ok_ob(['ok' => true, 'sent' => $sent, 'purged' => $purged, 'errors' => $errors]);
+    // The sweep itself lives in lib/jobs.php so the scheduler can run it with
+    // no browser open; this endpoint is the signed-in way to trigger it.
+    $r = job_outbox_process($email);
+    if (!empty($r['error'])) fail_ob($r['error']);
+    ok_ob($r);
 }
 
 if ($action === 'send_now' && $method === 'POST') {

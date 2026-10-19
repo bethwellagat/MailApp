@@ -334,21 +334,37 @@ if (!function_exists('tls_relaxed_hosts')) {
     function imap_open_tls($host, $port, $ssl, $mailbox, $user, $pass, $opts = 0, $retries = 1) {
         $ref  = '{' . $host . ':' . (int)$port . imap_tls_flags($host, $ssl) . '}';
         $mbox = @imap_open($ref . $mailbox, $user, $pass, $opts, $retries);
-        if ($mbox !== false || !$ssl || !tls_verify_enabled($host)) return $mbox;
+        if ($mbox !== false || !$ssl || !tls_verify_enabled($host)) {
+            if ($mbox === false) _imap_log_open_failure($host, $port, $user);
+            return $mbox;
+        }
 
         $certish = false;
         foreach ((@imap_errors() ?: []) as $e) {
             if (preg_match('#certificate|self[ -]?signed|verify|SSL#i', (string)$e)) { $certish = true; break; }
         }
-        if (!$certish) return false;
+        if (!$certish) { _imap_log_open_failure($host, $port, $user); return false; }
 
         $relaxed = '{' . $host . ':' . (int)$port . '/imap/ssl/novalidate-cert}';
         $mbox = @imap_open($relaxed . $mailbox, $user, $pass, $opts, $retries);
         if ($mbox !== false) {
             tls_remember_relaxed($host);
             @imap_errors(); // drain the first attempt's noise
+        } else {
+            _imap_log_open_failure($host, $port, $user);
         }
         return $mbox;
+    }
+
+    /**
+     * Record a failed IMAP open — host, port, user and the server's last words.
+     * Never the password: it is not passed in, and app_log() scrubs anything
+     * that looks like one out of the server's message regardless.
+     */
+    function _imap_log_open_failure($host, $port, $user) {
+        require_once __DIR__ . '/log.php';
+        $last = (string)@imap_last_error();
+        app_log('warn', 'imap: open failed', ['host' => (string)$host, 'port' => (int)$port, 'user' => (string)$user, 'server' => $last]);
     }
 }
 
@@ -583,6 +599,26 @@ if (!function_exists('gen_uuid')) {
     }
 }
 
+if (!function_exists('app_is_admin')) {
+    /**
+     * Who may administer this installation — the scheduler, the log, the
+     * workspace identity. Mirrors ajax/brand.php: if data/update.json names an
+     * admin_email, only that address; otherwise any signed-in user, so a
+     * single-user install needs no setup. One admin concept, not two.
+     */
+    function app_admin_email() {
+        $f = __DIR__ . '/../data/update.json';
+        if (!is_file($f)) return '';
+        $raw = @file_get_contents($f);
+        $cfg = $raw === false ? null : @json_decode($raw, true);
+        return is_array($cfg) ? strtolower(trim((string)($cfg['admin_email'] ?? ''))) : '';
+    }
+    function app_is_admin($email) {
+        $admin = app_admin_email();
+        return $admin === '' || strtolower(trim((string)$email)) === $admin;
+    }
+}
+
 if (!function_exists('json_fatal_guard')) {
     /**
      * Make a PHP fatal come back as JSON.
@@ -613,6 +649,11 @@ if (!function_exists('json_fatal_guard')) {
                 return;
             }
 
+            // Write it down first: until now the person running the install only
+            // ever learned of a fatal if a user chose to report what they saw.
+            require_once __DIR__ . '/log.php';
+            app_log('fatal', $e['message'], ['where' => basename((string)$e['file']) . ':' . (int)$e['line'],
+                                             'request' => (string)($_SERVER['REQUEST_URI'] ?? PHP_SAPI)]);
             http_response_code(500);
             header('Content-Type: application/json; charset=utf-8');
             header('Cache-Control: no-store');

@@ -148,3 +148,77 @@ function rule_structure_has_attachment($struct) {
     }
     return false;
 }
+
+/* ---------- matching and acting — shared by the endpoint and the scheduler ---------- */
+
+require_once __DIR__ . '/util.php';   // resolve_folder(), expunge_only()
+require_once __DIR__ . '/imap.php';   // imap_session_ref()
+
+/**
+ * Find UIDs in $folder that match $rule's criteria. Optional $minUid restricts
+ * to UID > $minUid. has_attachment is post-filtered against bodystructure.
+ * Returns array of UIDs (ints).
+ */
+function rule_find_matches($mbox, $rule, $minUid = 0, $cap = 1000) {
+    $criteria = rule_to_imap_search($rule['match']);
+    $found = @imap_search($mbox, $criteria, SE_UID);
+    if (!is_array($found)) return [];
+    $found = array_map('intval', $found);
+    if ($minUid > 0) $found = array_values(array_filter($found, fn($u) => $u > $minUid));
+
+    if ($rule['match']['has_attachment']) {
+        $filtered = [];
+        $i = 0;
+        foreach ($found as $uid) {
+            if (count($filtered) >= $cap) break;
+            $struct = @imap_fetchstructure($mbox, $uid, FT_UID);
+            if ($struct && rule_structure_has_attachment($struct)) {
+                $filtered[] = $uid;
+            }
+            if (++$i > 5000) break; // safety
+        }
+        $found = $filtered;
+    }
+
+    if (count($found) > $cap) $found = array_slice($found, -$cap);
+    return $found;
+}
+
+function apply_rule_actions($mbox, $folder, $uids, $actions) {
+    if (empty($uids)) return ['matched' => 0];
+    $set = implode(',', $uids);
+
+    if (!empty($actions['mark_read'])) {
+        @imap_setflag_full($mbox, $set, '\\Seen', ST_UID);
+    }
+    if (!empty($actions['star'])) {
+        @imap_setflag_full($mbox, $set, '\\Flagged', ST_UID);
+    }
+    if (!empty($actions['delete'])) {
+        $trash = resolve_folder($mbox, imap_session_ref(), ['trash', 'deleted', 'bin']);
+        if (!$trash) {
+            // No Trash folder: nothing was moved. Saying deleted=true here reported
+            // a rule as having deleted mail that is still sitting in the inbox.
+            return ['matched' => count($uids), 'deleted' => false, 'error' => 'No Trash folder found'];
+        }
+        @imap_mail_move($mbox, $set, $trash, CP_UID);
+        expunge_only($mbox, $uids);
+        return ['matched' => count($uids), 'deleted' => true];
+    }
+    if (!empty($actions['move_to']) && !preg_match('/[{}\x00-\x1F\x7F]/', $actions['move_to'])) {
+        @imap_mail_move($mbox, $set, $actions['move_to'], CP_UID);
+        expunge_only($mbox, $uids);
+        return ['matched' => count($uids), 'moved_to' => $actions['move_to']];
+    }
+    if (!empty($actions['skip_inbox'])) {
+        // "Archive" — ranked like every other special folder, so a decoy such as
+        // "Projects/archive-old" cannot win over the real Archive.
+        $archive = resolve_folder($mbox, imap_session_ref(), ['archive']);
+        if ($archive) {
+            @imap_mail_move($mbox, $set, $archive, CP_UID);
+            expunge_only($mbox, $uids);
+            return ['matched' => count($uids), 'archived' => true];
+        }
+    }
+    return ['matched' => count($uids)];
+}

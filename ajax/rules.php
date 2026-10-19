@@ -18,6 +18,7 @@ if (!function_exists('imap_open')) {
 }
 
 require_once __DIR__ . '/../lib/rules.php';
+require_once __DIR__ . '/../lib/jobs.php';
 require_once __DIR__ . '/../lib/csrf.php';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 @ini_set('memory_limit', '128M'); // cap this background endpoint; it never handles large attachments
@@ -40,74 +41,7 @@ $method = $_SERVER['REQUEST_METHOD'];
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 $email  = $_SESSION['email'];
 
-/**
- * Find UIDs in $folder that match $rule's criteria. Optional $minUid restricts
- * to UID > $minUid. has_attachment is post-filtered against bodystructure.
- * Returns array of UIDs (ints).
- */
-function rule_find_matches($mbox, $rule, $minUid = 0, $cap = 1000) {
-    $criteria = rule_to_imap_search($rule['match']);
-    $found = @imap_search($mbox, $criteria, SE_UID);
-    if (!is_array($found)) return [];
-    $found = array_map('intval', $found);
-    if ($minUid > 0) $found = array_values(array_filter($found, fn($u) => $u > $minUid));
 
-    if ($rule['match']['has_attachment']) {
-        $filtered = [];
-        $i = 0;
-        foreach ($found as $uid) {
-            if (count($filtered) >= $cap) break;
-            $struct = @imap_fetchstructure($mbox, $uid, FT_UID);
-            if ($struct && rule_structure_has_attachment($struct)) {
-                $filtered[] = $uid;
-            }
-            if (++$i > 5000) break; // safety
-        }
-        $found = $filtered;
-    }
-
-    if (count($found) > $cap) $found = array_slice($found, -$cap);
-    return $found;
-}
-
-function apply_rule_actions($mbox, $folder, $uids, $actions) {
-    if (empty($uids)) return ['matched' => 0];
-    $set = implode(',', $uids);
-
-    if (!empty($actions['mark_read'])) {
-        @imap_setflag_full($mbox, $set, '\\Seen', ST_UID);
-    }
-    if (!empty($actions['star'])) {
-        @imap_setflag_full($mbox, $set, '\\Flagged', ST_UID);
-    }
-    if (!empty($actions['delete'])) {
-        $trash = resolve_folder($mbox, imap_ref_r(), ['trash', 'deleted', 'bin']);
-        if (!$trash) {
-            // No Trash folder: nothing was moved. Saying deleted=true here reported
-            // a rule as having deleted mail that is still sitting in the inbox.
-            return ['matched' => count($uids), 'deleted' => false, 'error' => 'No Trash folder found'];
-        }
-        @imap_mail_move($mbox, $set, $trash, CP_UID);
-        expunge_only($mbox, $uids);
-        return ['matched' => count($uids), 'deleted' => true];
-    }
-    if (!empty($actions['move_to']) && !preg_match('/[{}\x00-\x1F\x7F]/', $actions['move_to'])) {
-        @imap_mail_move($mbox, $set, $actions['move_to'], CP_UID);
-        expunge_only($mbox, $uids);
-        return ['matched' => count($uids), 'moved_to' => $actions['move_to']];
-    }
-    if (!empty($actions['skip_inbox'])) {
-        // "Archive" — ranked like every other special folder, so a decoy such as
-        // "Projects/archive-old" cannot win over the real Archive.
-        $archive = resolve_folder($mbox, imap_ref_r(), ['archive']);
-        if ($archive) {
-            @imap_mail_move($mbox, $set, $archive, CP_UID);
-            expunge_only($mbox, $uids);
-            return ['matched' => count($uids), 'archived' => true];
-        }
-    }
-    return ['matched' => count($uids)];
-}
 
 /* ============================================================ */
 
@@ -238,74 +172,11 @@ if ($action === 'preview' && $method === 'POST') {
 }
 
 if ($action === 'run_new' && $method === 'POST') {
-    // Apply enabled rules to messages with UID > last_processed_uid in INBOX.
-    $data = load_rules($email);
-    if (empty($data['rules'])) ok_r(['ok' => true, 'count' => 0]);
-    // Cross-tab throttle: open INBOX and sweep at most once every ~2 min total,
-    // not once per tab per poll (the in-app cron). See poll_gate().
-    if (!poll_gate($email, 'rules', 120)) ok_r(['ok' => true, 'count' => 0, 'throttled' => true]);
-
-    // Serialize concurrent sweeps (two polls / two tabs): without this, both can
-    // read the same last_processed_uid and apply every rule to the same new
-    // messages twice. A non-blocking lock lets the loser bow out cleanly.
-    $lock = @fopen(_rules_file($email) . '.lock', 'c');
-    if (!$lock || !@flock($lock, LOCK_EX | LOCK_NB)) {
-        if ($lock) @fclose($lock);
-        ok_r(['ok' => true, 'count' => 0, 'busy' => true]);
-    }
-    // Re-read under the lock so we act on the freshest persisted watermark.
-    $data = load_rules($email);
-
-    $mbox = open_box_r('INBOX');
-    if (!$mbox) { @flock($lock, LOCK_UN); @fclose($lock); fail_r('Could not open Inbox'); }
-
-    $check     = @imap_check($mbox);
-    $highUid   = 0;
-    if ($check && $check->Nmsgs > 0) {
-        $highUid = (int)@imap_uid($mbox, $check->Nmsgs);
-    }
-
-    $minUid = (int)$data['last_processed_uid'];
-    if ($minUid <= 0 && $highUid > 0) {
-        // First-ever run on this account: don't sweep the whole inbox; just
-        // mark current high-water and bail. Rules will start firing from the
-        // next message that arrives.
-        $fresh = load_rules($email); // reconcile — never persist our pre-IMAP rules snapshot
-        $fresh['last_processed_uid'] = $highUid;
-        save_rules($email, $fresh);
-        @imap_close($mbox);
-        ok_r(['ok' => true, 'count' => 0, 'first_run' => true]);
-    }
-
-    $totalApplied = 0;
-    foreach ($data['rules'] as $rule) {
-        if (empty($rule['enabled'])) continue;
-        $uids = rule_find_matches($mbox, $rule, $minUid, 500);
-        if (!$uids) continue;
-        $res = apply_rule_actions($mbox, 'INBOX', $uids, $rule['actions']);
-        $totalApplied += $res['matched'] ?? 0;
-
-        // If the rule moved/deleted messages, the inbox UID set has changed.
-        // Re-checking imap_check after each rule keeps highUid correct.
-        $check = @imap_check($mbox);
-        if ($check && $check->Nmsgs > 0) {
-            $highUid = max($highUid, (int)@imap_uid($mbox, $check->Nmsgs));
-        }
-    }
-
-    // Reconcile instead of overwriting: re-read and write back ONLY the field this
-    // sweep owns (the watermark). $data was loaded before the slow IMAP work above,
-    // so persisting the whole blob would revert any rule the user added, edited, or
-    // deleted in Settings while the sweep ran. Same discipline as the snooze-wake
-    // reconcile in ajax/snooze.php.
-    $fresh = load_rules($email);
-    // Monotonic. An empty INBOX at sweep time leaves $highUid at 0, and assigning
-    // that would reset the watermark — the next sweep would then take the
-    // first-run branch and silently skip filtering a whole batch of new mail.
-    $fresh['last_processed_uid'] = max((int)$fresh['last_processed_uid'], (int)$highUid);
-    save_rules($email, $fresh);
-    @imap_close($mbox);
-    ok_r(['ok' => true, 'count' => $totalApplied]);
+    // The sweep itself lives in lib/jobs.php so the scheduler can run it with
+    // no browser open; this endpoint is the signed-in way to trigger it.
+    $r = job_rules_run_new($email);
+    if (!empty($r['error'])) fail_r($r['error']);
+    ok_r($r);
 }
 
 if ($action === 'run_one' && $method === 'POST') {

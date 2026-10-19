@@ -174,6 +174,10 @@ if ('serviceWorker' in navigator) {
             <span class="snav-icon snav-icon-orange"><svg class="icon"><use href="#ic-plane-s"/></svg></span>
             <span>Out of office</span>
         </a>
+        <a class="settings-nav-item" href="#tasks" data-target="tasks">
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-play-s"/></svg></span>
+            <span>Background tasks</span>
+        </a>
         <a class="settings-nav-item" href="#filters" data-target="filters">
             <span class="snav-icon snav-icon-teal"><svg class="icon"><use href="#ic-funnel-s"/></svg></span>
             <span>Filters</span>
@@ -193,6 +197,10 @@ if ('serviceWorker' in navigator) {
         <a class="settings-nav-item" href="#update" data-target="update">
             <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-refresh-s"/></svg></span>
             <span>Software update</span>
+        </a>
+        <a class="settings-nav-item" href="#diagnostics" data-target="diagnostics">
+            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span>Diagnostics</span>
         </a>
     </nav>
 
@@ -703,6 +711,79 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 </div>
             </div>
             <p class="settings-hint">To change these, sign out and re-sign in with Advanced settings.</p>
+        </section>
+
+        <section id="tasks" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Background tasks</h2>
+                <p class="settings-section-desc">Scheduled sends, out-of-office replies, snoozes and filters run from this app while it is open. To run them when nobody is signed in, the server has to be able to open the mailbox on its own &mdash; which means keeping that account's password here, sealed. Turn it on per account below. Turning it off deletes the stored password at once; it is also deleted automatically when nothing is pending.</p>
+            </header>
+
+            <div class="settings-alert settings-alert-danger" id="tasksBackendNote" hidden>
+                <p>This server's PHP has neither libsodium nor OpenSSL, so passwords cannot be sealed here. Background tasks will keep running only while the app is open.</p>
+            </div>
+
+            <div class="settings-card">
+                <div class="settings-toggles" id="tasksAccounts"><p class="settings-inline-hint">Loading&hellip;</p></div>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint">The honest limit: on shared hosting the sealing key lives beside the data, so a full compromise of the hosting account would expose the password &mdash; no more than the session files PHP already writes while you are signed in.</p>
+                </div>
+                <div class="settings-inline-edit"><span class="settings-status" id="tasksAcctStatus"></span></div>
+            </div>
+
+            <h3 class="settings-card-title">Scheduler</h3>
+            <div class="settings-card">
+                <div class="settings-row">
+                    <div class="settings-row-label">Status</div>
+                    <div class="settings-row-value" id="tasksCronStatus">Checking&hellip;</div>
+                </div>
+                <div id="tasksSetup" hidden>
+                    <div class="settings-row-stack">
+                        <p class="settings-inline-hint">Add <strong>one</strong> of these to your host's cron (cPanel &rarr; Cron Jobs). Both run every five minutes.</p>
+                        <pre class="settings-cron-line" id="tasksCpanel"></pre>
+                        <pre class="settings-cron-line" id="tasksCurl"></pre>
+                    </div>
+                    <div class="settings-inline-edit">
+                        <button type="button" class="btn" id="tasksCopyCpanel">Copy PHP line</button>
+                        <button type="button" class="btn" id="tasksCopyCurl">Copy curl line</button>
+                        <button type="button" class="btn" id="tasksRegen">New token</button>
+                        <span class="settings-status" id="tasksStatus"></span>
+                    </div>
+                    <div class="settings-row-stack">
+                        <p class="settings-inline-hint">The curl line carries a token that lets anyone who has it trigger a run (and nothing else). If it leaks, make a new one and update the cron.</p>
+                    </div>
+                </div>
+                <div class="settings-row-stack" id="tasksNoAdmin" hidden>
+                    <p class="settings-inline-hint">Only <strong id="tasksAdminEmail"></strong> can set the scheduler up for this installation. Your account can still be opted in above; it runs once the scheduler is running.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="diagnostics" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Diagnostics</h2>
+                <p class="settings-section-desc">What the server knows about itself, and the last things it wrote down. The log lives in <code>data/logs/app.log</code>, rotates at 1&nbsp;MB, and never contains a password.</p>
+            </header>
+            <div class="settings-card">
+                <div class="settings-row"><div class="settings-row-label">PHP</div><div class="settings-row-value mono" id="diagPhp">&hellip;</div></div>
+                <div class="settings-row"><div class="settings-row-label">IMAP extension</div><div class="settings-row-value" id="diagImap">&hellip;</div></div>
+                <div class="settings-row"><div class="settings-row-label">Credential sealing</div><div class="settings-row-value" id="diagSeal">&hellip;</div></div>
+                <div class="settings-row"><div class="settings-row-label">Scheduler</div><div class="settings-row-value" id="diagCron">&hellip;</div></div>
+                <div class="settings-row"><div class="settings-row-label">Log file</div><div class="settings-row-value" id="diagLogStatus">&hellip;</div></div>
+            </div>
+            <div id="diagLogCard">
+            <h3 class="settings-card-title">Recent log</h3>
+            <div class="settings-card">
+                <div class="settings-inline-edit">
+                    <button type="button" class="btn" id="diagRefresh">Refresh</button>
+                    <span class="settings-status" id="diagStatus"></span>
+                </div>
+                <pre class="settings-log" id="diagLog">Loading&hellip;</pre>
+            </div>
+            </div>
+            <div class="settings-alert settings-alert-info" id="diagNoAdmin" hidden>
+                <p>Only <strong id="diagAdminEmail"></strong> can read the log for this installation.</p>
+            </div>
         </section>
 
         <section id="update" class="settings-section">
@@ -1996,6 +2077,136 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         const rule = cachedRules.find(x => x.id === id);
         if (rule) rule.enabled = cb.checked;
     });
+})();
+</script>
+<script nonce="<?= csp_nonce() ?>">
+/* === Background tasks + Diagnostics ===
+   One status call feeds both panes. Every switch here is a round trip to
+   ajax/cron.php, never local state: what the page shows is what the server
+   holds, so a failed save can never look like a success. */
+(function () {
+    const $ = id => document.getElementById(id);
+    if (!$('tasksAccounts')) return;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const post = async (body) => {
+        const r = await fetch('ajax/cron.php', { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.__CSRF__ },
+            body: new URLSearchParams(body).toString() });
+        if (r.status === 401) { window.location = 'index'; return { error: 'Signed out' }; }
+        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    };
+    const get = async (q) => {
+        const r = await fetch('ajax/cron.php?' + q, { credentials: 'same-origin' });
+        if (r.status === 401) { window.location = 'index'; return { error: 'Signed out' }; }
+        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    };
+    const say = (el, msg, kind) => { if (!el) return; el.textContent = msg || ''; el.className = 'settings-status' + (kind ? ' ' + kind : ''); };
+    const ago = (iso) => {
+        const t = iso ? Date.parse(iso) : NaN;
+        if (isNaN(t)) return 'never';
+        const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+        if (s < 60) return s + ' s ago';
+        if (s < 3600) return Math.round(s / 60) + ' min ago';
+        if (s < 86400) return Math.round(s / 3600) + ' h ago';
+        return Math.round(s / 86400) + ' d ago';
+    };
+
+    function paint(d) {
+        // accounts
+        const wrap = $('tasksAccounts');
+        if (!d.accounts || !d.accounts.length) {
+            wrap.innerHTML = '<p class="settings-inline-hint">No accounts are signed in.</p>';
+        } else {
+            wrap.innerHTML = d.accounts.map(a =>
+                '<label class="settings-toggle">' +
+                    '<input type="checkbox" class="tasks-acct" data-acct="' + esc(a.id) + '"' + (a.enabled ? ' checked' : '') + (d.backend ? '' : ' disabled') + '>' +
+                    '<span class="toggle-track"><span class="toggle-thumb"></span></span>' +
+                    '<span class="toggle-label">Run tasks for ' + esc(a.email) + ' while signed out</span>' +
+                '</label>').join('');
+        }
+        $('tasksBackendNote').hidden = !!d.backend;
+
+        // scheduler status — the same words in both panes
+        // A silent scheduler is only a fault once somebody is relying on it.
+        const anyOn = (d.accounts || []).some(a => a.enabled);
+        let status, kind = '';
+        if (d.last_run && !d.stale) { status = 'Running — last run ' + ago(d.last_run) + '.'; kind = 'ok'; }
+        else if (!d.last_run)       { status = anyOn ? 'Not running — the scheduler has never reported in.' : 'Not set up — nothing has run yet.'; kind = anyOn ? 'error' : ''; }
+        else                        { status = (anyOn ? 'Not running' : 'Stopped') + ' — last run ' + ago(d.last_run) + '; expected every 5 minutes.'; kind = anyOn ? 'error' : ''; }
+        $('tasksCronStatus').textContent = status;
+        $('tasksCronStatus').className = 'settings-row-value' + (kind ? ' settings-status ' + kind : '');
+        $('diagCron').textContent = status;
+
+        // setup lines — admins only
+        $('tasksSetup').hidden = !d.is_admin;
+        $('tasksNoAdmin').hidden = !!d.is_admin;
+        if (d.is_admin) {
+            $('tasksCpanel').textContent = d.cpanel || '';
+            $('tasksCurl').textContent   = d.curl || '';
+        } else {
+            $('tasksAdminEmail').textContent = d.admin_email || '';
+        }
+
+        // diagnostics facts
+        $('diagPhp').textContent  = d.php || '';
+        $('diagImap').textContent = d.imap ? 'available' : 'MISSING — nothing in this app can read mail';
+        $('diagSeal').textContent = d.backend ? (d.backend === 'sodium' ? 'libsodium' : 'OpenSSL AES-256-GCM') : 'unavailable';
+        const lg = d.log || {};
+        const kb = lg.bytes > 0 && lg.bytes < 1024 ? '<1 KB' : Math.round((lg.bytes || 0) / 1024) + ' KB';
+        $('diagLogStatus').textContent = (lg.file || 'data/logs/app.log') + ' · ' + kb +
+            (lg.generations && lg.generations.length ? ' · ' + lg.generations.length + ' rotated' : '') +
+            (lg.writable === false ? ' · NOT WRITABLE' : '');
+        $('diagNoAdmin').hidden = !!d.is_admin;
+        $('diagLogCard').hidden = !d.is_admin;
+        if (!d.is_admin) { $('diagAdminEmail').textContent = d.admin_email || ''; $('diagLog').textContent = ''; }
+    }
+
+    async function load() {
+        const d = await get('action=status');
+        if (d.error) { say($('tasksStatus'), d.error, 'error'); $('tasksCronStatus').textContent = d.error; return; }
+        paint(d);
+        if (d.is_admin) loadLog();
+    }
+
+    async function loadLog() {
+        say($('diagStatus'), 'Loading…');
+        const d = await get('action=log&n=200');
+        if (d.error) { say($('diagStatus'), d.error, 'error'); return; }
+        const lines = d.lines || [];
+        $('diagLog').innerHTML = lines.length
+            ? lines.map(l => { const bad = / (ERROR|FATAL) /.test(l); return '<span class="' + (bad ? 'err' : '') + '">' + esc(l) + '</span>'; }).join('\n')
+            : 'Nothing logged yet.';
+        $('diagLog').scrollTop = $('diagLog').scrollHeight;
+        say($('diagStatus'), lines.length + ' line' + (lines.length === 1 ? '' : 's'));
+    }
+
+    $('tasksAccounts').addEventListener('change', async (e) => {
+        const cb = e.target.closest('.tasks-acct');
+        if (!cb) return;
+        cb.disabled = true;
+        say($('tasksAcctStatus'), 'Saving…');
+        const d = await post({ action: cb.checked ? 'enable' : 'disable', acct: cb.dataset.acct });
+        if (d.error) { cb.checked = !cb.checked; cb.disabled = false; say($('tasksAcctStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('tasksAcctStatus'), cb.checked ? 'On. The password is sealed on the server.' : 'Off. The stored password was deleted.', 'ok');
+    });
+
+    const copy = async (text, el) => {
+        try { await navigator.clipboard.writeText(text); say(el, 'Copied.', 'ok'); }
+        catch (e) { say(el, 'Select the line and copy it.', 'error'); }
+    };
+    $('tasksCopyCpanel').addEventListener('click', () => copy($('tasksCpanel').textContent, $('tasksStatus')));
+    $('tasksCopyCurl').addEventListener('click',   () => copy($('tasksCurl').textContent,   $('tasksStatus')));
+    $('tasksRegen').addEventListener('click', async () => {
+        say($('tasksStatus'), 'Making a new token…');
+        const d = await post({ action: 'regenerate_token' });
+        if (d.error) { say($('tasksStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('tasksStatus'), 'New token. Update the cron line on your host.', 'ok');
+    });
+    $('diagRefresh').addEventListener('click', loadLog);
+
+    load();
 })();
 </script>
 <script nonce="<?= csp_nonce() ?>">

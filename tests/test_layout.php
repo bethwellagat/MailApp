@@ -531,3 +531,60 @@ if (is_string($h) && is_string($js)) {
     t_ok('starred passes its page',               strpos($js, "apiGet('starred', withAcct({ page: page") !== false);
     t_ok('Enter searches at once',                strpos($js, "if (e.key === 'Enter') { e.preventDefault(); runSearchNow(); }") !== false);
 }
+
+t_group('unattended jobs: one body, two callers');
+/**
+ * Each job's sweep used to live inline in its endpoint. It now lives in
+ * lib/jobs.php, and both the endpoint and the scheduler call it — so the
+ * sweep a user triggers from a tab and the sweep the cron runs at 3 am are
+ * the same code. An inline copy creeping back into an endpoint is the drift
+ * this guards against.
+ */
+$jobs = @file_get_contents(T_ROOT . '/lib/jobs.php');
+t_ok('lib/jobs.php defines the four jobs', is_string($jobs)
+     && substr_count($jobs, 'function job_') === 4
+     && strpos($jobs, 'function job_outbox_process') !== false && strpos($jobs, 'function job_ooo_process') !== false);
+foreach (['ajax/outbox.php' => ['process', 'job_outbox_process'], 'ajax/rules.php' => ['run_new', 'job_rules_run_new'],
+          'ajax/snooze.php' => ['wake', 'job_snooze_wake'], 'ajax/out_of_office.php' => ['process', 'job_ooo_process']] as $file => [$action, $fn]) {
+    $src = @file_get_contents(T_ROOT . '/' . $file);
+    t_ok("$file $action calls $fn", is_string($src) && preg_match("/action === '$action'.*?$fn\\(\\\$email\\)/s", $src) === 1);
+}
+$src = @file_get_contents(T_ROOT . '/ajax/out_of_office.php');
+t_ok('the out-of-office endpoint no longer sends mail itself', is_string($src) && strpos($src, 'smtp_send(') === false);
+$src = @file_get_contents(T_ROOT . '/ajax/rules.php');
+t_ok('rule matching lives in the library, not the endpoint',
+     is_string($src) && strpos($src, 'function rule_find_matches') === false
+     && strpos((string)@file_get_contents(T_ROOT . '/lib/rules.php'), 'function rule_find_matches') !== false);
+$src = @file_get_contents(T_ROOT . '/ajax/snooze.php');
+t_ok('message lookup lives in the library, not the endpoint',
+     is_string($src) && strpos($src, 'function find_uids_by_message_id') === false
+     && strpos((string)@file_get_contents(T_ROOT . '/lib/snooze.php'), 'function find_uids_by_message_id') !== false);
+
+t_group('cron.php is a door with a lock');
+$c = @file_get_contents(T_ROOT . '/cron.php');
+t_ok('it checks the token in constant time', is_string($c) && strpos($c, 'cron_token_ok(') !== false);
+t_ok('it never starts a session',            is_string($c) && strpos($c, 'session_boot') === false && strpos($c, 'session_start') === false);
+t_ok('the CLI path needs no token',           is_string($c) && strpos($c, "PHP_SAPI === 'cli'") !== false);
+t_ok('a refusal says nothing useful',         is_string($c) && strpos($c, "'Forbidden'") !== false);
+$a = @file_get_contents(T_ROOT . '/ajax/cron.php');
+t_ok('the signed-in side requires CSRF on writes', is_string($a) && strpos($a, 'csrf_require()') !== false);
+t_ok('…and only seals an account from THIS session', is_string($a) && strpos($a, 'account_get($id)') !== false);
+t_ok('…and gates the token and the log on the admin', is_string($a) && substr_count($a, '$isAdmin') >= 4);
+
+t_group('failures are written down');
+$u = @file_get_contents(T_ROOT . '/lib/util.php');
+t_ok('the fatal guard logs before it answers', is_string($u) && preg_match("/function json_fatal_guard.*?app_log\\('fatal'/s", $u) === 1);
+t_ok('a failed IMAP open is logged',            is_string($u) && strpos($u, "app_log('warn', 'imap: open failed'") !== false);
+t_ok('…without the password ever being passed to it', is_string($u) && preg_match('/_imap_log_open_failure\\(\\$host, \\$port, \\$user\\)/', $u) === 1
+     && strpos($u, '_imap_log_open_failure($host, $port, $user, $pass') === false);
+
+t_group('the Settings panes are wired');
+$h = @file_get_contents(T_ROOT . '/settings.php');
+if (is_string($h)) {
+    t_ok('Background tasks pane and nav',  strpos($h, 'data-target="tasks"') !== false && strpos($h, '<section id="tasks"') !== false);
+    t_ok('Diagnostics pane and nav',       strpos($h, 'data-target="diagnostics"') !== false && strpos($h, '<section id="diagnostics"') !== false);
+    t_ok('a switch per account is rendered from the server\'s answer', strpos($h, "d.accounts.map(") !== false);
+    t_ok('the cron lines come from the server, never guessed in JS', strpos($h, "d.cpanel") !== false && strpos($h, "d.curl") !== false);
+    t_ok('writes carry the CSRF token',   preg_match("/ajax\\/cron\\.php.*?'X-CSRF-Token': window\\.__CSRF__/s", $h) === 1);
+    t_ok('a failed switch is reverted, not pretended', strpos($h, 'cb.checked = !cb.checked') !== false);
+}
