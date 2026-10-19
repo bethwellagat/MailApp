@@ -50,6 +50,8 @@
         pollIntervalMs: 60000,
         listSort: { by: 'date', dir: 'desc' },   // the folder list's order; non-default orders are flat (no conversations)
         selectAllInFolder: false,                // the selection bar's "all N in folder" is on
+        labels: [], labelsAcct: null,            // the account's label registry (ajax/labels.php)
+        labelFlags: {}, labelChecked: new Set(), // uid → [label ids], filled after the list like paperclips
         pollInflight: false,
     };
 
@@ -999,7 +1001,8 @@
         const silent = !!opts.silent;
         // A fresh (non-silent) view drops stale paperclip flags; a silent poll
         // keeps them so only newly-arrived messages get re-probed.
-        if (!silent) { state.attachFlags = {}; state.attachChecked = new Set(); }
+        if (!silent) { state.attachFlags = {}; state.attachChecked = new Set(); state.labelFlags = {}; state.labelChecked = new Set(); }
+        if (!unifiedViewNow() && state.labelsAcct !== viewAcct()) { state.labelsAcct = viewAcct(); await loadLabels(); }
         const list = $('messageList');
         const prevScroll = silent ? list.scrollTop : 0;
         const prevUids = silent ? new Set(state.messages.map(m => m.uid)) : null;
@@ -1042,6 +1045,7 @@
         renderMessages();
         renderPagination();
         loadAttachFlags(seq); // fire-and-forget; fills paperclips once the list is up
+        loadLabelFlags(seq);  // same pattern for label chips
         if (!keepReading) clearReadingPane();
         if (silent) {
             list.scrollTop = prevScroll;
@@ -1597,7 +1601,7 @@
                             '<span class="msg-time">' + escapeHtml(formatTime(m.timestamp)) + '</span>' +
                         '</span>' +
                     '</div>' +
-                    '<div class="msg-subject">' + escapeHtml(m.subject || '(no subject)') + acctBadge + '</div>' +
+                    '<div class="msg-subject">' + labelChipsFor(m) + escapeHtml(m.subject || '(no subject)') + acctBadge + '</div>' +
                     '<div class="msg-preview">' + escapeHtml(m.preview || '') + '</div>' +
                 '</div>' +
             '</div>'
@@ -2293,6 +2297,7 @@
         ['abDelete', 'abArchive', 'abMove', 'abFlag', 'abMarkRead', 'abMarkUnread', 'abSpam'].forEach(id => {
             if ($(id)) $(id).disabled = !has;
         });
+        if ($('abLabel')) $('abLabel').disabled = !has || isUnifiedView();   // labels are per account
         if ($('abSpam')) {
             $('abSpam').innerHTML = '<svg class="icon"><use href="#ic-spam"/></svg><span>' + (inJunk() ? 'Not spam' : 'Spam') + '</span>';
             $('abSpam').setAttribute('aria-label', inJunk() ? 'Not spam' : 'Report spam');
@@ -3320,6 +3325,97 @@
         if (ids.length) showUndoActionToast(_countWord(uids.length) + ' moved.', () => restoreMessages(target, from, ids, acct));
         noteBulkRemaining();
     }
+    /* ---------- Labels ---------- */
+    // Colour-coded, several per message, stored on the server as IMAP keywords
+    // ($lbl_<slug>, lib/labels.php). The registry is per account; chips are
+    // filled after the list the way paperclips are, one request per page.
+    function unifiedViewNow() { return isUnifiedView(); }
+    function labelIdsFor(m) {
+        const uids = (m.thread_uids && m.thread_uids.length) ? m.thread_uids : [m.uid];
+        const ids = new Set();
+        for (const u of uids) for (const id of (state.labelFlags[u] || [])) ids.add(id);
+        return Array.from(ids);
+    }
+    function labelChipsFor(m) {
+        if (!state.labels.length) return '';
+        const chips = labelIdsFor(m).map(id => state.labels.find(l => l.id === id)).filter(Boolean)
+            .map(l => '<span class="msg-label label-c' + (l.color | 0) + '" title="' + escapeAttr(l.name) + '">' + escapeHtml(l.name) + '</span>');
+        return chips.length ? '<span class="msg-labels">' + chips.join('') + '</span>' : '';
+    }
+    async function loadLabels() {
+        const acct = viewAcct();
+        const r = await apiCall('ajax/labels.php?action=list' + (acct ? '&acct=' + encodeURIComponent(acct) : ''), { credentials: 'same-origin' });
+        state.labels = (r && r.labels) ? r.labels : [];
+        renderLabelList();
+    }
+    function renderLabelList() {
+        const el = $('labelList');
+        if (!el) return;
+        if (!state.labels.length) { el.innerHTML = '<div class="label-empty">No labels yet. Press + to add one.</div>'; return; }
+        el.innerHTML = state.labels.map(l =>
+            '<button type="button" class="label-item" data-label-name="' + escapeAttr(l.name) + '">' +
+                '<span class="label-dot label-c' + (l.color | 0) + '"></span><span class="folder-label">' + escapeHtml(l.name) + '</span>' +
+            '</button>').join('');
+    }
+    function searchByLabel(name) {
+        const q = 'in:anywhere label:"' + String(name).replace(/"/g, '') + '"';
+        $('searchInput').value = q;
+        state.searchQuery = q;
+        runSearchNow();
+        if (typeof closeMobileDrawer === 'function') closeMobileDrawer();
+    }
+    async function loadLabelFlags(seq) {
+        if (isUnifiedView() || state.searchActive || !state.labels.length) return;
+        const want = [];
+        for (const m of state.messages) {
+            const uids = (m.thread_uids && m.thread_uids.length) ? m.thread_uids : [m.uid];
+            for (const u of uids) { if (u == null || state.labelChecked.has(u)) continue; want.push(u); }
+        }
+        if (!want.length) return;
+        const asked = want.slice(0, 200);
+        const qs = new URLSearchParams(withAcct({ action: 'flags', folder: state.currentFolder, uids: asked.join(',') }, viewAcct())).toString();
+        const data = await apiCall('ajax/labels.php?' + qs, { credentials: 'same-origin' });
+        asked.forEach(u => state.labelChecked.add(u));
+        if (seq !== loadMessagesSeq) return;
+        if (!data || data.error || !data.flags) return;
+        let changed = false;
+        for (const k in data.flags) { state.labelFlags[k] = data.flags[k]; changed = true; }
+        if (changed) renderMessages();
+    }
+    function renderLabelDropdown() {
+        const dd = $('labelDropdown');
+        const targets = targetMessages(actionTargetUids());
+        const items = state.labels.map(l => {
+            const on = targets.length > 0 && targets.every(m => labelIdsFor(m).includes(l.id));
+            return '<button class="dropdown-item label-pick' + (on ? ' on' : '') + '" type="button" role="menuitemcheckbox" aria-checked="' + (on ? 'true' : 'false') + '" data-label-id="' + escapeAttr(l.id) + '" data-on="' + (on ? '1' : '0') + '">' +
+                   '<span class="label-dot label-c' + (l.color | 0) + '"></span><span class="label-pick-name">' + escapeHtml(l.name) + '</span><span class="label-check" aria-hidden="true">✓</span></button>';
+        });
+        if (!items.length) items.push('<div class="dropdown-empty">No labels yet.</div>');
+        items.push('<button class="dropdown-item label-manage" type="button" data-label-manage="1">Manage labels…</button>');
+        dd.innerHTML = items.join('');
+    }
+    async function applyLabel(id, on) {
+        const uids = actionTargetUids();
+        if (!uids.length) return;
+        const wholeFolder = state.selectAllInFolder;
+        const body = new URLSearchParams();
+        body.append('action', 'apply'); body.append('id', id); body.append('set', on ? '1' : ''); body.append('folder', state.currentFolder);
+        if (wholeFolder) body.append('all', '1'); else uids.forEach(u => body.append('uids[]', String(u)));
+        if (viewAcct()) body.append('acct', viewAcct());
+        const r = await apiCall('ajax/labels.php?action=apply', { method: 'POST', credentials: 'same-origin', headers: csrfHeaders(), body });
+        if (!r || r.error) { alert(r ? r.error : NET_ERR); return; }
+        for (const m of targetMessages(uids)) {
+            const tu = (m.thread_uids && m.thread_uids.length) ? m.thread_uids : [m.uid];
+            for (const u of tu) {
+                const cur = new Set(state.labelFlags[u] || []);
+                if (on) cur.add(id); else cur.delete(id);
+                state.labelFlags[u] = Array.from(cur);
+            }
+        }
+        renderMessages();
+        if (r.remaining > 0) showToast(r.remaining.toLocaleString() + ' more remain — repeat to continue.');
+    }
+
     /* ---------- Report spam / Not spam ---------- */
     // Spam is a move to the account's Junk folder (where the mail server trains
     // its filter from, when it does) with the messages marked read so the
@@ -4716,6 +4812,42 @@
         document.addEventListener('click', () => {
             $('moveDropdown').classList.remove('open');
         });
+        if ($('abLabel')) {
+            $('abLabel').addEventListener('click', (e) => {
+                e.stopPropagation();
+                if ($('abLabel').disabled) return;
+                const dd = $('labelDropdown');
+                if (dd.classList.contains('open')) { dd.classList.remove('open'); return; }
+                renderLabelDropdown();
+                const r = $('abLabel').getBoundingClientRect();
+                dd.style.top = (r.bottom + 2) + 'px';
+                dd.style.left = r.left + 'px';
+                dd.classList.add('open');
+            });
+            // Stays open while labels are ticked on and off — a message often gets two.
+            $('labelDropdown').addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const pick = e.target.closest('.label-pick');
+                if (pick) { await applyLabel(pick.dataset.labelId, pick.dataset.on !== '1'); renderLabelDropdown(); return; }
+                if (e.target.closest('[data-label-manage]')) { $('labelDropdown').classList.remove('open'); window.location.href = 'settings#labels'; }
+            });
+            document.addEventListener('click', () => $('labelDropdown').classList.remove('open'));
+            $('labelList').addEventListener('click', (e) => {
+                const b = e.target.closest('.label-item');
+                if (b) searchByLabel(b.dataset.labelName);
+            });
+            $('labelNewBtn').addEventListener('click', async () => {
+                const name = window.prompt('New label name:', '');
+                if (!name || !name.trim()) return;
+                const r = await apiCall('ajax/labels.php?action=save' + (viewAcct() ? '&acct=' + encodeURIComponent(viewAcct()) : ''), {
+                    method: 'POST', credentials: 'same-origin', headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ name: name.trim(), color: state.labels.length % 12 }),
+                });
+                if (!r || r.error) { alert(r ? r.error : NET_ERR); return; }
+                state.labels = r.labels || state.labels;
+                renderLabelList();
+            });
+        }
 
         // Tapping the dimmed area beside the mobile drawer closes it. The overlay is
         // an ::before on .app-main, so there is no element to bind to — detect a

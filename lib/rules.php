@@ -102,6 +102,7 @@ function sanitize_rule($r) {
             'skip_inbox' => !empty($actions['skip_inbox']),
             'mark_read'  => !empty($actions['mark_read']),
             'star'       => !empty($actions['star']),
+            'label'      => preg_match('/^[A-Za-z0-9-]{8,64}$/', (string)($actions['label'] ?? '')) ? (string)$actions['label'] : '',
             'move_to'    => $moveTo,
             'delete'     => !empty($actions['delete']),
         ],
@@ -124,6 +125,7 @@ function sanitize_rule($r) {
     $hasAction = $clean['actions']['skip_inbox']
               || $clean['actions']['mark_read']
               || $clean['actions']['star']
+              || $clean['actions']['label'] !== ''
               || $clean['actions']['move_to'] !== ''
               || $clean['actions']['delete'];
     if (!$hasMatch || !$hasAction) return null;
@@ -272,6 +274,12 @@ function apply_rule_actions($mbox, $folder, $uids, $actions) {
     }
     if (!empty($actions['star'])) {
         @imap_setflag_full($mbox, $set, '\\Flagged', ST_UID);
+    }
+    if (!empty($actions['label'])) {
+        // The label is the account's own; the rule runs as that account.
+        require_once __DIR__ . '/labels.php';
+        $lbl = label_get((string)($_SESSION['email'] ?? ''), $actions['label']);
+        if ($lbl) @imap_setflag_full($mbox, $set, label_keyword($lbl), ST_UID);
     }
     if (!empty($actions['delete'])) {
         $trash = resolve_folder($mbox, imap_session_ref(), ['trash', 'deleted', 'bin']);

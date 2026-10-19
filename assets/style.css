@@ -7224,3 +7224,48 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 .settings-page .rule-field-hint { font-size: 12px; color: var(--ip-label-2); font-weight: 400; }
 .settings-page .rule-when b { font-weight: 700; color: var(--ip-label); }
 @media (max-width: 480px) { .settings-page .rule-field-pair { grid-template-columns: 1fr; } }
+
+
+/* ---- Labels: a hue per colour, read by the chip, the dot and the swatch ---- */
+.mail-page .label-c0, .settings-page .label-c0 { --lh: 4; }
+.mail-page .label-c1, .settings-page .label-c1 { --lh: 28; }
+.mail-page .label-c2, .settings-page .label-c2 { --lh: 48; }
+.mail-page .label-c3, .settings-page .label-c3 { --lh: 95; }
+.mail-page .label-c4, .settings-page .label-c4 { --lh: 140; }
+.mail-page .label-c5, .settings-page .label-c5 { --lh: 170; }
+.mail-page .label-c6, .settings-page .label-c6 { --lh: 200; }
+.mail-page .label-c7, .settings-page .label-c7 { --lh: 225; }
+.mail-page .label-c8, .settings-page .label-c8 { --lh: 260; }
+.mail-page .label-c9, .settings-page .label-c9 { --lh: 290; }
+.mail-page .label-c10, .settings-page .label-c10 { --lh: 320; }
+.mail-page .label-c11, .settings-page .label-c11 { --lh: 0; }
+.mail-page .label-dot, .settings-page .label-dot { width: 10px; height: 10px; border-radius: 50%; background: hsl(var(--lh) 70% 50%); flex-shrink: 0; display: inline-block; }
+.mail-page .folder-pane-header-labels { margin-top: 10px; }
+.mail-page .label-list { display: flex; flex-direction: column; padding: 2px 8px 10px; }
+.mail-page .label-item { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; border: 0; background: none; color: var(--c-text); font: inherit; font-size: 13px; cursor: pointer; text-align: left; width: 100%; }
+.mail-page .label-item:hover { background: var(--c-hover); }
+.mail-page .label-empty { padding: 4px 10px; font-size: 12px; color: var(--c-text-muted); }
+.mail-page .msg-labels { display: inline-flex; gap: 4px; margin-right: 6px; vertical-align: middle; }
+.mail-page .msg-label { display: inline-block; font-size: 10.5px; font-weight: 600; line-height: 16px; padding: 0 6px; border-radius: 999px; color: hsl(var(--lh) 60% 30%); background: hsl(var(--lh) 80% 90%); white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+html.theme-dark .mail-page .msg-label { color: hsl(var(--lh) 80% 80%); background: hsl(var(--lh) 45% 24%); }
+.mail-page .dropdown-labels { max-height: 320px; overflow-y: auto; }
+.mail-page .dropdown-item.label-pick { display: flex; align-items: center; gap: 8px; }
+.mail-page .label-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mail-page .label-check { opacity: 0; color: var(--c-brand-active); font-weight: 700; }
+.mail-page .label-pick.on .label-check { opacity: 1; }
+.mail-page .dropdown-empty { padding: 8px 12px; font-size: 12.5px; color: var(--c-text-muted); }
+.mail-page .label-manage { border-top: 1px solid var(--c-divider); margin-top: 4px; color: var(--c-brand-active); }
+/* Settings: the registry */
+.settings-page .lbl-list { display: flex; flex-direction: column; }
+.settings-page .lbl-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
+.settings-page .lbl-row + .lbl-row { border-top: 1px solid var(--ip-sep); }
+.settings-page .lbl-row-main { flex: 1; min-width: 0; }
+.settings-page .lbl-row-name { font-weight: 600; }
+.settings-page .lbl-row-sub { font-size: 12px; color: var(--ip-label-2); font-family: var(--font-mono); }
+.settings-page .lbl-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.settings-page .lbl-swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; background: hsl(var(--lh) 70% 50%); cursor: pointer; padding: 0; }
+.settings-page .lbl-swatch.selected { border-color: var(--ip-label); box-shadow: 0 0 0 2px var(--ip-bg, #fff) inset; }
+.settings-page .lbl-swatch:focus-visible { outline: 2px solid var(--ip-blue); outline-offset: 2px; }
+/* A stacked row runs top to bottom, so an inline input's 220px flex-basis
+   would become its height. Direct children of a stack size to their content. */
+.settings-page .settings-row-stack > .settings-inline-input { flex: 0 0 auto; width: 100%; }

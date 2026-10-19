@@ -123,6 +123,7 @@ if ('serviceWorker' in navigator) {
     <symbol id="ic-refresh-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
     </symbol>
+    <symbol id="ic-tag-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></symbol>
     <symbol id="ic-funnel-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
     </symbol>
@@ -185,6 +186,10 @@ if ('serviceWorker' in navigator) {
         <a class="settings-nav-item" href="#filters" data-target="filters">
             <span class="snav-icon snav-icon-teal"><svg class="icon"><use href="#ic-funnel-s"/></svg></span>
             <span>Filters</span>
+        </a>
+        <a class="settings-nav-item" href="#labels" data-target="labels">
+            <span class="snav-icon snav-icon-orange"><svg class="icon"><use href="#ic-tag-s"/></svg></span>
+            <span>Labels</span>
         </a>
         <a class="settings-nav-item" href="#contacts" data-target="contacts">
             <span class="snav-icon snav-icon-green"><svg class="icon"><use href="#ic-user"/></svg></span>
@@ -634,6 +639,40 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             </div>
         </section>
 
+        <section id="labels" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Labels</h2>
+                <p class="settings-section-desc">Colour-coded tags, several per message, applied from the <strong>Label</strong> button above the message list. A folder holds a message in one place; labels let it be both "Interviewed" and "Dubai". They are stored on your mail server as IMAP keywords, so they survive in any other mail program, and you can search for them with <code>label:dubai</code>.</p>
+            </header>
+            <div class="settings-card">
+                <div class="rules-list-header">
+                    <span class="settings-inline-hint" id="lblCount">Loading&hellip;</span>
+                    <button type="button" class="cal-modal-btn cal-modal-btn-primary" id="lblNewBtn"><svg class="icon" width="14" height="14"><use href="#ic-plus"/></svg><span>New label</span></button>
+                </div>
+                <div class="lbl-list" id="lblList"></div>
+            </div>
+            <div class="settings-card" id="lblEditor" hidden>
+                <h3 class="settings-card-title" id="lblEditorTitle">New label</h3>
+                <div class="settings-row settings-row-stack">
+                    <label class="settings-row-label" for="lblName">Name</label>
+                    <input type="text" id="lblName" class="settings-inline-input" maxlength="40" placeholder="e.g. Interviewed" autocomplete="off">
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <span class="settings-row-label">Colour</span>
+                    <div class="lbl-swatches" id="lblSwatches" role="radiogroup" aria-label="Colour"></div>
+                </div>
+                <div class="settings-inline-edit">
+                    <button type="button" class="btn" id="lblDeleteBtn" hidden>Delete</button>
+                    <button type="button" class="btn" id="lblCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="lblSaveBtn">Save label</button>
+                    <span class="settings-status" id="lblStatus"></span>
+                </div>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint">Renaming keeps the tag on your messages; deleting removes the label from this list but leaves the keyword on the server, so recreating a label with the same name brings its messages back.</p>
+                </div>
+            </div>
+        </section>
+
         <section id="contacts" class="settings-section">
             <header class="settings-section-header">
                 <h2>Contacts</h2>
@@ -957,6 +996,10 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             <label class="cal-field cal-field-check">
                 <input type="checkbox" id="ruleStar">
                 <span>Star (flag) it</span>
+            </label>
+            <label class="cal-field">
+                <span class="cal-field-label">Add label</span>
+                <select id="ruleLabel" class="cal-field-input"><option value="">— none —</option></select>
             </label>
             <label class="cal-field">
                 <span class="cal-field-label">Apply label / move to folder</span>
@@ -2023,6 +2066,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 skip_inbox: $('ruleSkipInbox').checked,
                 mark_read:  $('ruleMarkRead').checked,
                 star:       $('ruleStar').checked,
+                label:      $('ruleLabel').value,
                 move_to:    $('ruleMoveTo').value,
                 delete:     $('ruleDelete').checked,
             },
@@ -2045,6 +2089,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         $('ruleSkipInbox').checked  = !!rule?.actions?.skip_inbox;
         $('ruleMarkRead').checked   = !!rule?.actions?.mark_read;
         $('ruleStar').checked       = !!rule?.actions?.star;
+        $('ruleLabel').value        = rule?.actions?.label || '';
         $('ruleMoveTo').value       = rule?.actions?.move_to    || '';
         $('ruleDelete').checked     = !!rule?.actions?.delete;
         $('rulePreview').textContent = '';
@@ -2066,6 +2111,15 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         editingRuleId = null;
     }
 
+    // The account's labels, for the "Add label" action and the list summary.
+    let cachedLabels = [];
+    function labelName(id) { const l = cachedLabels.find(x => x.id === id); return l ? l.name : '(deleted label)'; }
+    fetch('ajax/labels.php?action=list', { credentials: 'same-origin' }).then(r => r.json()).then(r => {
+        cachedLabels = (r && r.labels) ? r.labels : [];
+        const sel = $('ruleLabel');
+        if (sel) cachedLabels.forEach(l => { const o = document.createElement('option'); o.value = l.id; o.textContent = l.name; sel.appendChild(o); });
+        renderRulesList();
+    }).catch(() => {});
     function summarizeRule(r) {
         const c = [];
         if (r.match.from)           c.push('From: <em>' + escapeHtml(r.match.from) + '</em>');
@@ -2085,6 +2139,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         if (r.actions.skip_inbox) a.push('Skip Inbox');
         if (r.actions.mark_read)  a.push('Mark read');
         if (r.actions.star)       a.push('Star');
+        if (r.actions.label)      a.push('Label: <em>' + escapeHtml(labelName(r.actions.label)) + '</em>');
         if (r.actions.move_to)    a.push('Move to <em>' + escapeHtml(r.actions.move_to) + '</em>');
         if (r.actions.delete)     a.push('Delete');
         return { when: c.join(joiner), then: a.join(' · ') };
@@ -2201,6 +2256,89 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         const rule = cachedRules.find(x => x.id === id);
         if (rule) rule.enabled = cb.checked;
     });
+})();
+</script>
+<script nonce="<?= csp_nonce() ?>">
+/* === Labels === */
+(function () {
+    const $ = id => document.getElementById(id);
+    if (!$('lblList')) return;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const say = (msg, kind) => { const el = $('lblStatus'); el.textContent = msg || ''; el.className = 'settings-status' + (kind ? ' ' + kind : ''); };
+    const call = async (action, body, asJson) => {
+        const r = await fetch('ajax/labels.php?action=' + action, {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': asJson ? 'application/json' : 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.__CSRF__ },
+            body: asJson ? JSON.stringify(body) : new URLSearchParams(body).toString(),
+        });
+        if (r.status === 401) { window.location = 'index'; return { error: 'Signed out' }; }
+        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    };
+    let list = [], editing = null, color = 0;
+    const COLORS = 12;
+
+    function render() {
+        $('lblCount').textContent = list.length ? list.length + ' label' + (list.length === 1 ? '' : 's') : 'No labels yet.';
+        $('lblList').innerHTML = list.map(l =>
+            '<div class="lbl-row" data-id="' + esc(l.id) + '"><span class="label-dot label-c' + (l.color | 0) + '"></span>' +
+            '<div class="lbl-row-main"><div class="lbl-row-name">' + esc(l.name) + '</div><div class="lbl-row-sub">label:' + esc(l.slug) + '</div></div>' +
+            '<button type="button" class="btn" data-edit="' + esc(l.id) + '">Edit</button></div>').join('');
+    }
+    function renderSwatches() {
+        let h = '';
+        for (let i = 0; i < COLORS; i++) h += '<button type="button" class="lbl-swatch label-c' + i + (i === color ? ' selected' : '') + '" role="radio" aria-checked="' + (i === color) + '" data-color="' + i + '" aria-label="Colour ' + (i + 1) + '"></button>';
+        $('lblSwatches').innerHTML = h;
+    }
+    async function load() {
+        const r = await fetch('ajax/labels.php?action=list', { credentials: 'same-origin' }).then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        if (r.error) { $('lblCount').textContent = r.error; return; }
+        list = r.labels || [];
+        render();
+    }
+    function open(l) {
+        editing = l ? l.id : null;
+        color = l ? (l.color | 0) : (list.length % COLORS);
+        $('lblEditorTitle').textContent = l ? 'Edit label' : 'New label';
+        $('lblName').value = l ? l.name : '';
+        $('lblDeleteBtn').hidden = !l;
+        renderSwatches();
+        $('lblEditor').hidden = false;
+        say('');
+        $('lblName').focus();
+    }
+    function close() { $('lblEditor').hidden = true; editing = null; }
+
+    $('lblNewBtn').addEventListener('click', () => open(null));
+    $('lblCancelBtn').addEventListener('click', close);
+    $('lblList').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-edit]');
+        if (!b) return;
+        const l = list.find(x => x.id === b.dataset.edit);
+        if (l) open(l);
+    });
+    $('lblSwatches').addEventListener('click', (e) => {
+        const sw = e.target.closest('.lbl-swatch');
+        if (!sw) return;
+        color = parseInt(sw.dataset.color, 10) || 0;
+        renderSwatches();
+    });
+    $('lblSaveBtn').addEventListener('click', async () => {
+        say('Saving…');
+        const r = await call('save', { id: editing || '', name: $('lblName').value, color }, true);
+        if (r.error) { say(r.error, 'error'); return; }
+        list = r.labels || list;
+        render();
+        close();
+    });
+    $('lblDeleteBtn').addEventListener('click', async () => {
+        if (!editing || !window.confirm('Delete this label? Messages keep the keyword on the server; the label just stops showing.')) return;
+        const r = await call('delete', { id: editing });
+        if (r.error) { say(r.error, 'error'); return; }
+        list = r.labels || [];
+        render();
+        close();
+    });
+    load();
 })();
 </script>
 <script nonce="<?= csp_nonce() ?>">

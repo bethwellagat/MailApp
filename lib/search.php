@@ -127,6 +127,7 @@ function search_parse($q, $now = null) {
         'larger'   => null, 'smaller'   => null,
         'in'       => null,
         'has'      => null,
+        'label'    => [], 'not_label' => [],
         'errors'   => [],
     ];
 
@@ -144,6 +145,7 @@ function search_parse($q, $now = null) {
             case 'to':
             case 'cc':      $p[$not ? 'not_to'      : 'to'][]      = $v; break;
             case 'subject': $p[$not ? 'not_subject' : 'subject'][] = $v; break;
+            case 'label':   $p[$not ? 'not_label'   : 'label'][]   = $v; break;
 
             case 'is':
                 $flag = _search_is_flag($v);
@@ -293,6 +295,27 @@ function search_imap_date($ymd) {
  * `$fullText` adds BODY to each bare term. It is opt-in because a BODY search
  * makes a server without a full-text index read every message.
  */
+/**
+ * The IMAP keyword a label is stored under: a fixed prefix plus the label's
+ * slug, so a label named "Forwarded" can never collide with the $Forwarded
+ * keyword other clients set. Lowercase, [a-z0-9_], at most 32 characters.
+ */
+function search_label_slug($name) {
+    $slug = mb_strtolower(trim((string)$name), 'UTF-8');
+    // Common Latin accents fold the same way on every host; iconv's
+    // transliteration differs by platform (macOS writes Caf'e), so it is only
+    // the fallback for what the table does not cover.
+    static $fold = ['à'=>'a','á'=>'a','â'=>'a','ã'=>'a','ä'=>'a','å'=>'a','æ'=>'ae','ç'=>'c','è'=>'e','é'=>'e','ê'=>'e','ë'=>'e',
+                    'ì'=>'i','í'=>'i','î'=>'i','ï'=>'i','ñ'=>'n','ò'=>'o','ó'=>'o','ô'=>'o','õ'=>'o','ö'=>'o','ø'=>'o','œ'=>'oe',
+                    'ù'=>'u','ú'=>'u','û'=>'u','ü'=>'u','ý'=>'y','ÿ'=>'y','ß'=>'ss'];
+    $slug = strtr($slug, $fold);
+    if (function_exists('iconv') && preg_match('/[^\x00-\x7F]/', $slug)) { $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $slug); if ($t !== false) $slug = strtolower($t); }
+    $slug = preg_replace('/[^a-z0-9]+/', '_', $slug);
+    $slug = trim($slug, '_');
+    return substr($slug, 0, 32);
+}
+function search_label_keyword($nameOrSlug) { return '$lbl_' . search_label_slug($nameOrSlug); }
+
 function search_to_imap(array $p, $fullText = false) {
     $parts = [];
 
@@ -328,6 +351,9 @@ function search_to_imap(array $p, $fullText = false) {
 
     if ($p['larger']  !== null) $parts[] = 'LARGER '  . (int)$p['larger'];
     if ($p['smaller'] !== null) $parts[] = 'SMALLER ' . (int)$p['smaller'];
+
+    foreach ($p['label']     ?? [] as $l) if (search_label_slug($l) !== '') $parts[] = 'KEYWORD '   . search_label_keyword($l);
+    foreach ($p['not_label'] ?? [] as $l) if (search_label_slug($l) !== '') $parts[] = 'UNKEYWORD ' . search_label_keyword($l);
 
     return $parts ? implode(' ', $parts) : 'ALL';
 }
