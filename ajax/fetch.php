@@ -10,6 +10,8 @@ require_once __DIR__ . '/../lib/threading.php';
 // Requiring it only on the JSON branch would leave that path calling an
 // undefined function — trading one fatal for another.
 require_once __DIR__ . '/../lib/util.php';
+require_once __DIR__ . '/../lib/search.php';       // query language: parse, translate, describe
+require_once __DIR__ . '/../lib/attachindex.php';  // the one answer IMAP cannot give: has:attachment
 $action = $_GET['action'] ?? '';
 if ($action === 'attachment') {
     header('Cache-Control: no-store');
@@ -730,6 +732,186 @@ function build_thread_msg($mbox, $uid, $folder, $withBody) {
     return $msg;
 }
 
+/* ---------- Searching: one criterion, many folders, one page ---------- */
+
+/** A list row from an overview entry fetched by UID (so $m->uid is set). */
+function search_row_from_overview($m, $folder) {
+    $from = parse_addr($m->from ?? '');
+    return [
+        'uid'          => (int)$m->uid,
+        'folder'       => $folder,
+        'subject'      => decode_header($m->subject ?? '') ?: '(no subject)',
+        'from_name'    => $from['name'],
+        'from_addr'    => $from['email'],
+        'to'           => decode_header($m->to ?? ''),
+        'date'         => $m->date ?? '',
+        'timestamp'    => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
+        'seen'         => !empty($m->seen),
+        'flagged'      => !empty($m->flagged),
+        'answered'     => !empty($m->answered),
+        'size'         => (int)($m->size ?? 0),
+        // One row per message, never per conversation: a search hit is a
+        // specific message, and a grouped row would show a subject and sender
+        // that never matched what was typed.
+        'thread_count' => 1,
+        'thread_uids'  => [(int)$m->uid],
+    ];
+}
+
+/** Order rows by the chosen key; ties fall back to newest first, so paging is stable. */
+function search_sort_rows(array &$rows, $sort, $dir) {
+    $mul = ($dir === 'asc') ? 1 : -1;
+    $key = function ($r) use ($sort) {
+        switch ($sort) {
+            case 'from':    return mb_strtolower((string)(($r['from_name'] !== '' ? $r['from_name'] : $r['from_addr'])));
+            case 'subject': return mb_strtolower((string)preg_replace('/^((re|fw|fwd)\s*:\s*)+/i', '', $r['subject']));
+            case 'size':    return (int)$r['size'];
+            default:        return (int)$r['timestamp'];
+        }
+    };
+    usort($rows, function ($a, $b) use ($key, $mul) {
+        $ka = $key($a); $kb = $key($b);
+        if ($ka == $kb) return $b['uid'] - $a['uid'];
+        return ($ka < $kb ? -1 : 1) * $mul;
+    });
+}
+
+/**
+ * Run one IMAP SEARCH criterion over a set of folders and return ONE page of
+ * rows with a true total — the piece the old search and starred views lacked,
+ * both of which stopped silently at 200 and reported that as the count.
+ *
+ * Folders are opened one at a time, as before, so memory stays flat. The cost
+ * that is bounded differently is the overview fetch: per folder only the
+ * first page*25 matching UIDs (newest first, since UIDs rise with arrival) are
+ * fetched, then the folders' candidates are merged and the page sliced. The
+ * global top-N is always inside the union of each folder's top-N, so the page
+ * is exact. That window is capped at $reach; a page past it is reported
+ * rather than fabricated.
+ *
+ * Sorting by anything but date uses the server's SORT extension when it has
+ * one — it returns matching UIDs already ordered — and falls back to ordering
+ * the fetched window when it does not, flagged as approximate.
+ *
+ * has:attachment is answered from the attachment index, probing structure for
+ * UIDs it has not seen, newest first, up to a per-request budget. Anything
+ * still unknown after that is EXCLUDED and counted, so the caller can say
+ * "N more not yet checked" instead of guessing either way.
+ */
+function search_collect($criterion, array $folders, array $opt) {
+    $page    = max(1, (int)($opt['page'] ?? 1));
+    $perPage = max(1, (int)($opt['per_page'] ?? 25));
+    $sort    = in_array($opt['sort'] ?? 'date', ['date', 'from', 'subject', 'size'], true) ? $opt['sort'] : 'date';
+    $dir     = (($opt['dir'] ?? 'desc') === 'asc') ? 'asc' : 'desc';
+    $attach  = $opt['attach'] ?? null;
+    $budget  = (int)($opt['attach_budget'] ?? 150);
+    $reach   = (int)($opt['reach'] ?? 600);
+    $ref     = imap_ref();
+
+    $useSort  = ($sort !== 'date') && function_exists('imap_sort');
+    $sortFlag = ['from' => SORTFROM, 'subject' => SORTSUBJECT, 'size' => SORTSIZE][$sort] ?? SORTDATE;
+    $need     = min($page * $perPage, $reach);
+
+    $rows = []; $total = 0; $searched = []; $sortApprox = false;
+    $attachStats = ($attach !== null) ? ['probed' => 0, 'unknown' => 0, 'known' => 0] : null;
+
+    foreach ($folders as $f) {
+        $box = open_box($f);
+        if (!$box) continue;
+        $searched[] = $f;
+
+        $uids = false;
+        if ($useSort) {
+            $uids = @imap_sort($box, $sortFlag, $dir === 'desc' ? 1 : 0, SE_UID, $criterion);
+            if (!is_array($uids)) { $uids = false; $sortApprox = true; }
+            else $uids = array_values(array_unique(array_map('intval', $uids)));
+        }
+        if ($uids === false) {
+            $uids = @imap_search($box, $criterion, SE_UID);
+            if (!is_array($uids) && !empty($opt['fallback'])) {
+                // Some servers reject the nested OR form; a plain word can be
+                // retried one key at a time and the hits unioned.
+                $uids = [];
+                foreach ($opt['fallback'] as $crit) {
+                    $r = @imap_search($box, $crit, SE_UID);
+                    if (is_array($r)) $uids = array_merge($uids, $r);
+                }
+            }
+            if (!is_array($uids)) $uids = [];
+            $uids = array_values(array_unique(array_map('intval', $uids)));
+            if ($dir === 'desc') rsort($uids); else sort($uids);
+        }
+
+        if ($attach !== null && $uids) {
+            $st   = @imap_status($box, $ref . $f, SA_UIDVALIDITY);
+            $uidv = $st ? (int)$st->uidvalidity : 0;
+            $path = attach_index_path($opt['email'] ?? '', $opt['acct'] ?? '', $f);
+            $idx  = attach_index_load($path, $uidv);
+            [$match, $unknown] = attach_index_filter($idx, $uids, $attach);
+            if ($unknown && $budget > 0) {
+                $toProbe = array_slice($unknown, 0, $budget);
+                $budget -= count($toProbe);
+                $probe = [];
+                foreach ($toProbe as $u) {
+                    $stc = @imap_fetchstructure($box, $u, FT_UID);
+                    $probe[$u] = ($stc && structure_has_attachment($stc));
+                }
+                if (attach_index_merge($idx, $probe) > 0) attach_index_save($path, $idx);
+                [$match, $unknown] = attach_index_filter($idx, $uids, $attach);
+                $attachStats['probed'] += count($toProbe);
+            }
+            $attachStats['unknown'] += count($unknown);
+            $attachStats['known']   += count($uids) - count($unknown);
+            $uids = $match;
+        }
+
+        $total += count($uids);
+        if (count($uids) > $need) $uids = array_slice($uids, 0, $need);
+        if ($uids) {
+            $ov = @imap_fetch_overview($box, implode(',', $uids), FT_UID);
+            if (is_array($ov)) foreach ($ov as $m) $rows[] = search_row_from_overview($m, $f);
+        }
+        @imap_close($box);
+    }
+
+    search_sort_rows($rows, $sort, $dir);
+    $pages  = max(1, (int)ceil($total / $perPage));
+    $page   = min($page, $pages);
+    $offset = ($page - 1) * $perPage;
+
+    return [
+        'results'     => array_slice($rows, $offset, $perPage),
+        'total'       => $total,
+        'page'        => $page,
+        'pages'       => $pages,
+        'folders'     => $searched,
+        'sort'        => $sort,
+        'dir'         => $dir,
+        'sort_approx' => $sortApprox,
+        'reach'       => $reach,
+        'reach_hit'   => ($page * $perPage) > $reach,
+        'attach'      => $attachStats,
+    ];
+}
+
+/** Every folder name in the account, INBOX first, plus the Sent folder's name. */
+function search_all_folders($ref) {
+    $all = ['INBOX']; $sent = null;
+    $tmp = open_box('INBOX', OP_HALFOPEN);
+    if ($tmp) {
+        $list = @imap_list($tmp, $ref, '*');
+        if (is_array($list)) {
+            foreach ($list as $raw) {
+                $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
+                if ($name !== '' && !in_array($name, $all, true)) $all[] = $name;
+            }
+        }
+        $sent = find_folder($tmp, $ref, ['sent']);
+        @imap_close($tmp);
+    }
+    return [$all, $sent];
+}
+
 /* ---------- Actions ---------- */
 
 $action = $_GET['action'] ?? '';
@@ -1029,12 +1211,29 @@ if ($action === 'attach_flags') {
 
     $mbox = open_box($folder);
     if (!$mbox) fail('Could not open folder "' . $folder . '"');
-    $flags = [];
+
+    // Answer from the attachment index where it already knows, and record
+    // every structure this probe does look at — so the paperclips the list
+    // asks for are what teaches has:attachment, and a message is never
+    // inspected twice.
+    $st   = @imap_status($mbox, imap_ref() . $folder, SA_UIDVALIDITY);
+    $uidv = $st ? (int)$st->uidvalidity : 0;
+    $path = attach_index_path((string)($_SESSION['email'] ?? ''), account_effective_id(), $folder);
+    $idx  = attach_index_load($path, $uidv);
+
+    $flags = []; $probe = [];
     foreach ($uids as $u) {
-        $st = @imap_fetchstructure($mbox, $u, FT_UID);
-        if ($st && structure_has_attachment($st)) $flags[(string)$u] = true;
+        if (array_key_exists($u, $idx['flags'])) {
+            if ($idx['flags'][$u]) $flags[(string)$u] = true;
+            continue;
+        }
+        $stc = @imap_fetchstructure($mbox, $u, FT_UID);
+        $has = ($stc && structure_has_attachment($stc));
+        $probe[$u] = $has;
+        if ($has) $flags[(string)$u] = true;
     }
     @imap_close($mbox);
+    if ($probe && attach_index_merge($idx, $probe) > 0) attach_index_save($path, $idx);
     ok(['flags' => (object)$flags]);
 }
 
@@ -1248,200 +1447,107 @@ if ($action === 'message') {
 }
 
 if ($action === 'starred') {
-    // Every flagged/starred message, across every folder.
-    //
-    // The Flagged chip used to filter only the rows already loaded for the
-    // current page, so it reported "no flagged messages on this page" while the
-    // user's starred mail sat in Archive or on page 3 — worse than useless,
-    // because it looked like an answer. Folders are opened ONE AT A TIME (same
-    // as search), so this stays within the memory ceiling; only wall-clock grows.
-    $ref     = imap_ref();
-    $folders = ['INBOX'];
-    $capped  = false;
-    $tmp = open_box('INBOX', OP_HALFOPEN);
-    if ($tmp) {
-        $list = @imap_list($tmp, $ref, '*');
-        if (is_array($list)) {
-            foreach ($list as $raw) {
-                $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
-                if ($name !== '' && !in_array($name, $folders, true)) $folders[] = $name;
-            }
-        }
-        if (count($folders) > 40) { $folders = array_slice($folders, 0, 40); $capped = true; }
-        @imap_close($tmp);
-    }
+    // Every flagged message, across every folder — now paged, where it used to
+    // stop at 200 and call that the total.
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $sort = (string)($_GET['sort'] ?? 'date');
+    if (!in_array($sort, ['date', 'from', 'subject', 'size'], true)) $sort = 'date';
+    $dir  = (($_GET['dir'] ?? 'desc') === 'asc') ? 'asc' : 'desc';
 
-    $results = [];
-    foreach ($folders as $f) {
-        $box = open_box($f);
-        if (!$box) continue;
-        $uids = @imap_search($box, 'FLAGGED', SE_UID);
-        if (is_array($uids) && $uids) {
-            $uids = array_values(array_unique(array_map('intval', $uids)));
-            rsort($uids);
-            if (count($uids) > 80) $uids = array_slice($uids, 0, 80);
-            $ov = @imap_fetch_overview($box, implode(',', $uids), FT_UID);
-            if ($ov) {
-                foreach ($ov as $m) {
-                    $from = parse_addr($m->from ?? '');
-                    // Deliberately one row per message, not per conversation:
-                    // this view answers "which messages did I star?", and
-                    // collapsing a starred message into a conversation whose
-                    // newest member is not starred would show a row the user
-                    // never starred and hide the one they did.
-                    $results[] = [
-                        'uid'          => (int)$m->uid,
-                        'folder'       => $f,
-                        'subject'      => decode_header($m->subject ?? '') ?: '(no subject)',
-                        'from_name'    => $from['name'],
-                        'from_addr'    => $from['email'],
-                        'to'           => decode_header($m->to ?? ''),
-                        'date'         => $m->date ?? '',
-                        'timestamp'    => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
-                        'seen'         => !empty($m->seen),
-                        'flagged'      => true,
-                        'answered'     => !empty($m->answered),
-                        'thread_count' => 1,
-                        'thread_uids'  => [(int)$m->uid],
-                    ];
-                }
-            }
-        }
-        @imap_close($box);
-    }
-    usort($results, fn($a, $b) => $b['timestamp'] - $a['timestamp']);
-    if (count($results) > 200) $results = array_slice($results, 0, 200);
-    ok(['results' => $results, 'folders' => $folders, 'folders_capped' => $capped, 'total' => count($results)]);
+    $ref = imap_ref();
+    [$folders, $_sent] = search_all_folders($ref);
+    $capped = false;
+    if (count($folders) > 40) { $folders = array_slice($folders, 0, 40); $capped = true; }
+
+    $out = search_collect('FLAGGED', $folders, [
+        'page' => $page, 'per_page' => 25, 'sort' => $sort, 'dir' => $dir, 'reach' => 600,
+    ]);
+    ok(array_merge($out, ['folders_capped' => $capped]));
 }
 
 if ($action === 'search') {
-    $q = trim((string)($_GET['q'] ?? ''));
-    if (mb_strlen($q) < 2) {
-        ok(['results' => [], 'q' => $q, 'folders' => [], 'total' => 0]);
-    }
-    if (mb_strlen($q) > 200) $q = mb_substr($q, 0, 200);
-
-    // Which folders to search.
-    //   default   — INBOX + the current folder + Sent. Fast, and right for the
-    //               common "where is that message" case.
-    //   where=all — EVERY folder. Without this, anything the user (or a filter,
-    //               or Archive) moved out of those three was simply invisible to
-    //               search, which quietly defeats the app's own organising
-    //               features. Folders are still opened ONE AT A TIME, so the
-    //               memory profile is unchanged; only the wall-clock cost grows.
-    $ref       = imap_ref();
-    $searchAll = (($_GET['where'] ?? '') === 'all');
-    $foldersToSearch = ['INBOX'];
-    if (strcasecmp($folder, 'INBOX') !== 0) $foldersToSearch[] = $folder;
-    $folderCapped = false;
-    $tmp = open_box('INBOX', OP_HALFOPEN);
-    if ($tmp) {
-        if ($searchAll) {
-            $list = @imap_list($tmp, $ref, '*');
-            if (is_array($list)) {
-                foreach ($list as $raw) {
-                    $name = mb_convert_encoding(str_replace($ref, '', $raw), 'UTF-8', 'UTF7-IMAP');
-                    if ($name !== '' && !in_array($name, $foldersToSearch, true)) $foldersToSearch[] = $name;
-                }
-            }
-            // Bound the work so a mailbox with hundreds of folders can't stall the
-            // request; say so in the response rather than silently truncating.
-            $FOLDER_CAP = 40;
-            if (count($foldersToSearch) > $FOLDER_CAP) {
-                $foldersToSearch = array_slice($foldersToSearch, 0, $FOLDER_CAP);
-                $folderCapped = true;
-            }
-        } else {
-            $sentName = find_folder($tmp, $ref, ['sent']);
-            if ($sentName && !in_array($sentName, $foldersToSearch, true)) $foldersToSearch[] = $sentName;
-        }
-        @imap_close($tmp);
-    }
-
-    // Escape for IMAP quoted string ("\\" and "\"" are the only sequences c-client cares about).
-    $needle = str_replace(['\\', '"'], ['\\\\', '\\"'], $q);
-    // Default = HEADER search (subject/from/to): fast, because the server never
-    // scans message bodies. A BODY full-text scan is the slow part on IMAP
-    // servers without a full-text index, so it's opt-in via ?scope=full.
+    $q    = trim((string)($_GET['q'] ?? ''));
+    $page = max(1, (int)($_GET['page'] ?? 1));
+    $sort = (string)($_GET['sort'] ?? 'date');
+    if (!in_array($sort, ['date', 'from', 'subject', 'size'], true)) $sort = 'date';
+    $dir  = (($_GET['dir'] ?? 'desc') === 'asc') ? 'asc' : 'desc';
     $full = (($_GET['scope'] ?? '') === 'full');
-    if ($full) {
-        $criterion = 'OR OR OR SUBJECT "' . $needle . '" FROM "' . $needle . '" TO "' . $needle . '" BODY "' . $needle . '"';
-        $critList  = ['SUBJECT', 'FROM', 'TO', 'BODY'];
-    } else {
-        $criterion = 'OR OR SUBJECT "' . $needle . '" FROM "' . $needle . '" TO "' . $needle . '"';
-        $critList  = ['SUBJECT', 'FROM', 'TO'];
+    // where=all is the old "Search every folder" button; in:anywhere means the same.
+    $where = (($_GET['where'] ?? '') === 'all') ? 'all' : 'default';
+
+    $p      = search_parse($q);
+    $errors = $p['errors'];
+    $describe = search_describe($p);
+    $empty = function ($extra = []) use ($q, $describe, $errors, $sort, $dir, $full, $where) {
+        ok(array_merge([
+            'results' => [], 'q' => $q, 'parsed' => $describe, 'errors' => $errors,
+            'folders' => [], 'searched_all' => $where === 'all', 'folders_capped' => false,
+            'total' => 0, 'page' => 1, 'pages' => 1, 'sort' => $sort, 'dir' => $dir,
+            'scope' => $full ? 'full' : 'headers', 'attach' => null, 'reach_hit' => false,
+        ], $extra));
+    };
+    if (mb_strlen($q) < 2) $empty();
+
+    $ref = imap_ref();
+    [$allFolders, $sentName] = search_all_folders($ref);
+
+    // Which folders to open.
+    //   in:<name>    — that folder only (type words like "archive" resolve)
+    //   in:anywhere  — every folder, same as the "Search every folder" button
+    //   otherwise    — Inbox + the current folder + Sent: fast, and right for
+    //                  the common "where is that message" case.
+    $folders = null; $capped = false;
+    if ($p['in'] !== null) {
+        $r = search_resolve_folder($p['in'], $allFolders);
+        if ($r === 'anywhere')  $where = 'all';
+        elseif ($r !== null)    $folders = [$r];
+        else { $errors[] = 'There is no folder called "' . $p['in'] . '". Try in:anywhere.'; $empty(['errors' => $errors]); }
     }
-
-    $results  = [];
-    $seenKey  = [];
-    $perFolderCap = 80;
-
-    foreach ($foldersToSearch as $f) {
-        $box = open_box($f);
-        if (!$box) continue;
-
-        $uids = @imap_search($box, $criterion, SE_UID);
-        if (!$uids) {
-            // Fall back: try each criterion separately in case the OR form fails on this server.
-            $uids = [];
-            foreach ($critList as $crit) {
-                $r = @imap_search($box, $crit . ' "' . $needle . '"', SE_UID);
-                if ($r) $uids = array_merge($uids, $r);
-            }
-            $uids = array_values(array_unique(array_map('intval', $uids)));
+    if ($folders === null) {
+        if ($where === 'all') {
+            $folders = $allFolders;
+            if (count($folders) > 40) { $folders = array_slice($folders, 0, 40); $capped = true; }
         } else {
-            $uids = array_values(array_unique(array_map('intval', $uids)));
+            $folders = ['INBOX'];
+            if (strcasecmp($folder, 'INBOX') !== 0 && in_array($folder, $allFolders, true)) $folders[] = $folder;
+            if ($sentName && !in_array($sentName, $folders, true)) $folders[] = $sentName;
         }
-
-        if (empty($uids)) { @imap_close($box); continue; }
-
-        // Newest UIDs first; cap before fetching overview to keep things snappy.
-        rsort($uids);
-        if (count($uids) > $perFolderCap) $uids = array_slice($uids, 0, $perFolderCap);
-
-        $ov = @imap_fetch_overview($box, implode(',', $uids), FT_UID);
-        if ($ov) {
-            foreach ($ov as $m) {
-                $uid = (int)$m->uid;
-                $key = $f . ':' . $uid;
-                if (isset($seenKey[$key])) continue;
-                $seenKey[$key] = true;
-                $from = parse_addr($m->from ?? '');
-                // One row per matching message, not per conversation: a search
-                // hit is a specific message, and grouping would show a row whose
-                // visible subject and sender never matched what was typed.
-                $results[] = [
-                    'uid'          => $uid,
-                    'folder'       => $f,
-                    'subject'      => decode_header($m->subject ?? '') ?: '(no subject)',
-                    'from_name'    => $from['name'],
-                    'from_addr'    => $from['email'],
-                    'to'           => decode_header($m->to ?? ''),
-                    'date'         => $m->date ?? '',
-                    'timestamp'    => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
-                    'seen'         => !empty($m->seen),
-                    'flagged'      => !empty($m->flagged),
-                    'answered'     => !empty($m->answered),
-                    'thread_count' => 1,
-                    'thread_uids'  => [$uid],
-                ];
-            }
-        }
-        @imap_close($box);
     }
 
-    usort($results, function ($a, $b) { return $b['timestamp'] - $a['timestamp']; });
-    if (count($results) > 200) $results = array_slice($results, 0, 200);
+    $criterion = search_to_imap($p, $full);
+    // Nothing to search on and nothing to filter by: listing forty folders
+    // would be a scan, not a search. Say what would make it one.
+    if ($criterion === 'ALL' && $p['has'] === null && $p['in'] === null) {
+        $errors[] = 'Add a word, or a filter such as has:attachment or in:archive.';
+        $empty(['errors' => $errors]);
+    }
 
-    ok([
-        'results'        => $results,
-        'q'              => $q,
-        'folders'        => $foldersToSearch,
-        'searched_all'   => $searchAll,
-        'folders_capped' => $folderCapped,
-        'total'          => count($results),
-        'scope'   => $full ? 'full' : 'headers',
+    // A single plain word can be retried one key at a time if a server rejects
+    // the nested OR; anything structured cannot be split that way, because the
+    // parts are ANDed and a union would be wrong.
+    $fallback = null;
+    if (count($p['text']) === 1 && search_to_imap(array_merge($p, ['text' => []]), $full) === 'ALL') {
+        $qq = search_imap_quote($p['text'][0]);
+        $fallback = ["SUBJECT $qq", "FROM $qq", "TO $qq"];
+        if ($full) $fallback[] = "BODY $qq";
+    }
+
+    $out = search_collect($criterion, $folders, [
+        'page' => $page, 'per_page' => 25, 'sort' => $sort, 'dir' => $dir,
+        'attach' => $p['has'], 'attach_budget' => 150, 'reach' => 600,
+        'email' => (string)($_SESSION['email'] ?? ''), 'acct' => account_effective_id(),
+        'fallback' => $fallback,
     ]);
+
+    ok(array_merge($out, [
+        'q'              => $q,
+        'parsed'         => $describe,
+        'errors'         => $errors,
+        'criterion'      => $criterion,          // what was sent to IMAP — invaluable in a bug report
+        'searched_all'   => $where === 'all',
+        'folders_capped' => $capped,
+        'scope'          => $full ? 'full' : 'headers',
+    ]));
 }
 
 if ($action === 'thread') {

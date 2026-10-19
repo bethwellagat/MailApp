@@ -7084,3 +7084,64 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
   /* A checkbox is tapped via its label, so the label carries the target. */
   .login-page .checkbox-row { min-height: 44px; }
 }
+
+/* ---- search filters ----
+   The operator chips under the list header, shown only during a search. They
+   reuse the folder chips' look so the two rows read as one family, but they
+   are a different thing: a folder chip filters the page on screen, a search
+   chip rewrites the query and asks the server. Scoped .mail-page like every
+   other rule below the redesign marker. */
+.mail-page .search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px 10px;
+  border-bottom: 0.5px solid var(--m-sep);
+}
+.mail-page .search-chip .icon { width: 12px; height: 12px; margin-right: 4px; }
+.mail-page .search-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--m-label-2);
+  min-width: 0;
+}
+.mail-page .search-select-label { white-space: nowrap; }
+.mail-page .search-select {
+  border: 0;
+  border-radius: 999px;
+  background: var(--m-fill);
+  color: var(--m-label);
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 26px 5px 12px;
+  appearance: none;
+  -webkit-appearance: none;
+  /* A neutral chevron that reads on both the light and dark fill. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%238e8e93' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  cursor: pointer;
+  max-width: 100%;
+}
+.mail-page .search-select:focus-visible { outline: 2px solid var(--m-blue); outline-offset: 1px; }
+.mail-page .search-sort-wrap { margin-left: auto; }
+/* What the server could not promise, said where the results start: an
+   operator it did not understand, messages not yet checked for attachments,
+   a page past the search window. Errors use the app's error ink. */
+.mail-page .search-note {
+  padding: 8px 16px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--m-label-2);
+  border-bottom: 0.5px solid var(--m-sep);
+}
+.mail-page .search-note.error { color: var(--c-error); }
+
+@media (max-width: 820px), (pointer: coarse) {
+  .mail-page .search-select { min-height: 44px; }
+  /* On a phone the sort control wraps under the chips; let it take the row. */
+  .mail-page .search-sort-wrap { margin-left: 0; }
+}

@@ -58,6 +58,17 @@
     let searchResultWhere   = 'default'; // breadth of those results ('default' | 'all')
     let searchFoldersCapped = false;     // true when "all folders" hit the server-side cap
     let searchFolderCount   = 0;         // how many folders the server actually searched
+    // Paged, sortable results (search and the starred view share this).
+    let searchPage        = 1;
+    let searchPages       = 1;
+    let searchTotal       = 0;          // the TRUE count, not the rows loaded
+    let searchSort        = 'date';
+    let searchDir         = 'desc';
+    let searchParsed      = [];         // the server's reading of the query, drives the chips
+    let searchErrors      = [];         // operators it could not use, in words
+    let searchAttach      = null;       // { probed, unknown, known } when has: was asked
+    let searchReachHit    = false;      // asked for a page past the per-folder window
+    let searchSortApprox  = false;      // server lacks SORT; loaded window was sorted instead
 
     const ATTACH_MAX_PER_FILE = 25 * 1024 * 1024;  // 25 MB
     const ATTACH_MAX_TOTAL    = 25 * 1024 * 1024;
@@ -1059,12 +1070,37 @@
     }
 
     function renderSearchResults() {
-        const q = state.searchQuery;
         const results = state.searchResults;
         toggleFilterPane(false);
-        $('listFolderName').textContent = state.starredActive
-            ? ('Starred · ' + results.length + (results.length === 1 ? ' message' : ' messages'))
-            : ('Search "' + q + '" · ' + results.length + ' result' + (results.length === 1 ? '' : 's'));
+
+        // The header carries the TRUE total from the server, not the number of
+        // rows on this page — "Search · 143 results" with 25 on screen.
+        const noun = state.starredActive
+            ? (searchTotal === 1 ? ' message' : ' messages')
+            : (searchTotal === 1 ? ' result' : ' results');
+        $('listFolderName').textContent = (state.starredActive ? 'Starred' : 'Search') + ' · ' + searchTotal + noun;
+
+        // The folder chips are about the page on screen; a search has its own.
+        $('listFilters').hidden = true;
+        renderSearchFilters();
+
+        // Anything the server could not promise goes ABOVE the rows, where it is
+        // read before the results are trusted.
+        let notes = '';
+        for (const err of searchErrors) {
+            notes += '<div class="search-note error">' + escapeHtml(err) + '</div>';
+        }
+        if (searchAttach && searchAttach.unknown > 0) {
+            notes += '<div class="search-note">' + searchAttach.unknown + ' more message' +
+                     (searchAttach.unknown === 1 ? '' : 's') +
+                     ' not yet checked for attachments — run the search again to check the next batch.</div>';
+        }
+        if (searchReachHit) {
+            notes += '<div class="search-note">Showing the first 600 matches per folder. Add a filter to narrow the search.</div>';
+        }
+        if (searchSortApprox) {
+            notes += '<div class="search-note">This mail server cannot sort search results itself; the loaded matches were sorted instead.</div>';
+        }
 
         // Searching is deliberately narrow by default (headers only, Inbox +
         // current + Sent) because both dimensions cost real time on IMAP servers
@@ -1072,10 +1108,7 @@
         // who cannot find something knows there is more to look at rather than
         // concluding the message is gone.
         let ctas = '';
-        if (state.starredActive) {
-            // The starred view already spans every folder; the search-widening
-            // actions would be meaningless here.
-        } else if (searchResultScope === 'headers') {
+        if (!state.starredActive && searchResultScope === 'headers') {
             ctas += '<button type="button" class="search-fulltext-cta" data-full-search="1">' +
                         '<svg class="icon" width="13" height="13"><use href="#ic-search"/></svg>' +
                         'Search full message text' +
@@ -1087,36 +1120,39 @@
                         'Search every folder' +
                     '</button>';
         }
-        let note = '';
+        let scopeNote = '';
         if (searchResultWhere === 'all') {
-            note = '<div class="search-scope-note">Searched ' + searchFolderCount + ' folder' +
+            scopeNote = '<div class="search-scope-note">Searched ' + searchFolderCount + ' folder' +
                    (searchFolderCount === 1 ? '' : 's') +
                    (searchFoldersCapped ? ' (the first ' + searchFolderCount + ' — this mailbox has more)' : '') +
                    '.</div>';
         }
-        const fullCta = (ctas || note) ? '<div class="search-fulltext-row">' + ctas + note + '</div>' : '';
+        const fullCta = (ctas || scopeNote) ? '<div class="search-fulltext-row">' + ctas + scopeNote + '</div>' : '';
 
         if (results.length === 0) {
             if (state.starredActive) {
-                $('messageList').innerHTML =
+                $('messageList').innerHTML = notes +
                     '<div class="list-empty">Nothing is starred. Star a message to keep it here.</div>' + fullCta;
             } else {
                 const scopeWord = searchResultWhere === 'all' ? 'any folder' : 'Inbox, this folder or Sent';
                 const whatWord  = searchResultScope === 'full' ? 'message text' : 'subjects, senders, or recipients';
-                $('messageList').innerHTML =
+                $('messageList').innerHTML = notes +
                     '<div class="list-empty">No matches in ' + whatWord + ' in ' + scopeWord + '.</div>' + fullCta;
             }
-            $('pagination').hidden = true;
+            renderSearchPager();
             return;
         }
 
         let html = '';
         let lastGroup = null;
         for (const m of results) {
-            const group = dateGroupLabel(m.timestamp);
-            if (group !== lastGroup) {
-                html += '<div class="list-group-header">' + escapeHtml(group) + '</div>';
-                lastGroup = group;
+            // Group headers only make sense when the rows are in date order.
+            if (searchSort === 'date') {
+                const group = dateGroupLabel(m.timestamp);
+                if (group !== lastGroup) {
+                    html += '<div class="list-group-header">' + escapeHtml(group) + '</div>';
+                    lastGroup = group;
+                }
             }
             const cls = ['msg-item', 'search-result'];
             if (!m.seen) cls.push('unread');
@@ -1127,6 +1163,7 @@
             const color      = avatarColor(seed);
             const fromDisp   = m.from_name || m.from_addr || '(unknown)';
             const folderTag  = '<span class="msg-folder-badge" data-folder-type="' + folderType(m.folder) + '">' + escapeHtml(displayFolderName(m.folder)) + '</span>';
+            const clip       = m.has_attachments ? '<svg class="msg-indicator" width="12" height="12"><use href="#ic-paperclip"/></svg>' : '';
             html +=
                 '<div class="' + cls.join(' ') + '" data-uid="' + m.uid + '" data-folder="' + escapeAttr(m.folder) + '"' +
                      ' role="option" id="msgrow-' + m.uid + '" aria-selected="' + (isActive ? 'true' : 'false') + '"' +
@@ -1136,7 +1173,7 @@
                     '<div class="msg-body">' +
                         '<div class="msg-row1">' +
                             '<span class="msg-from">' + escapeHtml(fromDisp) + folderTag + '</span>' +
-                            '<span class="msg-meta">' +
+                            '<span class="msg-meta">' + clip +
                                 '<span class="msg-time">' + escapeHtml(formatTime(m.timestamp)) + '</span>' +
                             '</span>' +
                         '</div>' +
@@ -1144,31 +1181,149 @@
                     '</div>' +
                 '</div>';
         }
-        $('messageList').innerHTML = html + fullCta;
+        $('messageList').innerHTML = notes + html + fullCta;
         ensureTabbableRow();
-        $('pagination').hidden = true;
+        renderSearchPager();
     }
 
-    async function runServerSearch(q, scope, where) {
-        scope = scope || 'headers'; // default = fast header search (subject/from/to)
-        where = where || 'default';  // 'all' = every folder, not just Inbox/current/Sent
-        const cacheKey = scope + '|' + where + '|' + q.toLowerCase();
-        if (searchCache.has(cacheKey)) {
-            const hit = searchCache.get(cacheKey);
-            state.searchActive  = true;
-            searchResultScope   = scope;
-            searchResultWhere   = where;
-            searchFoldersCapped = !!hit.capped;
-            searchFolderCount   = hit.folders || 0;
-            state.searchResults = hit.results;
-            renderSearchResults();
+    /** Light the chips from the server's reading of the query, never from guesswork about the text. */
+    function renderSearchFilters() {
+        const bar = $('searchFilters');
+        if (!bar) return;
+        bar.hidden = false;
+        const lit = new Set();
+        for (const c of searchParsed) {
+            const v = String(c.value || '').toLowerCase();
+            if (c.key === 'is'  && v) lit.add('is:' + v);
+            if (c.key === 'has' && v) lit.add('has:' + v);
+            if (c.key === 'in'  && v) lit.add('in:' + (['anywhere', 'all', 'everywhere', '*'].includes(v) ? 'anywhere' : v));
+            if (c.key === 'from')     lit.add('from:');
+        }
+        if (searchResultWhere === 'all') lit.add('in:anywhere');
+        bar.querySelectorAll('.search-chip').forEach(ch => {
+            const key = ch.dataset.op + ':' + (ch.dataset.val || '');
+            const on  = lit.has(key);
+            ch.classList.toggle('active', on);
+            ch.setAttribute('aria-pressed', on ? 'true' : 'false');
+            // Starred has no query to edit — only the sort applies there.
+            ch.hidden = state.starredActive;
+        });
+        const newer = $('searchNewer');
+        if (newer) {
+            const m = /(?:^|\s)newer:(\d+[dwmy])(?=\s|$)/i.exec(state.searchQuery || '');
+            const want = m ? m[1].toLowerCase() : '';
+            newer.value = [...newer.options].some(o => o.value === want) ? want : '';
+            newer.closest('label').hidden = state.starredActive;
+        }
+        const sortSel = $('searchSort');
+        if (sortSel) sortSel.value = searchSort + ':' + searchDir;
+    }
+
+    function renderSearchPager() {
+        const pg = $('pagination');
+        if (searchPages <= 1) { pg.hidden = true; return; }
+        pg.hidden = false;
+        $('prevPage').disabled = searchPage <= 1;
+        $('nextPage').disabled = searchPage >= searchPages;
+        $('pagerInfo').textContent = 'Page ' + searchPage + ' of ' + searchPages;
+    }
+
+    /** Re-run the current query from page 1, without the typing debounce. */
+    function runSearchNow() {
+        clearTimeout(searchDebounceTimer);
+        const q = state.searchQuery;
+        if (q.length < 2) { exitSearchMode(); return; }
+        runServerSearch(q, searchResultScope, searchResultWhere, 1, searchSort, searchDir);
+    }
+
+    /**
+     * Add or remove one operator in the search box, then search at once.
+     * The box is the single source of truth: a chip never holds state the
+     * query does not show, so what the user reads is exactly what was asked.
+     */
+    function searchToggleOperator(op, val) {
+        const input = $('searchInput');
+        let q = input.value;
+        const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        if (op === 'from' && val === '') {
+            // "From…": put the operator in and let the user type who.
+            if (!/(^|\s)-?from:/i.test(q)) q = (q.trim() ? q.trim() + ' ' : '') + 'from:';
+            input.value = q;
+            input.focus();
+            input.setSelectionRange(q.length, q.length);
+            state.searchQuery = q.trim();
             return;
         }
+
+        const present = new RegExp('(^|\\s)-?' + esc(op) + ':' + esc(val) + '(?=\\s|$)', 'i');
+        if (present.test(q)) {
+            q = q.replace(present, '$1');
+            if (op === 'in' && val === 'anywhere') searchResultWhere = 'default';
+        } else if (op === 'in' && val === 'anywhere' && searchResultWhere === 'all') {
+            // Lit by the "Search every folder" button rather than by a token:
+            // turning it off means narrowing the scope again.
+            searchResultWhere = 'default';
+        } else {
+            // States that cannot both be true swap rather than stack.
+            if (op === 'is') {
+                const opp = { unread: 'read', read: 'unread', flagged: 'unflagged', unflagged: 'flagged' }[val];
+                if (opp) q = q.replace(new RegExp('(^|\\s)-?is:' + opp + '(?=\\s|$)', 'i'), '$1');
+            }
+            if (op === 'has') q = q.replace(/(^|\s)-?has:[^\s]+(?=\s|$)/i, '$1');
+            if (op === 'in')  q = q.replace(/(^|\s)-?in:(?:"[^"]*"|[^\s]+)(?=\s|$)/i, '$1');
+            q = (q.trim() ? q.trim() + ' ' : '') + op + ':' + val;
+        }
+        q = q.replace(/\s{2,}/g, ' ').trim();
+        input.value = q;
+        state.searchQuery = q;
+        runSearchNow();
+    }
+
+    /** The "Newer than" picker writes a relative date; empty clears it. */
+    function searchSetNewer(v) {
+        const input = $('searchInput');
+        let q = input.value.replace(/(^|\s)-?(newer|after|since):[^\s]+(?=\s|$)/gi, '$1').replace(/\s{2,}/g, ' ').trim();
+        if (v) q = (q ? q + ' ' : '') + 'newer:' + v;
+        input.value = q;
+        state.searchQuery = q;
+        runSearchNow();
+    }
+
+    async function runServerSearch(q, scope, where, page, sort, dir) {
+        scope = scope || 'headers';   // default = fast header search (subject/from/to)
+        where = where || 'default';   // 'all' = every folder, not just Inbox/current/Sent
+        page  = page  || 1;
+        sort  = sort  || searchSort;
+        dir   = dir   || searchDir;
+        const cacheKey = [scope, where, page, sort, dir, q.toLowerCase()].join('|');
+
+        const apply = (data) => {
+            state.searchActive  = true;
+            state.starredActive = false;
+            searchResultScope   = scope;
+            searchResultWhere   = data.searched_all ? 'all' : where;
+            searchFoldersCapped = !!data.folders_capped;
+            searchFolderCount   = (data.folders || []).length;
+            searchPage          = data.page  || 1;
+            searchPages         = data.pages || 1;
+            searchTotal         = data.total || 0;
+            searchSort          = data.sort  || sort;
+            searchDir           = data.dir   || dir;
+            searchParsed        = data.parsed || [];
+            searchErrors        = data.errors || [];
+            searchAttach        = data.attach || null;
+            searchReachHit      = !!data.reach_hit;
+            searchSortApprox    = !!data.sort_approx;
+            state.searchResults = data.results || [];
+            renderSearchResults();
+        };
+        if (searchCache.has(cacheKey)) { apply(searchCache.get(cacheKey)); return; }
 
         if (searchAbortCtrl) searchAbortCtrl.abort();
         searchAbortCtrl = new AbortController();
 
-        $('listFolderName').textContent = 'Searching for "' + q + '"…';
+        $('listFolderName').textContent = 'Searching…';
         $('messageList').innerHTML = '<div class="list-loading">' +
             (where === 'all'
                 ? 'Searching every folder…'
@@ -1177,8 +1332,10 @@
 
         try {
             const url = 'ajax/fetch.php?action=search&q=' + encodeURIComponent(q) +
+                        '&page=' + page + '&sort=' + encodeURIComponent(sort) + '&dir=' + encodeURIComponent(dir) +
                         (scope === 'full' ? '&scope=full' : '') +
-                        (where === 'all' ? '&where=all' : '');
+                        (where === 'all' ? '&where=all' : '') +
+                        acctParam(viewAcct());
             const r = await fetch(url, { credentials: 'same-origin', signal: searchAbortCtrl.signal });
             if (r.status === 401) { window.location = 'index'; return; }
             const data = await r.json();
@@ -1186,17 +1343,10 @@
                 $('messageList').innerHTML = '<div class="list-empty">Search failed: ' + escapeHtml(data.error) + '</div>';
                 return;
             }
-            const results = data.results || [];
-            // LRU-ish cap of 20 cached searches per session (keyed by scope+query)
+            // LRU-ish cap of 20 cached result pages per session
             if (searchCache.size >= 20) searchCache.delete(searchCache.keys().next().value);
-            searchCache.set(cacheKey, { results: results, capped: !!data.folders_capped, folders: (data.folders || []).length });
-            state.searchActive  = true;
-            searchResultScope   = scope;
-            searchResultWhere   = where;
-            searchFoldersCapped = !!data.folders_capped;
-            searchFolderCount   = (data.folders || []).length;
-            state.searchResults = results;
-            if (state.searchQuery === q) renderSearchResults(); // ignore stale response
+            searchCache.set(cacheKey, data);
+            if (state.searchQuery === q) apply(data); // ignore a stale response
         } catch (e) {
             if (e.name !== 'AbortError') {
                 $('messageList').innerHTML = '<div class="list-empty">Search error: ' + escapeHtml(e.message) + '</div>';
@@ -1205,36 +1355,49 @@
     }
 
     /** Every starred message, across folders — rendered through the search view. */
-    async function loadStarred() {
+    async function loadStarred(page, sort, dir) {
+        page = page || 1;
+        sort = sort || searchSort;
+        dir  = dir  || searchDir;
         const seq = ++loadMessagesSeq;
         $('listFolderName').textContent = 'Starred · loading…';
         $('messageList').innerHTML = '<div class="list-loading">Looking for starred mail in every folder…</div>';
         $('pagination').hidden = true;
-        const data = await apiGet('starred', withAcct({}, viewAcct()));
+        const data = await apiGet('starred', withAcct({ page: page, sort: sort, dir: dir }, viewAcct()));
         if (seq !== loadMessagesSeq) return;            // superseded by a newer view
         if (data.error) {
             $('messageList').innerHTML = '<div class="list-empty">' + escapeHtml(data.error) + '</div>';
             return;
         }
-        const results = data.results || [];
         state.starredActive = true;
         state.searchActive  = true;                     // reuse the search rendering path
         state.searchQuery   = '';
-        state.searchResults = results;
+        state.searchResults = data.results || [];
         searchResultScope   = 'headers';
         searchResultWhere   = 'all';
         searchFoldersCapped = !!data.folders_capped;
         searchFolderCount   = (data.folders || []).length;
+        searchPage          = data.page  || 1;
+        searchPages         = data.pages || 1;
+        searchTotal         = data.total || 0;
+        searchSort          = data.sort  || sort;
+        searchDir           = data.dir   || dir;
+        searchParsed        = [];
+        searchErrors        = [];
+        searchAttach        = null;
+        searchReachHit      = !!data.reach_hit;
+        searchSortApprox    = !!data.sort_approx;
         renderSearchResults();
-        $('listFolderName').textContent = 'Starred · ' + results.length +
-            (results.length === 1 ? ' message' : ' messages');
     }
 
     function exitSearchMode() {
         state.starredActive = false;
+        if ($('searchFilters')) $('searchFilters').hidden = true;
+        $('listFilters').hidden = false;
         if (!state.searchActive && state.searchResults.length === 0) return;
         state.searchActive  = false;
         state.searchResults = [];
+        searchPage = 1; searchPages = 1; searchTotal = 0;
         renderMessages();
     }
 
@@ -1292,6 +1455,8 @@
 
     function renderMessages() {
         if (state.searchActive) { renderSearchResults(); return; }
+        $('listFilters').hidden = false;
+        if ($('searchFilters')) $('searchFilters').hidden = true;
         toggleFilterPane(true);
         updateFilterChips();
         const baseFiltered = filterMessages(state.messages);
@@ -3849,10 +4014,41 @@
             // and filtering one page reported "none" while the user's starred mail
             // sat in Archive. Ask the server instead.
             if (f === 'flagged') { loadStarred(); updateActionBar(); return; }
+            if (f === 'unread' || f === 'attachments') {
+                // Neither can be answered from the rows on screen either: "Attachments"
+                // filtered the 25 loaded rows and read as "all messages with attachments".
+                // Run the real query, scoped to this folder, and show it in the box so
+                // the user can see — and change — exactly what was asked.
+                const inFolder = (state.currentFolder && state.currentFolder !== OUTBOX_FOLDER)
+                    ? ' in:"' + state.currentFolder + '"' : '';
+                const q = (f === 'unread' ? 'is:unread' : 'has:attachment') + inFolder;
+                $('searchInput').value = q;
+                state.searchQuery = q;
+                state.listFilter  = 'all';
+                runServerSearch(q, 'headers', 'default', 1, searchSort, searchDir);
+                updateActionBar();
+                return;
+            }
             if (state.starredActive) { state.starredActive = false; loadMessages(); updateActionBar(); return; }
             renderMessages();
             updateActionBar();
         });
+
+        if ($('searchFilters')) {
+            $('searchFilters').addEventListener('click', (e) => {
+                const chip = e.target.closest('.search-chip');
+                if (!chip) return;
+                searchToggleOperator(chip.dataset.op, chip.dataset.val || '');
+            });
+            $('searchNewer').addEventListener('change', (e) => searchSetNewer(e.target.value));
+            $('searchSort').addEventListener('change', (e) => {
+                const parts = String(e.target.value).split(':');
+                searchSort = parts[0] || 'date';
+                searchDir  = parts[1] || 'desc';
+                if (state.starredActive) loadStarred(1, searchSort, searchDir);
+                else runServerSearch(state.searchQuery, searchResultScope, searchResultWhere, 1, searchSort, searchDir);
+            });
+        }
 
         $('messageList').addEventListener('click', (e) => {
             // Outbox view: rows are queued sends, not messages — handle Cancel/Retry
@@ -3978,20 +4174,23 @@
             // results render instantly without a debounce wait. Key must match
             // runServerSearch's `scope + '|' + q` (default scope = headers), or
             // this fast path never hits and every repeat search re-waits 300ms.
-            const cacheKey = 'headers|' + q.toLowerCase();
-            if (searchCache.has(cacheKey)) {
-                state.searchActive  = true;
-                state.searchResults = searchCache.get(cacheKey);
-                renderSearchResults();
-                return;
-            }
+            const cacheKey = ['headers', 'default', 1, searchSort, searchDir, q.toLowerCase()].join('|');
+            if (searchCache.has(cacheKey)) { runServerSearch(q); return; }
             searchDebounceTimer = setTimeout(() => runServerSearch(q), 300);
+        });
+        // Enter means "now", not "after the debounce".
+        $('searchInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); runSearchNow(); }
         });
 
         $('prevPage').addEventListener('click', () => {
+            if (state.starredActive) { if (searchPage > 1) loadStarred(searchPage - 1); return; }
+            if (state.searchActive)  { if (searchPage > 1) runServerSearch(state.searchQuery, searchResultScope, searchResultWhere, searchPage - 1, searchSort, searchDir); return; }
             if (state.currentPage > 1) { state.currentPage--; loadMessages(); }
         });
         $('nextPage').addEventListener('click', () => {
+            if (state.starredActive) { if (searchPage < searchPages) loadStarred(searchPage + 1); return; }
+            if (state.searchActive)  { if (searchPage < searchPages) runServerSearch(state.searchQuery, searchResultScope, searchResultWhere, searchPage + 1, searchSort, searchDir); return; }
             if (state.currentPage < state.totalPages) { state.currentPage++; loadMessages(); }
         });
 

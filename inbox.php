@@ -362,6 +362,41 @@ $prefs        = load_prefs($email);
                     Attachments
                 </button>
             </div>
+            <!-- Search filters: shown only while a search is active. Every chip
+                 writes or removes an operator in the search box, so clicking and
+                 typing are the same thing and the box always shows what was asked. -->
+            <div class="search-filters" id="searchFilters" hidden>
+                <button class="list-filter-chip search-chip" type="button" data-op="is" data-val="unread" aria-pressed="false">Unread</button>
+                <button class="list-filter-chip search-chip" type="button" data-op="is" data-val="flagged" aria-pressed="false">Flagged</button>
+                <button class="list-filter-chip search-chip" type="button" data-op="has" data-val="attachment" aria-pressed="false">
+                    <svg class="icon" width="12" height="12"><use href="#ic-paperclip"/></svg>Has attachment
+                </button>
+                <button class="list-filter-chip search-chip" type="button" data-op="has" data-val="no-attachment" aria-pressed="false">No attachment</button>
+                <button class="list-filter-chip search-chip" type="button" data-op="from" data-val="" aria-pressed="false">From…</button>
+                <label class="search-select-wrap">
+                    <span class="search-select-label">Newer than</span>
+                    <select class="search-select" id="searchNewer" aria-label="Newer than">
+                        <option value="">any time</option>
+                        <option value="7d">7 days</option>
+                        <option value="30d">30 days</option>
+                        <option value="90d">90 days</option>
+                        <option value="1y">1 year</option>
+                    </select>
+                </label>
+                <button class="list-filter-chip search-chip" type="button" data-op="in" data-val="anywhere" aria-pressed="false">
+                    <svg class="icon" width="12" height="12"><use href="#ic-folder"/></svg>All folders
+                </button>
+                <label class="search-select-wrap search-sort-wrap">
+                    <span class="search-select-label">Sort</span>
+                    <select class="search-select" id="searchSort" aria-label="Sort results">
+                        <option value="date:desc">Newest first</option>
+                        <option value="date:asc">Oldest first</option>
+                        <option value="from:asc">Sender A–Z</option>
+                        <option value="subject:asc">Subject A–Z</option>
+                        <option value="size:desc">Largest first</option>
+                    </select>
+                </label>
+            </div>
             <div class="list-selection hidden" id="listSelection" aria-hidden="true">
                 <label class="list-selection-all">
                     <input type="checkbox" id="listSelectAll">

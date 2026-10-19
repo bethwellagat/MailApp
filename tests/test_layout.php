@@ -471,3 +471,63 @@ if ($own !== null) {
          strpos($sel, 'body.mail-page') !== false,
          'plain .mail-page ties with .topbar-search-input:focus — got: ' . $sel);
 }
+
+t_group('search: one definition of what a query means');
+/**
+ * The endpoint must parse with search_parse() and run through
+ * search_collect(). A hand-built criterion anywhere in the endpoint would be
+ * a second definition of what a search means — the same drift that once let
+ * the list and the reading pane disagree about a conversation.
+ */
+$f = @file_get_contents(T_ROOT . '/ajax/fetch.php');
+t_ok('fetch.php is readable', is_string($f) && $f !== '');
+if (is_string($f)) {
+    t_ok('the endpoint requires lib/search.php',       strpos($f, 'lib/search.php') !== false);
+    t_ok('the endpoint requires lib/attachindex.php',  strpos($f, 'lib/attachindex.php') !== false);
+    t_ok('search parses with search_parse()',          strpos($f, 'search_parse($q)') !== false);
+    t_ok('search translates with search_to_imap()',    strpos($f, 'search_to_imap($p, $full)') !== false);
+    /* Call sites only — "search_collect(" alone also matches the function's own
+       definition, which let one caller plus the definition pass as two callers. */
+    t_ok('search and starred page through one collector', substr_count($f, '$out = search_collect(') >= 2,
+         'found ' . substr_count($f, '$out = search_collect(') . ' call sites');
+    t_ok('no hand-built OR criterion remains in the endpoint', strpos($f, 'OR OR SUBJECT') === false);
+    t_ok('starred reads a page parameter',
+         preg_match("/action === 'starred'.*?\\\$_GET\\['page'\\]/s", $f) === 1);
+    t_ok('attach_flags feeds the attachment index',
+         preg_match("/action === 'attach_flags'.*?attach_index_merge\\(/s", $f) === 1);
+    t_ok('the search response says what was sent to IMAP', strpos($f, "'criterion'") !== false,
+         'a bug report with the criterion in it is a bug report that can be reproduced');
+    t_ok('a has: filter is answered from the index, never guessed',
+         preg_match('/attach_index_filter\\(\\$idx, \\$uids, \\$attach\\)/', $f) === 1);
+}
+
+t_group('search: the filter bar is wired end to end');
+/**
+ * A chip, its handler, the function it calls and the request it produces are
+ * four separate pieces; losing any one leaves a control that looks fine and
+ * does nothing. The Unread and Attachments chips are singled out because
+ * their old behaviour — filtering the 25 rows on screen — was the defect.
+ */
+$h  = @file_get_contents(T_ROOT . '/inbox.php');
+$js = @file_get_contents(T_ROOT . '/assets/app.js');
+if (is_string($h) && is_string($js)) {
+    t_ok('the bar exists and starts hidden', preg_match('/id="searchFilters"[^>]*\shidden/', $h) === 1);
+    foreach (['is|unread', 'is|flagged', 'has|attachment', 'has|no-attachment', 'from|', 'in|anywhere'] as $c) {
+        [$op, $val] = explode('|', $c);
+        t_ok("chip $op:$val is in the markup", strpos($h, 'data-op="' . $op . '" data-val="' . $val . '"') !== false);
+    }
+    t_ok('the newer-than and sort selects exist', strpos($h, 'id="searchNewer"') !== false && strpos($h, 'id="searchSort"') !== false);
+    t_ok('the bar\'s handler is attached',        strpos($js, "\$('searchFilters').addEventListener") !== false);
+    t_ok('chips edit the query through one function', substr_count($js, 'searchToggleOperator(') >= 2);
+    t_ok('chips light from the server\'s parse, not from a regex over the text',
+         strpos($js, 'for (const c of searchParsed)') !== false);
+    t_ok('Unread and Attachments chips ask the server',
+         preg_match("/f === 'unread' \\|\\| f === 'attachments'/", $js) === 1);
+    t_ok('…scoped to the folder being viewed',   strpos($js, "' in:\"' + state.currentFolder + '\"'") !== false);
+    t_ok('the request carries page, sort and dir', strpos($js, "'&page=' + page + '&sort='") !== false);
+    t_ok('the header shows the true total, not the rows loaded', strpos($js, "' · ' + searchTotal + noun") !== false);
+    t_ok('the pager pages the search while searching',
+         preg_match("/prevPage.*?state\\.searchActive.*?searchPage - 1/s", $js) === 1);
+    t_ok('starred passes its page',               strpos($js, "apiGet('starred', withAcct({ page: page") !== false);
+    t_ok('Enter searches at once',                strpos($js, "if (e.key === 'Enter') { e.preventDefault(); runSearchNow(); }") !== false);
+}
