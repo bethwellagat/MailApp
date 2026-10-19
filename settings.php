@@ -716,7 +716,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         <section id="tasks" class="settings-section">
             <header class="settings-section-header">
                 <h2>Background tasks</h2>
-                <p class="settings-section-desc">Scheduled sends, out-of-office replies, snoozes and filters run on their own once an account is switched on: the app keeps itself awake on the server and runs them every five minutes. No cron job is needed. To do that, the server has to be able to open the mailbox on its own &mdash; which means keeping that account's password here, sealed. Turning it off deletes the stored password at once; it is also deleted automatically when nothing is pending.</p>
+                <p class="settings-section-desc">Scheduled sends, out-of-office replies, snoozes and filters run on their own once an account is switched on: the app keeps itself awake on the server and runs them every five minutes. No cron job is needed. To do that, the server has to be able to open the mailbox on its own &mdash; which means keeping that account's password here, sealed. Turning it off deletes the stored password at once; it is also deleted automatically after 30 days with nothing pending.</p>
             </header>
 
             <div class="settings-alert settings-alert-danger" id="tasksBackendNote" hidden>

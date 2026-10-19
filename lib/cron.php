@@ -48,6 +48,7 @@ const CRON_HOP_MIN        = 45;      // shorter than this and the chain is not w
 const CRON_HOP_SLICE      = 10;      // a sleeping hop reports in this often
 const CRON_INLINE_HOPS    = 12;      // in-process chain length when the server cannot call itself
 const CRON_PROBE_TTL      = 86400;   // re-check a failed wake method daily
+const CRED_IDLE_SECONDS   = 30 * 86400;   // a sealed password kept for nothing is dropped after this
 
 /* ---------- clock, sleep and transport: injectable for tests ---------- */
 
@@ -69,7 +70,7 @@ function cron_state() {
     if (!is_array($d['runs']))    $d['runs']    = [];
     if (!is_array($d['trigger'])) $d['trigger'] = [];
     if (!is_array($d['chain']))   $d['chain']   = [];
-    $d['trigger'] += ['method' => '', 'checked' => 0, 'error' => '', 'misses' => 0];
+    $d['trigger'] += ['method' => '', 'checked' => 0, 'error' => '', 'misses' => 0, 'path' => '/cron.php'];
     $d['chain']   += ['mode' => 'auto', 'deaths' => 0, 'retry_at' => 0, 'reason' => ''];
     return $d;
 }
@@ -165,8 +166,10 @@ function cron_learn_base_url() {
 
 /* ---------- what Settings shows ---------- */
 
-function cron_url($baseUrl, $token) {
-    return rtrim((string)$baseUrl, '/') . '/cron.php?token=' . rawurlencode((string)$token);
+/** cron.php's URL. $path is what the probe found it answering on: /cron.php, or /cron behind a pretty-URL rewrite. */
+function cron_url($baseUrl, $token, $path = '/cron.php') {
+    $path = '/' . ltrim((string)$path, '/');
+    return rtrim((string)$baseUrl, '/') . $path . '?token=' . rawurlencode((string)$token);
 }
 
 /**
@@ -341,7 +344,7 @@ function cron_is_loopback_method($m) { return in_array($m, ['local', 'local-nove
  * it, close — the visitor's request does not wait for a run. Blocking (the
  * probe): read the whole answer.
  */
-function cron_http_send(array $variant, $url, $blocking) {
+function cron_http_exchange(array $variant, $url, $blocking) {
     if (isset($GLOBALS['CRON_TRANSPORT'])) return ($GLOBALS['CRON_TRANSPORT'])($variant, $url, $blocking);
     $ctx = stream_context_create(['ssl' => [
         'peer_name' => $variant['host'], 'SNI_enabled' => true,
@@ -350,7 +353,11 @@ function cron_http_send(array $variant, $url, $blocking) {
     $remote = ($variant['tls'] ? 'tls://' : 'tcp://') . $variant['connect'] . ':' . $variant['port'];
     $errno = 0; $errstr = '';
     $fp = @stream_socket_client($remote, $errno, $errstr, 3, STREAM_CLIENT_CONNECT, $ctx);
-    if (!$fp) return ['ok' => false, 'error' => 'connect ' . $variant['connect'] . ':' . $variant['port'] . ': ' . (trim((string)$errstr) ?: "error $errno")];
+    if (!$fp) {
+        // errno 0 with no message is how a failed TLS handshake reports itself.
+        $why = trim((string)$errstr) ?: ((int)$errno === 0 && $variant['tls'] ? 'TLS handshake failed (certificate or SNI)' : "error $errno");
+        return ['ok' => false, 'error' => 'connect ' . $variant['connect'] . ':' . $variant['port'] . ': ' . $why];
+    }
     if (@fwrite($fp, cron_http_request_bytes($url)) === false) { @fclose($fp); return ['ok' => false, 'error' => 'write failed']; }
     if (!$blocking) {
         @stream_set_timeout($fp, 0, 150000);
@@ -363,7 +370,31 @@ function cron_http_send(array $variant, $url, $blocking) {
     @fclose($fp);
     $status = preg_match('#^HTTP/\d\.\d (\d{3})#', $resp, $m) ? (int)$m[1] : 0;
     $i      = strpos($resp, "\r\n\r\n");
-    return ['ok' => true, 'status' => $status, 'body' => $i === false ? '' : substr($resp, $i + 4)];
+    $head   = $i === false ? $resp : substr($resp, 0, $i);
+    $loc    = preg_match('/^Location:\s*(\S+)/im', $head, $m) ? $m[1] : '';
+    return ['ok' => true, 'status' => $status, 'location' => $loc, 'body' => $i === false ? '' : substr($resp, $i + 4)];
+}
+
+/**
+ * A blocking fetch that follows a redirect to the SAME host (a pretty-URL
+ * rewrite sends /cron.php to /cron) and reports where it ended up, so the
+ * non-blocking triggers can go straight there — a fire-and-forget request
+ * that is answered with a redirect runs nothing.
+ */
+function cron_http_fetch(array $variant, $url, $hops = 3) {
+    $cur = (string)$url;
+    for ($i = 0; $i <= $hops; $i++) {
+        $r = cron_http_exchange($variant, $cur, true);
+        if (empty($r['ok'])) return $r;
+        $st = (int)($r['status'] ?? 0);
+        if (!in_array($st, [301, 302, 303, 307, 308], true) || empty($r['location'])) return $r + ['url' => $cur];
+        $next = (string)$r['location'];
+        if ($next[0] === '/') { $p = parse_url($cur); $next = $p['scheme'] . '://' . $p['host'] . (isset($p['port']) ? ':' . $p['port'] : '') . $next; }
+        $a = parse_url($cur); $b = parse_url($next);
+        if (!$b || strtolower((string)($b['host'] ?? '')) !== strtolower((string)($a['host'] ?? ''))) return ['ok' => false, 'error' => 'redirected off-site to ' . ($b['host'] ?? '?')];
+        $cur = $next;
+    }
+    return ['ok' => false, 'error' => 'too many redirects'];
 }
 
 function cron_can_finish_request() { return function_exists('fastcgi_finish_request') || function_exists('litespeed_finish_request'); }
@@ -384,16 +415,17 @@ function cron_request_is_ajax() { return strpos(str_replace('\\', '/', (string)(
 function cron_probe($baseUrl = null) {
     $st   = cron_state();
     $base = $baseUrl ?? $st['base_url'];
-    $res  = ['method' => 'none', 'checked' => cron_now(), 'error' => '', 'misses' => 0];
+    $res  = ['method' => 'none', 'checked' => cron_now(), 'error' => '', 'misses' => 0, 'path' => '/cron.php'];
     $errs = [];
     if ($base === '') {
         $errs[] = 'the app\'s own address is not known yet';
     } else {
         $url = cron_url($base, cron_token()) . '&probe=1';
         foreach (cron_wake_variants($base) as $v) {
-            $r = cron_http_send($v, $url, true);
+            $r = cron_http_fetch($v, $url);
             if (!empty($r['ok']) && (int)($r['status'] ?? 0) === 200 && strpos((string)($r['body'] ?? ''), '"probe":true') !== false) {
                 $res['method'] = $v['name'];
+                $res['path']   = (string)(parse_url((string)($r['url'] ?? $url), PHP_URL_PATH) ?: '/cron.php');
                 $errs = [];
                 break;
             }
@@ -405,7 +437,7 @@ function cron_probe($baseUrl = null) {
         $res['error']  = implode('; ', $errs);
     }
     cron_state_patch(['trigger' => $res]);
-    app_log('info', 'scheduler: wake method', ['method' => $res['method'], 'detail' => $res['error']]);
+    app_log('info', 'scheduler: wake method', ['method' => $res['method'], 'path' => $res['path'], 'detail' => $res['error']]);
     return $res;
 }
 
@@ -427,8 +459,8 @@ function cron_trigger($what, $via = 'tick') {
     if (cron_is_loopback_method($method)) {
         $variants = array_column(cron_wake_variants($st['base_url']), null, 'name');
         if (empty($variants[$method])) return ['ok' => false, 'method' => $method, 'error' => 'address changed'];
-        $url = cron_url($st['base_url'], cron_token()) . ($what === 'hop' ? '&hop=1' : '&run=1') . '&via=' . rawurlencode($via);
-        $r   = cron_http_send($variants[$method], $url, false);
+        $url = cron_url($st['base_url'], cron_token(), $t['path'] ?? '/cron.php') . ($what === 'hop' ? '&hop=1' : '&run=1') . '&via=' . rawurlencode($via);
+        $r   = cron_http_exchange($variants[$method], $url, false);
         if (empty($r['ok'])) {
             cron_state_patch(['trigger' => ['misses' => (int)$t['misses'] + 1]]);
             return ['ok' => false, 'method' => $method, 'what' => $what, 'error' => (string)($r['error'] ?? '')];
@@ -685,11 +717,18 @@ function cron_run_all($budget = CRON_BUDGET_SECONDS, $via = 'url') {
             }
         }
 
-        // The opt-in promise: when nothing is pending any more, stop keeping it.
-        if (!cron_needs_credential(cron_pending_state($email))) {
-            if (cred_disable($acct['id'])) {
+        // The opt-in promise: a password kept for nothing is dropped — but only
+        // after CRED_IDLE_SECONDS with nothing pending. Dropping it the moment
+        // the queue was empty made a fresh switch-on turn itself off again.
+        if (cron_needs_credential(cron_pending_state($email))) {
+            if (!empty($entry['idle_since'])) cred_set_idle($acct['id'], 0);
+        } else {
+            $since = (int)($entry['idle_since'] ?? 0);
+            if ($since <= 0) {
+                cred_set_idle($acct['id'], cron_now());
+            } elseif ((cron_now() - $since) >= CRED_IDLE_SECONDS && cred_disable($acct['id'])) {
                 $summary['expired'][] = $email;
-                app_log('info', 'cron: nothing pending; sealed credential removed', ['account' => $email]);
+                app_log('info', 'cron: nothing pending for 30 days; sealed credential removed', ['account' => $email]);
             }
         }
     }

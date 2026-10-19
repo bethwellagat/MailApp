@@ -179,12 +179,15 @@ t_eq('counts are summed per job', [$sum['jobs']['outbox'], $sum['jobs']['rules']
 t_eq('a job error and a thrown job are both recorded, and neither stopped the run', count($sum['errors']), 2);
 t_ok('the thrown job is named', in_array('ooo', array_column($sum['errors'], 'job'), true));
 t_ok('the failing job is named', in_array('snooze', array_column($sum['errors'], 'job'), true));
-t_ok('nothing pending → the credential was dropped', in_array('runner@x.com', $sum['expired'], true) && !cred_enabled('run1'));
+t_ok('nothing pending → the credential is kept, and the quiet spell noted', empty($sum['expired']) && cred_enabled('run1') && !empty(cred_list()[0]['idle_since']));
+cred_set_idle('run1', time() - 31 * 86400);
+$sum2 = cron_run_all();
+t_ok('31 days with nothing pending → the credential is dropped', in_array('runner@x.com', $sum2['expired'], true) && !cred_enabled('run1'));
 t_ok('the run was recorded', cron_state()['last_run'] === $sum['at']);
 t_ok('and the log says so', (bool)array_filter(app_log_tail(50), fn($l) => str_contains($l, 'cron: run complete')));
 t_ok('nothing that looks like the password reached the log', !array_filter(app_log_tail(200), fn($l) => str_contains($l, 'pw-runner')));
 $again = cron_run_all();
-t_eq('the lock is released — a second run proceeds (with nobody opted in now)', $again['accounts'], 0);
+t_eq('the lock is released — another run proceeds (with nobody opted in now)', $again['accounts'], 0);
 
 t_group('an unopenable seal is reported, not fatal');
 $GLOBALS['T_JOBS'] = [];
@@ -379,7 +382,14 @@ $GLOBALS['T_PENDING'] = [];
 $sleeps = []; $sent = [];
 cron_state_patch(['last_run' => gmdate('c', $T - 200)]);
 $r = cron_hop('chain');
-t_ok('nothing pending → the run drops the credential and no hop is booked', $r['hop'] === 'done' && !cred_enabled('run1') && !array_filter($sent, fn($s) => str_contains($s[1], 'hop=1')));
+t_ok('nothing pending → the credential is kept and the chain goes on', $r['hop'] === 'done' && cred_enabled('run1') && (bool)array_filter($sent, fn($s) => str_contains($s[1], 'hop=1')));
+t_ok('…with the quiet spell noted, so 30 quiet days can end it', cred_list()[0]['idle_since'] > 0);
+$GLOBALS['T_PENDING'] = [['id' => 'm2']];
+cron_state_patch(['last_run' => gmdate('c', $T - 300)]);
+cron_hop('chain');
+t_eq('something pending again → the note is cleared', cred_list()[0]['idle_since'], 0);
+$GLOBALS['T_PENDING'] = [];
+cred_disable('run1');
 $r = cron_hop('chain');
 t_eq('a hop with nobody opted in stops at once', $r['hop'], 'stopped');
 
@@ -427,6 +437,32 @@ $w = cron_status_words($s, $T, true);
 t_ok('a server that cannot call itself says so, with the reason', str_contains($w['detail'], 'could not call itself') && str_contains($w['detail'], 'refused'));
 $s['trigger']['method'] = 'local'; $s['chain'] = ['mode' => 'unsupported', 'deaths' => 3, 'retry_at' => $T + 1, 'reason' => 'this host ends a background request after about 30 s'];
 t_ok('a host that kills hops is named as the reason', str_contains(cron_status_words($s, $T, true)['detail'], 'after about 30 s'));
+
+t_group('a pretty-URL host redirects /cron.php to /cron');
+t_eq('the URL takes the path the probe found', cron_url('https://h.example', 't', '/cron'), 'https://h.example/cron?token=t');
+t_eq('…and defaults to the file',              cron_url('https://h.example', 't'), 'https://h.example/cron.php?token=t');
+$seen = [];
+$GLOBALS['CRON_TRANSPORT'] = function ($v, $url, $blocking) use (&$seen) {
+    $seen[] = [$v['name'], $url, $blocking];
+    if ($v['name'] !== 'public') return ['ok' => false, 'error' => 'refused'];
+    if (str_contains($url, '/cron.php?')) return ['ok' => true, 'status' => 301, 'location' => str_replace('/cron.php?', '/cron?', $url), 'body' => ''];
+    if (str_contains($url, '/cron?'))     return ['ok' => true, 'status' => 200, 'body' => '{"ok":true,"probe":true}'];
+    return ['ok' => true, 'status' => 404, 'body' => ''];
+};
+cron_state_patch(['base_url' => 'https://mail.example', 'trigger' => ['method' => '', 'misses' => 0, 'checked' => 0, 'path' => '/cron.php']]);
+$r = cron_probe();
+t_eq('the probe follows the redirect and succeeds',       $r['method'], 'public');
+t_eq('…remembering where cron.php really answers',       $r['path'], '/cron');
+$seen = [];
+cron_trigger('run', 'tick');
+t_ok('a trigger then goes straight to /cron, never to be redirected', str_contains(end($seen)[1], '/cron?token=') && !str_contains(end($seen)[1], 'cron.php') && end($seen)[2] === false);
+$pub = ['name' => 'public', 'host' => 'mail.example', 'connect' => 'mail.example', 'port' => 443, 'tls' => true, 'verify' => true];
+$GLOBALS['CRON_TRANSPORT'] = fn($v, $url, $b) => ['ok' => true, 'status' => 301, 'location' => 'https://evil.example/x', 'body' => ''];
+$r = cron_http_fetch($pub, 'https://mail.example/cron.php?token=t');
+t_ok('a redirect off-site is refused', empty($r['ok']) && str_contains($r['error'], 'off-site'));
+$GLOBALS['CRON_TRANSPORT'] = fn($v, $url, $b) => ['ok' => true, 'status' => 301, 'location' => '/loop', 'body' => ''];
+$r = cron_http_fetch($pub, 'https://mail.example/cron.php?token=t');
+t_ok('a redirect loop gives up', empty($r['ok']) && str_contains($r['error'], 'too many'));
 
 foreach (cred_list() as $e) cred_disable($e['id']);
 unset($GLOBALS['CRON_NOW'], $GLOBALS['CRON_SLEEP'], $GLOBALS['CRON_TRANSPORT'], $GLOBALS['CRON_ASSUME_IMAP'], $GLOBALS['T_PENDING']);

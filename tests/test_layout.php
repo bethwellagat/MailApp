@@ -606,3 +606,6 @@ $h = (string)@file_get_contents(T_ROOT . '/settings.php');
 t_ok('the pane promises no cron job',            strpos($h, 'No cron job is needed') !== false);
 t_ok('the host cron is tucked away as optional', strpos($h, '<details class="settings-details"') !== false && strpos($h, 'Host cron job (optional)') !== false);
 t_ok('the state comes from the server',          strpos($h, 'd.status') !== false && strpos($l, 'function cron_status_words') !== false);
+t_ok('the probe follows a pretty-URL redirect',  preg_match('/function cron_probe\(.*?cron_http_fetch\(/s', $l) === 1);
+t_ok('a trigger uses the path the probe found',  preg_match("/function cron_trigger\(.*?\\\$t\['path'\]/s", $l) === 1);
+t_ok('a credential outlives an empty queue',     strpos($l, 'CRED_IDLE_SECONDS') !== false && strpos($h, 'after 30 days with nothing pending') !== false);

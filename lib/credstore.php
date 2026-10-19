@@ -166,8 +166,17 @@ function cred_list() {
     foreach ((array)@glob($dir . '/*.json') as $f) {
         $rec = @json_decode((string)@file_get_contents($f), true);
         if (!is_array($rec) || empty($rec['id']) || empty($rec['email'])) continue;
-        $out[] = ['id' => (string)$rec['id'], 'email' => (string)$rec['email'], 'enabled_at' => (string)($rec['enabled_at'] ?? '')];
+        $out[] = ['id' => (string)$rec['id'], 'email' => (string)$rec['email'], 'enabled_at' => (string)($rec['enabled_at'] ?? ''), 'idle_since' => (int)($rec['idle_since'] ?? 0)];
     }
     usort($out, fn($a, $b) => strcmp($a['email'], $b['email']));
     return $out;
+}
+
+/** Note when an account first had nothing pending (0 clears it). The seal is untouched. */
+function cred_set_idle($id, $since) {
+    $f   = cred_path($id);
+    $rec = is_file($f) ? @json_decode((string)@file_get_contents($f), true) : null;
+    if (!is_array($rec)) return false;
+    if ((int)$since > 0) $rec['idle_since'] = (int)$since; else unset($rec['idle_since']);
+    return (bool)atomic_write_json($f, $rec);
 }

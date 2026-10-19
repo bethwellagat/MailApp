@@ -64,7 +64,7 @@ function cron_status_payload($isAdmin) {
     // may edit the workspace. Anyone else sees that the scheduler exists and
     // whether it is running, which is all they need to opt their account in.
     $token = $isAdmin ? cron_token() : '';
-    $url   = $token !== '' ? cron_url(cron_base_url(), $token) : '';
+    $url   = $token !== '' ? cron_url($state['base_url'] !== '' ? $state['base_url'] : cron_base_url(), $token, $state['trigger']['path']) : '';
     $path  = realpath(__DIR__ . '/../cron.php') ?: (dirname(__DIR__) . '/cron.php');
     return [
         'ok'        => true,
