@@ -266,6 +266,10 @@ $prefs        = load_prefs($email);
             <svg class="icon"><use href="#ic-archive"/></svg>
             <span>Archive</span>
         </button>
+        <button class="ab-btn" id="abSpam" aria-label="Report spam" disabled>
+            <svg class="icon"><use href="#ic-spam"/></svg>
+            <span>Spam</span>
+        </button>
         <div class="ab-btn-wrap">
             <button class="ab-btn" id="abMove" aria-label="Move to folder" disabled>
                 <svg class="icon"><use href="#ic-move"/></svg>
@@ -352,7 +356,19 @@ $prefs        = load_prefs($email);
         </aside>
 
         <section class="list-pane">
-            <div class="list-folder-name" id="listFolderName">Inbox · — messages</div>
+            <div class="list-head-row">
+                <div class="list-folder-name" id="listFolderName">Inbox · — messages</div>
+                <select class="list-sort" id="listSortSelect" aria-label="Sort messages" title="Sort">
+                    <option value="date:desc">Newest first</option>
+                    <option value="date:asc">Oldest first</option>
+                    <option value="from:asc">Sender A–Z</option>
+                    <option value="from:desc">Sender Z–A</option>
+                    <option value="subject:asc">Subject A–Z</option>
+                    <option value="subject:desc">Subject Z–A</option>
+                    <option value="size:desc">Largest first</option>
+                    <option value="size:asc">Smallest first</option>
+                </select>
+            </div>
             <div class="list-filters" id="listFilters">
                 <button class="list-filter-chip active" data-filter="all" type="button">All</button>
                 <button class="list-filter-chip" data-filter="unread" type="button">Unread</button>
@@ -401,6 +417,7 @@ $prefs        = load_prefs($email);
                 <label class="list-selection-all">
                     <input type="checkbox" id="listSelectAll">
                     <span class="list-selection-count" id="listSelectionCount">0 selected</span>
+                    <button type="button" class="list-select-folder" id="listSelectFolder" hidden></button>
                 </label>
                 <button type="button" class="list-selection-close" id="listSelectionClose">Cancel</button>
             </div>
@@ -468,6 +485,10 @@ $prefs        = load_prefs($email);
         <svg class="icon" width="14" height="14"><use href="#ic-plus"/></svg>
         <span>New subfolder…</span>
     </button>
+    <button class="ctx-item" data-action="rename-folder" type="button">
+        <svg class="icon" width="14" height="14"><use href="#ic-pencil"/></svg>
+        <span>Rename folder…</span>
+    </button>
     <div class="ctx-divider ctx-divider-folder-delete"></div>
     <button class="ctx-item ctx-item-danger" data-action="delete-folder" type="button">
         <svg class="icon" width="14" height="14"><use href="#ic-trash"/></svg>
@@ -509,6 +530,10 @@ $prefs        = load_prefs($email);
     <button class="ctx-item" data-msg-action="block" type="button">
         <svg class="icon" width="14" height="14"><use href="#ic-block"/></svg>
         <span>Block sender…</span>
+    </button>
+    <button class="ctx-item" data-msg-action="spam" type="button">
+        <svg class="icon" width="14" height="14"><use href="#ic-spam"/></svg>
+        <span class="ctx-spam-label">Report spam</span>
     </button>
     <div class="ctx-divider"></div>
     <button class="ctx-item" data-msg-action="archive" type="button">

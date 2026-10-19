@@ -48,6 +48,8 @@
         composeAttachments: [],
         pollTimer: null,
         pollIntervalMs: 60000,
+        listSort: { by: 'date', dir: 'desc' },   // the folder list's order; non-default orders are flat (no conversations)
+        selectAllInFolder: false,                // the selection bar's "all N in folder" is on
         pollInflight: false,
     };
 
@@ -1011,7 +1013,7 @@
 
         const data = unified
             ? await apiGet('unified', {})
-            : await apiGet('messages', withAcct({ folder: state.currentFolder, page: state.currentPage }, viewAcct()));
+            : await apiGet('messages', withAcct(Object.assign({ folder: state.currentFolder, page: state.currentPage }, listSortParams()), viewAcct()));
         if (seq !== loadMessagesSeq) return; // a newer load (folder/page switch) superseded this one
         if (data.error) {
             if (!silent) {
@@ -1034,7 +1036,9 @@
         state.currentPage = data.page || 1;
         $('listFolderName').textContent =
             viewLabel + ' · ' +
-            data.total + (data.total === 1 ? ' message' : ' messages');
+            data.total + (data.total === 1 ? ' message' : ' messages') +
+            (data.grouped === false && data.sort ? ' · ' + sortLabel(data.sort, data.dir) : '');
+        if ($('listSortSelect')) $('listSortSelect').hidden = unified;
         renderMessages();
         renderPagination();
         loadAttachFlags(seq); // fire-and-forget; fills paperclips once the list is up
@@ -1054,6 +1058,37 @@
                 });
             }
         }
+    }
+
+    /* ---------- List order ---------- */
+    // Newest-first is the default and the only order with conversations; the
+    // others ask the server for a flat list in its own order. Remembered per
+    // browser, because it is a reading preference, not account data.
+    function listSortParams() {
+        const s = state.listSort || {};
+        if (!s.by || (s.by === 'date' && (s.dir || 'desc') === 'desc')) return {};
+        return { sort: s.by, dir: s.dir === 'asc' ? 'asc' : 'desc' };
+    }
+    function sortLabel(by, dir) {
+        const asc = dir === 'asc';
+        return { date: asc ? 'oldest first' : 'newest first', from: 'by sender' + (asc ? ' A–Z' : ' Z–A'),
+                 subject: 'by subject' + (asc ? ' A–Z' : ' Z–A'), size: asc ? 'smallest first' : 'largest first' }[by] || '';
+    }
+    function loadListSort() {
+        try {
+            const v = String(localStorage.getItem('mailapp.listSort') || '');
+            const [by, dir] = v.split(':');
+            if (['date', 'from', 'subject', 'size'].includes(by)) state.listSort = { by, dir: dir === 'asc' ? 'asc' : 'desc' };
+        } catch (e) {}
+        if ($('listSortSelect')) $('listSortSelect').value = state.listSort.by + ':' + state.listSort.dir;
+    }
+    function setListSort(value) {
+        const [by, dir] = String(value || 'date:desc').split(':');
+        state.listSort = { by: by || 'date', dir: dir === 'asc' ? 'asc' : 'desc' };
+        try { localStorage.setItem('mailapp.listSort', state.listSort.by + ':' + state.listSort.dir); } catch (e) {}
+        state.currentPage = 1;
+        clearSelection();
+        loadMessages();
     }
 
     function filterMessages(msgs) {
@@ -2255,9 +2290,13 @@
     function updateActionBar() {
         const uids = actionTargetUids();
         const has = uids.length > 0;
-        ['abDelete', 'abArchive', 'abMove', 'abFlag', 'abMarkRead', 'abMarkUnread'].forEach(id => {
-            $(id).disabled = !has;
+        ['abDelete', 'abArchive', 'abMove', 'abFlag', 'abMarkRead', 'abMarkUnread', 'abSpam'].forEach(id => {
+            if ($(id)) $(id).disabled = !has;
         });
+        if ($('abSpam')) {
+            $('abSpam').innerHTML = '<svg class="icon"><use href="#ic-spam"/></svg><span>' + (inJunk() ? 'Not spam' : 'Spam') + '</span>';
+            $('abSpam').setAttribute('aria-label', inJunk() ? 'Not spam' : 'Report spam');
+        }
         if (!has) return;
         const targets = state.selectedUids.size > 0
             ? targetMessages(uids)
@@ -2278,14 +2317,30 @@
         }
         bar.classList.remove('hidden');
         bar.setAttribute('aria-hidden', 'false');
-        $('listSelectionCount').textContent = n + (n === 1 ? ' selected' : ' selected');
         const selectAll = $('listSelectAll');
         const visible = visibleMessages();
         const allSelected = visible.length > 0 && visible.every(m => state.selectedUids.has(m.uid));
+        if (!allSelected) state.selectAllInFolder = false;
         if (selectAll) {
             selectAll.checked = allSelected;
             selectAll.indeterminate = !allSelected && n > 0;
         }
+        // "Select all 1,204 in Inbox": offered once the whole page is selected
+        // and the folder holds more than the page. Only in a plain folder view —
+        // a search or the unified inbox has no single folder to act on.
+        const total = state.totalMessages || 0;
+        const link  = $('listSelectFolder');
+        const canAll = allSelected && !isUnifiedView() && !state.searchActive && !state.starredActive
+                       && state.currentFolder !== OUTBOX_FOLDER && total > visible.length;
+        if (link) {
+            link.hidden = !canAll;
+            if (canAll) {
+                link.textContent = state.selectAllInFolder
+                    ? 'All ' + total.toLocaleString() + ' in ' + displayFolderName(state.currentFolder) + ' selected · Clear'
+                    : 'Select all ' + total.toLocaleString() + ' in ' + displayFolderName(state.currentFolder);
+            }
+        }
+        $('listSelectionCount').textContent = (state.selectAllInFolder && canAll ? total.toLocaleString() : n) + ' selected';
     }
 
     /* ---------- Compose attachments ---------- */
@@ -3119,6 +3174,7 @@
         return state.messages.filter(m => set.has(m.uid));
     }
     function clearSelection() {
+        state.selectAllInFolder = false;
         if (state.selectedUids.size === 0) return;
         state.selectedUids.clear();
         state.lastSelectedIndex = -1;
@@ -3161,13 +3217,23 @@
     async function fanOutAction(action, uids, extra, folderKey) {
         folderKey = folderKey || 'folder';
         const groups = groupTargets(uids);
+        // Select-all-in-folder: one folder, one account, and the server resolves
+        // "all" itself (newest 5,000 at a time; it reports what remains).
+        const all = state.selectAllInFolder && groups.length === 1 && ['delete', 'move', 'flag', 'read', 'unread'].includes(action);
         const results = await Promise.all(groups.map(g => {
-            const params = Object.assign({ uids: g.uids }, extra || {});
+            const params = Object.assign(all ? { all: 1 } : { uids: g.uids }, extra || {});
             params[folderKey] = g.folder;
             return apiPost(action, withAcct(params, g.acct));
         }));
+        lastBulkRemaining = results.reduce((n, r) => n + (r && r.remaining ? Number(r.remaining) : 0), 0);
         const err = results.find(r => r && r.error);
         return err ? err.error : null;
+    }
+    let lastBulkRemaining = 0;
+    function bulkTotal(uids) { return state.selectAllInFolder ? (state.totalMessages || uids.length) : uids.length; }
+    function noteBulkRemaining() {
+        if (lastBulkRemaining > 0) showToast(lastBulkRemaining.toLocaleString() + ' more remain — repeat the action to continue.');
+        lastBulkRemaining = 0;
     }
 
     // ---- Undo support for delete / archive / move (all reversible IMAP moves) ----
@@ -3196,12 +3262,13 @@
         // delete is a reversible move. Without a Trash folder the server expunges
         // permanently — keep the confirmation in that case.
         const trash = !isUnifiedView() ? state.folders.find(f => /trash|deleted|bin/i.test(f.name)) : null;
-        if (!trash) {
-            const word = uids.length > 1 ? (uids.length + ' messages') : 'this message';
-            if (!window.confirm('Move ' + word + ' to Trash?')) return;
+        const wholeFolder = state.selectAllInFolder, total = bulkTotal(uids);
+        if (!trash || wholeFolder) {
+            const word = total > 1 ? (total.toLocaleString() + ' messages') : 'this message';
+            if (!window.confirm('Move ' + word + (wholeFolder ? ' — everything in ' + displayFolderName(state.currentFolder) + ' —' : '') + ' to Trash?')) return;
         }
         const from = state.currentFolder, acct = viewAcct();
-        const ids  = trash ? capturedMsgIds(uids) : [];
+        const ids  = (trash && !wholeFolder) ? capturedMsgIds(uids) : [];
         const err = await fanOutAction('delete', uids);
         if (err) { alert(err); return; }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
@@ -3210,6 +3277,7 @@
         if (trash && ids.length) {
             showUndoActionToast(_countWord(uids.length) + ' moved to Trash.', () => restoreMessages(trash.name, from, ids, acct));
         }
+        noteBulkRemaining();
     }
     async function actArchive(uids) {
         if (!Array.isArray(uids)) uids = actionTargetUids(); // tolerate being called as a click handler (event arg)
@@ -3222,13 +3290,16 @@
             return;
         }
         const from = state.currentFolder, acct = viewAcct();
-        const ids  = capturedMsgIds(uids);
+        const wholeFolder = state.selectAllInFolder;
+        if (wholeFolder && !window.confirm('Archive all ' + bulkTotal(uids).toLocaleString() + ' messages in ' + displayFolderName(from) + '?')) return;
+        const ids  = wholeFolder ? [] : capturedMsgIds(uids);
         const err = await fanOutAction('move', uids, { to: archive.name }, 'from');
         if (err) { alert(err); return; }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
         clearSelection();
         await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);
         if (ids.length) showUndoActionToast(_countWord(uids.length) + ' archived.', () => restoreMessages(archive.name, from, ids, acct));
+        noteBulkRemaining();
     }
     async function actMoveTo(target, uids) {
         if (!target) return;
@@ -3238,13 +3309,44 @@
         // moves from the unified view where rows may span accounts.
         if (isUnifiedView()) { alert('Open a specific account to move its messages.'); return; }
         const from = state.currentFolder, acct = viewAcct();
-        const ids  = capturedMsgIds(uids);
+        const wholeFolder = state.selectAllInFolder;
+        if (wholeFolder && !window.confirm('Move all ' + bulkTotal(uids).toLocaleString() + ' messages in ' + displayFolderName(from) + ' to ' + displayFolderName(target) + '?')) return;
+        const ids  = wholeFolder ? [] : capturedMsgIds(uids);
         const err = await fanOutAction('move', uids, { to: target }, 'from');
         if (err) { alert(err); return; }
         if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
         clearSelection();
         await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);
         if (ids.length) showUndoActionToast(_countWord(uids.length) + ' moved.', () => restoreMessages(target, from, ids, acct));
+        noteBulkRemaining();
+    }
+    /* ---------- Report spam / Not spam ---------- */
+    // Spam is a move to the account's Junk folder (where the mail server trains
+    // its filter from, when it does) with the messages marked read so the
+    // folder's badge does not nag; from inside Junk the same button brings
+    // mail back to the Inbox. "Block sender" (the rule) stays a separate action.
+    function junkFolder() { return state.folders.find(f => folderType(f.name) === 'spam') || null; }
+    function inJunk() { return folderType(state.currentFolder) === 'spam'; }
+    async function actSpam(uids) {
+        if (!Array.isArray(uids)) uids = actionTargetUids();
+        if (!uids.length) return;
+        if (isUnifiedView()) { alert('Open a specific account to report its messages as spam.'); return; }
+        const junk = junkFolder();
+        if (!junk && !inJunk()) { alert('This account has no Junk or Spam folder.'); return; }
+        const from = state.currentFolder, acct = viewAcct();
+        const target = inJunk() ? 'INBOX' : junk.name;
+        const wholeFolder = state.selectAllInFolder;
+        const n = bulkTotal(uids);
+        if (wholeFolder && !window.confirm((inJunk() ? 'Move all ' : 'Report all ') + n.toLocaleString() + ' messages in ' + displayFolderName(from) + (inJunk() ? ' back to the Inbox?' : ' as spam?'))) return;
+        const ids = wholeFolder ? [] : capturedMsgIds(uids);
+        if (!inJunk()) { const e1 = await fanOutAction('read', uids); if (e1) { alert(e1); return; } }
+        const err = await fanOutAction('move', uids, { to: target }, 'from');
+        if (err) { alert(err); return; }
+        if (state.currentUid && uids.includes(state.currentUid)) clearReadingPane();
+        clearSelection();
+        await Promise.all([loadMessages({ keepReading: true }), loadFolders()]);
+        if (ids.length) showUndoActionToast(_countWord(uids.length) + (target === 'INBOX' ? ' moved to Inbox.' : ' reported as spam.'), () => restoreMessages(target, from, ids, acct));
+        noteBulkRemaining();
     }
     async function actFlag(uids) {
         if (!Array.isArray(uids)) uids = actionTargetUids(); // tolerate being called as a click handler (event arg)
@@ -4577,6 +4679,22 @@
         $('abFlag').addEventListener('click', actFlag);
         $('abMarkRead').addEventListener('click', () => actSetReadState(true));
         $('abMarkUnread').addEventListener('click', () => actSetReadState(false));
+        if ($('abSpam')) $('abSpam').addEventListener('click', actSpam);
+        if ($('msgCtxMenu')) {
+            // Runs before the menu's own handler clears its target.
+            $('msgCtxMenu').addEventListener('click', (e) => {
+                const item = e.target.closest('[data-msg-action="spam"]');
+                if (!item || !_msgCtxTarget) return;
+                const uids = _msgCtxTarget.uids.slice();
+                closeMsgCtxMenu();
+                actSpam(uids);
+            }, true);
+        }
+        if ($('listSortSelect')) $('listSortSelect').addEventListener('change', (e) => setListSort(e.target.value));
+        if ($('listSelectFolder')) $('listSelectFolder').addEventListener('click', () => {
+            state.selectAllInFolder = !state.selectAllInFolder;
+            updateSelectionBar();
+        });
         $('abSync').addEventListener('click', actSync);
 
         $('abMove').addEventListener('click', (e) => {
@@ -4669,6 +4787,7 @@
 
         // ----- Folder context menu (right-click on a folder) -----
         let ctxFolder = null;
+        let ctxFolderAcct = '';
         function showFolderCtx(name, x, y) {
             ctxFolder = name;
             const menu = $('folderCtxMenu');
@@ -4697,6 +4816,7 @@
             if (!btn || !btn.dataset.folder) return;
             if (btn.dataset.folder === OUTBOX_FOLDER) return; // no rename/delete/mark-read on the virtual Outbox
             e.preventDefault();
+            ctxFolderAcct = btn.dataset.acct || '';
             showFolderCtx(btn.dataset.folder, e.clientX, e.clientY);
         });
         document.addEventListener('click', (e) => {
@@ -4721,11 +4841,23 @@
                 await Promise.all(tasks);
             } else if (action === 'new-subfolder') {
                 createFolder(folderName);
+            } else if (action === 'rename-folder') {
+                if (isStandardFolder(folderName)) { alert('Standard folders cannot be renamed.'); return; }
+                const leaf = folderName.split(/[./]/).pop();
+                const next = window.prompt('Rename "' + displayFolderName(folderName) + '" to:', leaf);
+                if (next == null || !next.trim() || next.trim() === leaf) return;
+                const r = await apiPost('rename_folder', withAcct({ name: folderName, new_name: next.trim() }, ctxFolderAcct));
+                if (r.error) { alert(r.error); return; }
+                // A folder we were looking at (or one of its subfolders) has a new name now.
+                const d = r.delimiter || '.';
+                if (state.currentFolder === folderName) state.currentFolder = r.name;
+                else if (state.currentFolder.startsWith(folderName + d)) state.currentFolder = r.name + state.currentFolder.slice(folderName.length);
+                await Promise.all([loadFolders(), loadMessages({ keepReading: true })]);
             } else if (action === 'delete-folder') {
                 if (isStandardFolder(folderName)) return;
                 const display = displayFolderName(folderName);
                 if (!window.confirm('Delete folder "' + display + '"? Messages inside will also be removed by your mail server.')) return;
-                const r = await apiPost('delete_folder', { name: folderName });
+                const r = await apiPost('delete_folder', withAcct({ name: folderName }, ctxFolderAcct));
                 if (r.error) { alert(r.error); return; }
                 if (state.currentFolder === folderName) {
                     state.currentFolder = 'INBOX';
@@ -4748,6 +4880,7 @@
             await loadFolders();
         }
         $('folderNewBtn').addEventListener('click', () => createFolder(''));
+        loadListSort();
 
         // Keyboard shortcuts
         document.addEventListener('keydown', handleShortcut);
@@ -4890,6 +5023,8 @@
         const flagLabel  = menu.querySelector('.ctx-flag-label');
         if (readLabel) readLabel.textContent = anyUnread ? 'Mark as read' : 'Mark as unread';
         if (flagLabel) flagLabel.textContent = anyFlagged ? 'Unflag' : 'Flag';
+        const spamLabel = menu.querySelector('.ctx-spam-label');
+        if (spamLabel) spamLabel.textContent = inJunk() ? 'Not spam' : 'Report spam';
 
         // Show & position
         menu.hidden = false;

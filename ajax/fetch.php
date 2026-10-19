@@ -1020,6 +1020,30 @@ if ($action === 'messages') {
         ok(['messages' => [], 'total' => 0, 'page' => 1, 'pages' => 1, 'folder' => $folder]);
     }
 
+    /* Sort by sender, subject or size, or oldest first: a flat list in the
+       server's order over the WHOLE folder (IMAP SORT where the server has it;
+       c-client sorts for servers without it). Conversations stay grouped only
+       in the default newest-first view — grouping is a date structure, and a
+       list sorted by sender has no honest place for a thread. */
+    $sp = list_sort_params((string)($_GET['sort'] ?? 'date'), (string)($_GET['dir'] ?? 'desc'));
+    if (!$sp['default'] && function_exists('imap_sort')) {
+        $uids = @imap_sort($mbox, $sp['flag'], $sp['reverse'], SE_UID);
+        if (is_array($uids)) {
+            $pages = max(1, (int)ceil(count($uids) / $perPage));
+            $page  = min($page, $pages);
+            $slice = array_slice($uids, ($page - 1) * $perPage, $perPage);
+            $rows  = [];
+            if ($slice) {
+                $byUid = [];
+                foreach ((array)@imap_fetch_overview($mbox, implode(',', $slice), FT_UID) as $m) $byUid[(int)($m->uid ?? 0)] = $m;
+                foreach ($slice as $u) if (isset($byUid[(int)$u])) $rows[] = overview_list_row($byUid[(int)$u], (int)$u);
+            }
+            @imap_close($mbox);
+            ok(['messages' => $rows, 'total' => count($uids), 'page' => $page, 'pages' => $pages, 'folder' => $folder,
+                'grouped' => false, 'sort' => $sp['sort'], 'dir' => $sp['dir']]);
+        }
+    }
+
     /* ---- one row per conversation ----
        This list used to be flat: one row per message, with a comment saying
        grouping was refused because it "collapses large same-reference floods
@@ -1757,7 +1781,26 @@ if ($action === 'thread') {
  * comma-separated UID-set string suitable for IMAP sequence-set arguments,
  * or '' if nothing valid was sent.
  */
+/** One flat list row from an overview entry (the sorted and fallback paths). */
+function overview_list_row($m, $uid) {
+    $from = parse_addr($m->from ?? '');
+    return [
+        'uid'        => (int)$uid,
+        'subject'    => decode_header($m->subject ?? '') ?: '(no subject)',
+        'from_name'  => $from['name'], 'from_addr' => $from['email'],
+        'date'       => $m->date ?? '',
+        'timestamp'  => isset($m->udate) ? (int)$m->udate : (int)strtotime($m->date ?? 'now'),
+        'seen'       => !empty($m->seen), 'flagged' => !empty($m->flagged),
+        'answered'   => !empty($m->answered), 'size' => (int)($m->size ?? 0),
+        'message_id' => isset($m->message_id) ? $m->message_id : '',
+        'thread_count' => 1, 'thread_uids' => [(int)$uid],
+    ];
+}
+
 function gather_uid_set() {
+    // Select-all-in-folder: the page sends all=1 instead of a list it cannot
+    // hold; resolve_uid_set() turns it into real UIDs once the folder is open.
+    if (!empty($_POST['all'])) return ['all'];
     $uids = [];
     if (isset($_POST['uids']) && is_array($_POST['uids'])) {
         foreach ($_POST['uids'] as $u) {
@@ -1773,6 +1816,20 @@ function gather_uid_set() {
     return $uids;
 }
 
+/**
+ * The sentinel from gather_uid_set() becomes the folder's newest 5,000 UIDs;
+ * what is left over is reported so the page can say so.
+ */
+$BULK_REMAINING = 0;
+function resolve_uid_set($mbox, array $uids) {
+    global $BULK_REMAINING;
+    if ($uids !== ['all']) return $uids;
+    $all = @imap_search($mbox, 'ALL', SE_UID);
+    if (!is_array($all)) return [];
+    [$take, $BULK_REMAINING] = bulk_uid_window($all, 5000);
+    return $take;
+}
+
 if ($action === 'delete') {
     if ($method !== 'POST') fail('Method not allowed', 405);
     $uids = gather_uid_set();
@@ -1781,6 +1838,8 @@ if ($action === 'delete') {
     $ref  = imap_ref();
     $mbox = open_box($folder);
     if (!$mbox) fail('Could not open folder "' . $folder . '"');
+    $uids = resolve_uid_set($mbox, $uids);
+    if (empty($uids)) { @imap_close($mbox); ok(['ok' => true, 'count' => 0, 'remaining' => 0]); }
 
     $set   = implode(',', $uids);
     $trash = find_folder($mbox, $ref, ['trash', 'deleted', 'bin']);
@@ -1796,7 +1855,7 @@ if ($action === 'delete') {
     }
     expunge_only($mbox, $uids);
     @imap_close($mbox);
-    ok(['ok' => true, 'count' => count($uids)]);
+    ok(['ok' => true, 'count' => count($uids), 'remaining' => $BULK_REMAINING]);
 }
 
 if ($action === 'move') {
@@ -1809,6 +1868,8 @@ if ($action === 'move') {
 
     $mbox = open_box($from);
     if (!$mbox) fail('Could not open source folder');
+    $uids = resolve_uid_set($mbox, $uids);
+    if (empty($uids)) { @imap_close($mbox); ok(['ok' => true, 'count' => 0, 'remaining' => 0]); }
 
     $set   = implode(',', $uids);
     $moved = @imap_mail_move($mbox, $set, $to, CP_UID);
@@ -1816,7 +1877,7 @@ if ($action === 'move') {
     @imap_close($mbox);
 
     if (!$moved) fail('Could not move message');
-    ok(['ok' => true, 'count' => count($uids)]);
+    ok(['ok' => true, 'count' => count($uids), 'remaining' => $BULK_REMAINING]);
 }
 
 if ($action === 'restore') {
@@ -1852,13 +1913,15 @@ if ($action === 'flag') {
 
     $mbox = open_box($folder);
     if (!$mbox) fail('Could not open folder');
+    $uids = resolve_uid_set($mbox, $uids);
+    if (empty($uids)) { @imap_close($mbox); ok(['ok' => true, 'count' => 0, 'remaining' => 0]); }
 
     $set = implode(',', $uids);
     if ($setOn) @imap_setflag_full($mbox, $set, '\\Flagged', ST_UID);
     else        @imap_clearflag_full($mbox, $set, '\\Flagged', ST_UID);
 
     @imap_close($mbox);
-    ok(['ok' => true, 'count' => count($uids)]);
+    ok(['ok' => true, 'count' => count($uids), 'remaining' => $BULK_REMAINING]);
 }
 
 if ($action === 'unread') {
@@ -1868,10 +1931,12 @@ if ($action === 'unread') {
 
     $mbox = open_box($folder);
     if (!$mbox) fail('Could not open folder');
+    $uids = resolve_uid_set($mbox, $uids);
+    if (empty($uids)) { @imap_close($mbox); ok(['ok' => true, 'count' => 0, 'remaining' => 0]); }
 
     @imap_clearflag_full($mbox, implode(',', $uids), '\\Seen', ST_UID);
     @imap_close($mbox);
-    ok(['ok' => true, 'count' => count($uids)]);
+    ok(['ok' => true, 'count' => count($uids), 'remaining' => $BULK_REMAINING]);
 }
 
 if ($action === 'read') {
@@ -1881,10 +1946,12 @@ if ($action === 'read') {
 
     $mbox = open_box($folder);
     if (!$mbox) fail('Could not open folder');
+    $uids = resolve_uid_set($mbox, $uids);
+    if (empty($uids)) { @imap_close($mbox); ok(['ok' => true, 'count' => 0, 'remaining' => 0]); }
 
     @imap_setflag_full($mbox, implode(',', $uids), '\\Seen', ST_UID);
     @imap_close($mbox);
-    ok(['ok' => true, 'count' => count($uids)]);
+    ok(['ok' => true, 'count' => count($uids), 'remaining' => $BULK_REMAINING]);
 }
 
 if ($action === 'mark_folder_read') {
@@ -1948,6 +2015,41 @@ if ($action === 'create_folder') {
     }
 
     ok(['ok' => true, 'name' => $fullName]);
+}
+
+if ($action === 'rename_folder') {
+    if ($method !== 'POST') fail('Method not allowed', 405);
+    $name    = trim((string)($_POST['name'] ?? ''));
+    $newLeaf = trim((string)($_POST['new_name'] ?? ''));
+    if ($name === '' || $newLeaf === '') fail('Folder name required', 400);
+    if (!valid_mailbox_name($name)) fail('Invalid folder name', 400);
+    $standard = ['inbox', 'sent', 'drafts', 'trash', 'deleted', 'spam', 'junk', 'archive', 'later', 'outbox'];
+    $segments = preg_split('/[.\\/]/', $name);
+    if (in_array(strtolower(end($segments)), $standard, true) || strcasecmp($name, 'INBOX') === 0) fail('Cannot rename a standard mail folder.', 403);
+
+    $ref = imap_ref();
+    $tmp = open_box('INBOX', OP_HALFOPEN);
+    if (!$tmp) fail('Could not connect');
+    $delim = '.';
+    $boxes = @imap_getmailboxes($tmp, $ref, '*');
+    if (is_array($boxes) && !empty($boxes[0]->delimiter)) $delim = $boxes[0]->delimiter;
+
+    // Only the leaf changes; the parent stays, and the server carries any
+    // subfolders along (RFC 3501 RENAME).
+    $newName = folder_renamed_name($name, $newLeaf, $delim);
+    if (!valid_mailbox_name($newName) || $newName === '') { @imap_close($tmp); fail('Invalid folder name', 400); }
+    if ($newName === $name) { @imap_close($tmp); ok(['ok' => true, 'name' => $name, 'unchanged' => true]); }
+
+    $oldImap = mb_convert_encoding($name, 'UTF7-IMAP', 'UTF-8');
+    $newImap = mb_convert_encoding($newName, 'UTF7-IMAP', 'UTF-8');
+    $renamed = @imap_renamemailbox($tmp, $ref . $oldImap, $ref . $newImap);
+    if ($renamed) { @imap_unsubscribe($tmp, $ref . $oldImap); @imap_subscribe($tmp, $ref . $newImap); }
+    @imap_close($tmp);
+    if (!$renamed) {
+        $errs = @imap_errors() ?: ['IMAP server rejected the request'];
+        fail('Could not rename folder: ' . implode('; ', $errs));
+    }
+    ok(['ok' => true, 'name' => $newName, 'old' => $name, 'delimiter' => $delim]);
 }
 
 if ($action === 'delete_folder') {

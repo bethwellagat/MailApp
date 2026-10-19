@@ -764,3 +764,41 @@ if (!function_exists('mail_to_utf8')) {
         return preg_replace('/[^\x09\x0A\x0D\x20-\x7E]/', '', $text);
     }
 }
+
+if (!function_exists('list_sort_params')) {
+    /**
+     * Normalise a list's sort request. Anything unknown is the default
+     * (newest first); the IMAP SORT flag goes with it so the endpoint cannot
+     * map the two differently.
+     */
+    function list_sort_params($sort, $dir) {
+        $sort = in_array($sort, ['date', 'from', 'subject', 'size'], true) ? $sort : 'date';
+        $dir  = ($dir === 'asc') ? 'asc' : 'desc';
+        $flags = ['date' => 0, 'from' => 2, 'subject' => 3, 'size' => 6]; // SORTDATE, SORTFROM, SORTSUBJECT, SORTSIZE
+        return ['sort' => $sort, 'dir' => $dir, 'flag' => $flags[$sort], 'reverse' => $dir === 'desc' ? 1 : 0, 'default' => ($sort === 'date' && $dir === 'desc')];
+    }
+}
+
+if (!function_exists('bulk_uid_window')) {
+    /**
+     * "All messages in this folder" is bounded: the newest $cap UIDs now, and
+     * the count left over, so the page can say "5,000 moved; 1,204 remain".
+     */
+    function bulk_uid_window(array $all, $cap = 5000) {
+        $all = array_values(array_unique(array_map('intval', $all)));
+        rsort($all, SORT_NUMERIC);
+        $take = array_slice($all, 0, max(1, (int)$cap));
+        return [$take, count($all) - count($take)];
+    }
+}
+
+if (!function_exists('folder_renamed_name')) {
+    /** The full name a folder has after its leaf is renamed: same parent, new leaf. */
+    function folder_renamed_name($old, $newLeaf, $delim) {
+        $delim   = $delim === '' ? '.' : $delim;
+        $newLeaf = trim(str_replace($delim, ' ', (string)$newLeaf));
+        $pos     = strrpos((string)$old, $delim);
+        $parent  = $pos === false ? '' : substr((string)$old, 0, $pos);
+        return ($parent === '' ? '' : $parent . $delim) . $newLeaf;
+    }
+}

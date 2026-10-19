@@ -7207,3 +7207,12 @@ html.theme-dark .login-page .login-page-footer strong { color: rgba(235, 235, 24
 .settings-page .tpl-editor { min-height: 160px; }
 .settings-page .tpl-toolbar { flex-wrap: wrap; }
 .settings-page .tpl-var { width: auto; padding: 0 8px; font-family: var(--font-mono); font-size: 11px; }
+
+/* ---- List: sort order, select all in folder ---- */
+.mail-page .list-head-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; padding-right: 12px; background: var(--c-list-bg); }
+.mail-page .list-head-row .list-folder-name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mail-page .list-sort { margin-bottom: 6px; flex-shrink: 0; font: inherit; font-size: 12px; color: var(--c-text-muted); background: transparent; border: 1px solid var(--c-border); border-radius: 999px; padding: 4px 8px; max-width: 150px; cursor: pointer; }
+.mail-page .list-sort:focus-visible { outline: 2px solid var(--c-brand-active); outline-offset: 1px; }
+.mail-page .list-sort[hidden] { display: none; }
+.mail-page .list-select-folder { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--c-brand-active); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.mail-page .list-select-folder[hidden] { display: none; }
