@@ -58,7 +58,11 @@
     let searchDebounceTimer = null;
     let searchAbortCtrl     = null;
     const searchCache       = new Map();
-    let searchResultScope   = 'headers'; // scope of the results currently shown ('headers' | 'full')
+    let searchResultScope   = 'full';    // scope of the results currently shown ('full' = whole message, 'headers' = fast)
+    let searchMatched       = '';        // which rung answered: phrase | all | any | filters
+    let searchNote          = '';        // what the server says about that rung
+    let searchRanked        = false;     // the results on screen came back in best-match order
+    let searchRank          = true;      // …and that is what was asked for
     let searchResultWhere   = 'default'; // breadth of those results ('default' | 'all')
     let searchFoldersCapped = false;     // true when "all folders" hit the server-side cap
     let searchFolderCount   = 0;         // how many folders the server actually searched
@@ -1142,6 +1146,12 @@
         if (searchSortApprox) {
             notes += '<div class="search-note">This mail server cannot sort search results itself; the loaded matches were sorted instead.</div>';
         }
+        // Which attempt answered. A search that quietly widened what it looked
+        // for and said nothing would be telling the user something untrue about
+        // their mailbox.
+        if (searchNote) {
+            notes += '<div class="search-note">' + escapeHtml(searchNote) + '</div>';
+        }
 
         // Searching is deliberately narrow by default (headers only, Inbox +
         // current + Sent) because both dimensions cost real time on IMAP servers
@@ -1149,10 +1159,10 @@
         // who cannot find something knows there is more to look at rather than
         // concluding the message is gone.
         let ctas = '';
-        if (!state.starredActive && searchResultScope === 'headers') {
-            ctas += '<button type="button" class="search-fulltext-cta" data-full-search="1">' +
+        if (!state.starredActive && searchResultScope !== 'headers') {
+            ctas += '<button type="button" class="search-fulltext-cta" data-headers-search="1">' +
                         '<svg class="icon" width="13" height="13"><use href="#ic-search"/></svg>' +
-                        'Search full message text' +
+                        'Subjects and senders only (faster)' +
                     '</button>';
         }
         if (!state.starredActive && searchResultWhere !== 'all') {
@@ -1176,9 +1186,10 @@
                     '<div class="list-empty">Nothing is starred. Star a message to keep it here.</div>' + fullCta;
             } else {
                 const scopeWord = searchResultWhere === 'all' ? 'any folder' : 'Inbox, this folder or Sent';
-                const whatWord  = searchResultScope === 'full' ? 'message text' : 'subjects, senders, or recipients';
+                const whatWord  = searchResultScope === 'headers' ? 'subjects, senders or recipients' : 'any message';
                 $('messageList').innerHTML = notes +
-                    '<div class="list-empty">No matches in ' + whatWord + ' in ' + scopeWord + '.</div>' + fullCta;
+                    '<div class="list-empty">Nothing in ' + whatWord + ' in ' + scopeWord +
+                    ' mentions that — not even some of those words.</div>' + fullCta;
             }
             renderSearchPager();
             return;
@@ -1188,7 +1199,7 @@
         let lastGroup = null;
         for (const m of results) {
             // Group headers only make sense when the rows are in date order.
-            if (searchSort === 'date') {
+            if (searchSort === 'date' && !searchRanked) {
                 const group = dateGroupLabel(m.timestamp);
                 if (group !== lastGroup) {
                     html += '<div class="list-group-header">' + escapeHtml(group) + '</div>';
@@ -1257,7 +1268,7 @@
             newer.closest('label').hidden = state.starredActive;
         }
         const sortSel = $('searchSort');
-        if (sortSel) sortSel.value = searchSort + ':' + searchDir;
+        if (sortSel) sortSel.value = searchRank ? 'best' : (searchSort + ':' + searchDir);
     }
 
     function renderSearchPager() {
@@ -1332,12 +1343,12 @@
     }
 
     async function runServerSearch(q, scope, where, page, sort, dir) {
-        scope = scope || 'headers';   // default = fast header search (subject/from/to)
+        scope = scope || 'full';      // the whole message, body included — what people mean by "search"
         where = where || 'default';   // 'all' = every folder, not just Inbox/current/Sent
         page  = page  || 1;
         sort  = sort  || searchSort;
         dir   = dir   || searchDir;
-        const cacheKey = [scope, where, page, sort, dir, q.toLowerCase()].join('|');
+        const cacheKey = [scope, where, page, sort, dir, q.toLowerCase(), searchRank ? 'best' : 'order'].join('|');
 
         const apply = (data) => {
             state.searchActive  = true;
@@ -1350,6 +1361,9 @@
             searchPages         = data.pages || 1;
             searchTotal         = data.total || 0;
             searchSort          = data.sort  || sort;
+            searchMatched       = data.matched || '';
+            searchNote          = data.note    || '';
+            searchRanked        = !!data.ranked;
             searchDir           = data.dir   || dir;
             searchParsed        = data.parsed || [];
             searchErrors        = data.errors || [];
@@ -1368,13 +1382,14 @@
         $('messageList').innerHTML = '<div class="list-loading">' +
             (where === 'all'
                 ? 'Searching every folder…'
-                : (scope === 'full' ? 'Searching full message text…' : 'Searching Inbox &amp; Sent…')) + '</div>';
+                : (scope === 'headers' ? 'Searching subjects and senders…' : 'Searching messages…')) + '</div>';
         $('pagination').hidden = true;
 
         try {
             const url = 'ajax/fetch.php?action=search&q=' + encodeURIComponent(q) +
                         '&page=' + page + '&sort=' + encodeURIComponent(sort) + '&dir=' + encodeURIComponent(dir) +
-                        (scope === 'full' ? '&scope=full' : '') +
+                        (scope === 'headers' ? '&scope=headers' : '') +
+                        '&rank=' + (searchRank ? '1' : '0') +
                         (where === 'all' ? '&where=all' : '') +
                         acctParam(viewAcct());
             const r = await fetch(url, { credentials: 'same-origin', signal: searchAbortCtrl.signal });
@@ -4358,7 +4373,12 @@
             });
             $('searchNewer').addEventListener('change', (e) => searchSetNewer(e.target.value));
             $('searchSort').addEventListener('change', (e) => {
-                const parts = String(e.target.value).split(':');
+                // "Best match" is not a field to sort on, it is the ranking —
+                // so "newest first" means newest first, not "best, which is
+                // usually newest".
+                const v = String(e.target.value);
+                searchRank = (v === 'best');
+                const parts = (searchRank ? 'date:desc' : v).split(':');
                 searchSort = parts[0] || 'date';
                 searchDir  = parts[1] || 'desc';
                 if (state.starredActive) loadStarred(1, searchSort, searchDir);
@@ -4376,13 +4396,13 @@
                 if (retryEl) { retryOutbox(viewAcct(), retryEl.dataset.outboxRetry); return; }
                 return;
             }
-            // "Search full message text" affordance shown after a fast header search.
+            // Widen to every folder, or narrow to headers for speed.
             if (e.target.closest('[data-all-folders]')) {
                 if (state.searchQuery) runServerSearch(state.searchQuery, searchResultScope, 'all');
                 return;
             }
-            if (e.target.closest('[data-full-search]')) {
-                if (state.searchQuery) runServerSearch(state.searchQuery, 'full', searchResultWhere);
+            if (e.target.closest('[data-headers-search]')) {
+                if (state.searchQuery) runServerSearch(state.searchQuery, 'headers', searchResultWhere);
                 return;
             }
             const item = e.target.closest('.msg-item');
@@ -4488,9 +4508,9 @@
 
             // Debounce so the server isn't hit on every keystroke; cached
             // results render instantly without a debounce wait. Key must match
-            // runServerSearch's `scope + '|' + q` (default scope = headers), or
+            // runServerSearch's own key (default scope = the whole message), or
             // this fast path never hits and every repeat search re-waits 300ms.
-            const cacheKey = ['headers', 'default', 1, searchSort, searchDir, q.toLowerCase()].join('|');
+            const cacheKey = ['full', 'default', 1, searchSort, searchDir, q.toLowerCase(), searchRank ? 'best' : 'order'].join('|');
             if (searchCache.has(cacheKey)) { runServerSearch(q); return; }
             searchDebounceTimer = setTimeout(() => runServerSearch(q), 300);
         });

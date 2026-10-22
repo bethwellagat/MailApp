@@ -807,10 +807,14 @@ function search_collect($criterion, array $folders, array $opt) {
     $budget  = (int)($opt['attach_budget'] ?? 150);
     $reach   = (int)($opt['reach'] ?? 600);
     $ref     = imap_ref();
+    // Ranking needs the whole candidate set in hand before anything is paged:
+    // the best answer is not necessarily on the page you asked for.
+    $rank    = $opt['rank'] ?? null;
+    $matchedByUid = [];
 
-    $useSort  = ($sort !== 'date') && function_exists('imap_sort');
+    $useSort  = !$rank && ($sort !== 'date') && function_exists('imap_sort');
     $sortFlag = ['from' => SORTFROM, 'subject' => SORTSUBJECT, 'size' => SORTSIZE][$sort] ?? SORTDATE;
-    $need     = min($page * $perPage, $reach);
+    $need     = $rank ? $reach : min($page * $perPage, $reach);
 
     $rows = []; $total = 0; $searched = []; $sortApprox = false;
     $attachStats = ($attach !== null) ? ['probed' => 0, 'unknown' => 0, 'known' => 0] : null;
@@ -867,6 +871,20 @@ function search_collect($criterion, array $folders, array $opt) {
 
         $total += count($uids);
         if (count($uids) > $need) $uids = array_slice($uids, 0, $need);
+
+        // Which of the words each message actually has — one indexed search per
+        // word, server-side, instead of fetching bodies. It is what lets the
+        // ranking say "this one has all three" about a match in the body.
+        if ($rank && $uids && count($rank['words']) > 1 && microtime(true) < $rank['deadline']) {
+            $want = array_fill_keys($uids, true);
+            foreach ($rank['words'] as $w) {
+                if (microtime(true) > $rank['deadline']) break;   // a slow server must not hold the page
+                $hit = @imap_search($box, search_word_key($w, $rank['full']), SE_UID);
+                if (!is_array($hit)) continue;
+                foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[(string)(int)$u][] = $w;
+            }
+        }
+
         if ($uids) {
             $ov = @imap_fetch_overview($box, implode(',', $uids), FT_UID);
             if (is_array($ov)) foreach ($ov as $m) $rows[] = search_row_from_overview($m, $f);
@@ -874,7 +892,8 @@ function search_collect($criterion, array $folders, array $opt) {
         @imap_close($box);
     }
 
-    search_sort_rows($rows, $sort, $dir);
+    if ($rank) $rows = search_rank($rows, $rank['terms'], $matchedByUid);
+    else       search_sort_rows($rows, $sort, $dir);
     $pages  = max(1, (int)ceil($total / $perPage));
     $page   = min($page, $pages);
     $offset = ($page - 1) * $perPage;
@@ -888,6 +907,7 @@ function search_collect($criterion, array $folders, array $opt) {
         'sort'        => $sort,
         'dir'         => $dir,
         'sort_approx' => $sortApprox,
+        'ranked'      => (bool)$rank,
         'reach'       => $reach,
         'reach_hit'   => ($page * $perPage) > $reach,
         'attach'      => $attachStats,
@@ -1495,7 +1515,9 @@ if ($action === 'search') {
     $sort = (string)($_GET['sort'] ?? 'date');
     if (!in_array($sort, ['date', 'from', 'subject', 'size'], true)) $sort = 'date';
     $dir  = (($_GET['dir'] ?? 'desc') === 'asc') ? 'asc' : 'desc';
-    $full = (($_GET['scope'] ?? '') === 'full');
+    // The body counts. Searching only the headers is what made a sentence
+    // remembered from a message find nothing; it is still available for speed.
+    $full = (($_GET['scope'] ?? '') !== 'headers');
     // where=all is the old "Search every folder" button; in:anywhere means the same.
     $where = (($_GET['where'] ?? '') === 'all') ? 'all' : 'default';
 
@@ -1538,7 +1560,9 @@ if ($action === 'search') {
         }
     }
 
-    $criterion = search_to_imap($p, $full);
+    $plan      = search_plan($p, $full);
+    $terms     = $plan['terms'];
+    $criterion = $plan['attempts'][0]['criterion'];
     // Nothing to search on and nothing to filter by: listing forty folders
     // would be a scan, not a search. Say what would make it one.
     if ($criterion === 'ALL' && $p['has'] === null && $p['in'] === null) {
@@ -1549,25 +1573,52 @@ if ($action === 'search') {
     // A single plain word can be retried one key at a time if a server rejects
     // the nested OR; anything structured cannot be split that way, because the
     // parts are ANDed and a union would be wrong.
+    // Some servers reject a nested OR; one plain word can be retried key by key.
     $fallback = null;
-    if (count($p['text']) === 1 && search_to_imap(array_merge($p, ['text' => []]), $full) === 'ALL') {
-        $qq = search_imap_quote($p['text'][0]);
+    if (count($p['text']) === 1 && search_to_imap(array_merge($p, ['text' => []]), false) === 'ALL') {
+        $qq = search_imap_quote(search_stem($p['text'][0]));
         $fallback = ["SUBJECT $qq", "FROM $qq", "TO $qq"];
         if ($full) $fallback[] = "BODY $qq";
     }
 
-    $out = search_collect($criterion, $folders, [
-        'page' => $page, 'per_page' => 25, 'sort' => $sort, 'dir' => $dir,
-        'attach' => $p['has'], 'attach_budget' => 150, 'reach' => 600,
-        'email' => (string)($_SESSION['email'] ?? ''), 'acct' => account_effective_id(),
-        'fallback' => $fallback,
-    ]);
+    // Best first: the exact wording, then every word, then most of them. The
+    // first rung that finds anything is the answer — a search that falls back
+    // silently would be lying, so the rung's own sentence goes with it.
+    $words   = array_merge($terms['required'], $terms['exact']);
+    // Best-match order is asked for, not inferred from the sort field: "newest
+    // first" must mean newest first, not "best, which is usually newest".
+    $wantRank = isset($_GET['rank']) ? ($_GET['rank'] === '1') : ($sort === 'date' && $dir === 'desc');
+    $byBest   = ($wantRank && count($words) > 0);
+    // Searching a whole message costs real time on a server with no full-text
+    // index, and this may run three attempts plus a search per word. The work
+    // is bounded: whatever has been found when the budget runs out is the
+    // answer, rather than a page that never arrives.
+    $deadline = microtime(true) + 12.0;
+    $rankOpt  = ($byBest && count($words) <= 6 && count($folders) <= 8)
+              ? ['terms' => $terms, 'words' => $words, 'full' => $full, 'deadline' => $deadline - 3.0]
+              : null;
+
+    $out = null; $used = null;
+    foreach ($plan['attempts'] as $attempt) {
+        $criterion = $attempt['criterion'];
+        $try = search_collect($criterion, $folders, [
+            'page' => $page, 'per_page' => 25, 'sort' => $sort, 'dir' => $dir,
+            'attach' => $p['has'], 'attach_budget' => 150, 'reach' => 600,
+            'email' => (string)($_SESSION['email'] ?? ''), 'acct' => account_effective_id(),
+            'fallback' => $fallback, 'rank' => $rankOpt,
+        ]);
+        $out = $try; $used = $attempt;
+        if ((int)$try['total'] > 0) break;
+        if (microtime(true) > $deadline) break;   // out of time: say what was found, not nothing
+    }
 
     ok(array_merge($out, [
         'q'              => $q,
         'parsed'         => $describe,
         'errors'         => $errors,
         'criterion'      => $criterion,          // what was sent to IMAP — invaluable in a bug report
+        'matched'        => $used['mode'],       // phrase | all | any | filters
+        'note'           => (int)$out['total'] > 0 ? $used['note'] : '',
         'searched_all'   => $where === 'all',
         'folders_capped' => $capped,
         'scope'          => $full ? 'full' : 'headers',

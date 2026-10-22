@@ -452,3 +452,213 @@ function search_resolve_folder($in, array $folders) {
     foreach ($folders as $f) if (strpos(strtolower($f), $want) !== false) return $f;
     return null;
 }
+
+/* ===========================================================================
+ * Understanding a sentence
+ *
+ * Typing three words from a message you half-remember used to find nothing.
+ * Each word had to appear in Subject, From or To — not the body — and all of
+ * them had to match, so "quote for safari" failed on "for" alone, and on
+ * "quote" against a subject reading "Quotation".
+ *
+ * So: words are stemmed, words that carry no meaning are not required, the
+ * whole sentence is tried as a phrase first, and when nothing has every word
+ * the search falls back to the messages that have most of them, best first,
+ * and says so. Everything here is a pure function over the parsed query.
+ * ======================================================================== */
+
+/** Words that are in every message and so cannot narrow anything down. */
+function search_is_stop($w) {
+    static $stop = ['a'=>1,'an'=>1,'and'=>1,'any'=>1,'are'=>1,'as'=>1,'at'=>1,'be'=>1,'been'=>1,'but'=>1,'by'=>1,
+        'can'=>1,'did'=>1,'do'=>1,'does'=>1,'for'=>1,'from'=>1,'had'=>1,'has'=>1,'have'=>1,'he'=>1,'her'=>1,'his'=>1,
+        'how'=>1,'i'=>1,'if'=>1,'in'=>1,'is'=>1,'it'=>1,'its'=>1,'me'=>1,'my'=>1,'no'=>1,'not'=>1,'of'=>1,'on'=>1,
+        'or'=>1,'our'=>1,'out'=>1,'re'=>1,'she'=>1,'so'=>1,'that'=>1,'the'=>1,'their'=>1,'them'=>1,'then'=>1,
+        'there'=>1,'these'=>1,'they'=>1,'this'=>1,'to'=>1,'too'=>1,'up'=>1,'us'=>1,'was'=>1,'we'=>1,'were'=>1,
+        'what'=>1,'when'=>1,'where'=>1,'which'=>1,'who'=>1,'why'=>1,'will'=>1,'with'=>1,'you'=>1,'your'=>1];
+    return isset($stop[mb_strtolower(trim((string)$w))]);
+}
+
+/**
+ * The shortest form of a word that still means it.
+ *
+ * IMAP matches substrings, so searching the stem finds every ending: "quot"
+ * finds quote, quotes, quoting AND quotation, which is the match people
+ * expected and never got. Short words are left alone — trimming "car" to "ca"
+ * would match everything.
+ */
+function search_stem($w) {
+    $w = mb_strtolower(trim((string)$w));
+    if ($w === '' || mb_strlen($w) < 4 || !preg_match('/^[a-z]+$/', $w)) return $w;
+
+    $strip = function ($word, array $rules) {
+        foreach ($rules as $suffix => $replace) {
+            $len = mb_strlen($suffix);
+            if (mb_strlen($word) - $len + mb_strlen($replace) < 3) continue;   // never leave less than a word
+            if (mb_substr($word, -$len) === $suffix) return mb_substr($word, 0, mb_strlen($word) - $len) . $replace;
+        }
+        return $word;
+    };
+
+    // Plural first, so "quotations" becomes "quotation" and can then lose its
+    // ending too — one pass left it half-stemmed and missing "quote".
+    if (mb_substr($w, -2) !== 'ss') $w = $strip($w, ['ies' => 'y', 'sses' => 'ss', 'es' => '', 's' => '']);
+    $w = $strip($w, ['ational' => '', 'ization' => '', 'fulness' => '', 'iveness' => '',
+                     'ation' => '', 'ement' => '', 'ness' => '', 'ment' => '', 'tion' => '', 'sion' => '',
+                     'ance' => '', 'ence' => '', 'ing' => '', 'ity' => '', 'ive' => '', 'ful' => '', 'ous' => '',
+                     'ion' => '', 'est' => '', 'ly' => '', 'ed' => '', 'er' => '']);
+    if (mb_substr($w, -1) === 'e') $w = $strip($w, ['e' => '']);
+    return $w;
+}
+
+/**
+ * The bare words of a query, sorted into the ones that must match and the
+ * ones that only help rank. A quoted "phrase" is never broken up or stemmed:
+ * someone who typed quotes meant those words in that order.
+ */
+function search_terms(array $p) {
+    $required = []; $optional = []; $exact = [];
+    foreach ($p['text'] as $t) {
+        $t = trim((string)$t);
+        if ($t === '') continue;
+        if (preg_match('/\s/', $t)) { $exact[] = $t; continue; }   // a quoted phrase, kept whole
+        if (search_is_stop($t)) { $optional[] = $t; continue; }
+        $stem = search_stem($t);
+        if ($stem !== '' && !in_array($stem, $required, true)) $required[] = $stem;
+    }
+    // The whole thing as one phrase, for the first and best attempt.
+    $phrase = '';
+    $words  = array_filter($p['text'], fn($t) => trim((string)$t) !== '');
+    if (count($words) > 1 && !$exact) $phrase = implode(' ', $words);
+    elseif (count($exact) === 1 && !$words) $phrase = $exact[0];
+    return ['required' => $required, 'optional' => $optional, 'exact' => $exact, 'phrase' => $phrase,
+            'words' => array_values($words)];
+}
+
+/** One IMAP key for a word: the whole message by default, headers when asked. */
+function search_word_key($word, $fullText = true) {
+    $q = search_imap_quote($word);
+    return $fullText ? "TEXT $q" : "OR OR SUBJECT $q FROM $q TO $q";
+}
+
+/** The OR of several keys, nested as IMAP requires (OR takes exactly two). */
+function search_or_keys(array $keys) {
+    $keys = array_values(array_filter($keys, fn($k) => $k !== ''));
+    if (!$keys) return '';
+    if (count($keys) === 1) return $keys[0];
+    $expr = array_pop($keys);
+    while ($keys) $expr = 'OR ' . array_pop($keys) . ' ' . $expr;
+    return $expr;
+}
+
+/**
+ * What the text part of the query becomes, at one rung of the ladder:
+ *   phrase — the sentence, in that order
+ *   all    — every meaningful word, stemmed
+ *   any    — at least one of them (the ranking sorts out which is best)
+ */
+function search_text_criterion(array $terms, $mode, $fullText = true) {
+    if ($mode === 'phrase') {
+        return $terms['phrase'] === '' ? '' : search_word_key($terms['phrase'], $fullText);
+    }
+    $words = array_merge($terms['required'], $terms['exact']);
+    if (!$words) $words = $terms['optional'];           // a query of nothing but stop words still means them
+    if (!$words) return '';
+    if ($mode === 'any') return search_or_keys(array_map(fn($w) => search_word_key($w, $fullText), $words));
+    return implode(' ', array_map(fn($w) => search_word_key($w, $fullText), $words));   // a list is an AND
+}
+
+/**
+ * The attempts to make, best first. Each carries the IMAP criterion and the
+ * sentence the page shows when that rung is the one that found something.
+ * Operators (from:, is:, has:, after: …) are not relaxed — only the words are.
+ */
+function search_plan(array $p, $fullText = true) {
+    $terms = search_terms($p);
+    $rest  = search_to_imap(array_merge($p, ['text' => [], 'not_text' => $p['not_text']]), false);
+    $rest  = ($rest === 'ALL') ? '' : $rest;
+    $nots  = [];
+    foreach ($p['not_text'] as $t) $nots[] = 'NOT ' . search_word_key($t, $fullText);
+    $fixed = trim($rest . ' ' . implode(' ', $nots));
+
+    $join = function ($text) use ($fixed) {
+        $c = trim(($text === '' ? '' : $text) . ' ' . $fixed);
+        return $c === '' ? 'ALL' : $c;
+    };
+    $plan  = [];
+    $multi = count($terms['words']) > 1 || $terms['exact'];
+    if ($terms['phrase'] !== '') {
+        $plan[] = ['mode' => 'phrase', 'criterion' => $join(search_text_criterion($terms, 'phrase', $fullText)),
+                   'note' => 'Showing messages containing that exact wording.'];
+    }
+    $all = search_text_criterion($terms, 'all', $fullText);
+    if ($all !== '') {
+        // Only say something when it would otherwise be a surprise. Falling
+        // from "the whole sentence" to "all of these words" is what everyone
+        // means anyway; saying so on every search is noise. Falling back from
+        // a phrase the user put in quotes is not — they asked for those words
+        // in that order.
+        $plan[] = ['mode' => 'all', 'criterion' => $join($all),
+                   'note' => $terms['exact'] ? 'Nothing has that exact phrase — showing messages with all of those words.' : ''];
+    }
+    if ($multi && count(array_merge($terms['required'], $terms['exact'])) > 1) {
+        $plan[] = ['mode' => 'any', 'criterion' => $join(search_text_criterion($terms, 'any', $fullText)),
+                   'note' => 'No message has all of those words — showing the closest matches, best first.'];
+    }
+    if (!$plan) $plan[] = ['mode' => 'filters', 'criterion' => $join(''), 'note' => ''];
+    return ['terms' => $terms, 'attempts' => $plan];
+}
+
+/**
+ * How well one message answers the query. Pure: given the row and which of
+ * the words the server said it matched.
+ *
+ * A word in the subject is worth more than the same word in the body, because
+ * that is what people mean by "the one about X"; a sender match counts too;
+ * and more of the words beats fewer of them, which is what makes the "closest
+ * matches" rung useful rather than a pile.
+ */
+function search_score(array $row, array $terms, array $matched = [], $now = null) {
+    $now     = $now ?? time();
+    $subject = mb_strtolower((string)($row['subject'] ?? ''));
+    $from    = mb_strtolower((string)($row['from_name'] ?? '') . ' ' . (string)($row['from_addr'] ?? ''));
+    $words   = array_merge($terms['required'], $terms['exact']);
+    $score   = 0;
+
+    if ($terms['phrase'] !== '' && $subject !== '' && mb_strpos($subject, mb_strtolower($terms['phrase'])) !== false) $score += 120;
+    foreach ($words as $w) {
+        $w = mb_strtolower($w);
+        if ($w === '') continue;
+        $inSubject = $subject !== '' && mb_strpos($subject, $w) !== false;
+        $inFrom    = $from    !== '' && mb_strpos($from, $w) !== false;
+        $inBody    = in_array($w, $matched, true);
+        if ($inSubject) $score += 30;
+        if ($inFrom)    $score += 12;
+        if ($inBody && !$inSubject && !$inFrom) $score += 8;    // it is in there somewhere
+    }
+    // Every word present beats most of them, whatever the fields.
+    $have = 0;
+    foreach ($words as $w) {
+        $w = mb_strtolower($w);
+        if (($subject !== '' && mb_strpos($subject, $w) !== false) || ($from !== '' && mb_strpos($from, $w) !== false) || in_array($w, $matched, true)) $have++;
+    }
+    if ($words && $have === count($words)) $score += 40;
+    $score += $have * 10;
+    // A nudge for recency, never enough to beat a better match: at most 9.
+    $age = max(0, $now - (int)($row['timestamp'] ?? 0));
+    $score += max(0, 9 - (int)floor($age / (30 * 86400)));
+    return $score;
+}
+
+/** Best first, then newest. Pure. */
+function search_rank(array $rows, array $terms, array $matchedByUid = [], $now = null) {
+    foreach ($rows as $i => $r) {
+        $uid = (string)($r['uid'] ?? '');
+        $rows[$i]['score'] = search_score($r, $terms, $matchedByUid[$uid] ?? [], $now);
+    }
+    usort($rows, function ($a, $b) {
+        if ($a['score'] !== $b['score']) return $b['score'] - $a['score'];
+        return (int)($b['timestamp'] ?? 0) - (int)($a['timestamp'] ?? 0);
+    });
+    return $rows;
+}
+

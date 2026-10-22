@@ -485,10 +485,11 @@ if (is_string($f)) {
     t_ok('the endpoint requires lib/search.php',       strpos($f, 'lib/search.php') !== false);
     t_ok('the endpoint requires lib/attachindex.php',  strpos($f, 'lib/attachindex.php') !== false);
     t_ok('search parses with search_parse()',          strpos($f, 'search_parse($q)') !== false);
-    t_ok('search translates with search_to_imap()',    strpos($f, 'search_to_imap($p, $full)') !== false);
+    t_ok('search plans its attempts rather than hand-building a criterion',
+         strpos($f, 'search_plan($p, $full)') !== false && preg_match('/\\$criterion = \\$attempt\\[.criterion.\\]/', $f) === 1);
     /* Call sites only — "search_collect(" alone also matches the function's own
        definition, which let one caller plus the definition pass as two callers. */
-    t_ok('search and starred page through one collector', substr_count($f, '$out = search_collect(') >= 2,
+    t_ok('search and starred page through one collector', substr_count($f, ' search_collect(') >= 2,
          'found ' . substr_count($f, '$out = search_collect(') . ' call sites');
     t_ok('no hand-built OR criterion remains in the endpoint', strpos($f, 'OR OR SUBJECT') === false);
     t_ok('starred reads a page parameter',
@@ -751,3 +752,30 @@ t_ok('…and only the admin may throw it', preg_match("/action === 'auto'/", $u)
 $lib = (string)@file_get_contents(T_ROOT . '/tests/lib.php');
 t_ok('THE SUITE CANNOT REACH GITHUB OR REWRITE THE TREE', strpos($lib, 'function t_safe_seams') !== false && strpos($lib, 't_safe_seams();') !== false
      && strpos($lib, 'AUTOUPDATE_APPLY') !== false && strpos($lib, 'REGISTRY_APPLY') !== false);
+
+t_group('search: a sentence is understood, not spelled out');
+$f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
+t_ok('the body is searched unless speed is asked for', strpos($f, "(\$_GET['scope'] ?? '') !== 'headers'") !== false);
+t_ok('the rungs are tried in order and the first answer wins', preg_match('/foreach \(\$plan\[.attempts.\] as \$attempt\).*?if \(\(int\)\$try\[.total.\] > 0\) break;/s', $f) === 1);
+t_ok('…and the page is told which rung answered', strpos($f, "'matched'        => \$used['mode']") !== false && strpos($f, "'note'           =>") !== false);
+t_ok('ranking holds the whole candidate set before paging', strpos($f, '$need     = $rank ? $reach :') !== false);
+t_ok('…and asks the server which words each message has', preg_match('/foreach \(\$rank\[.words.\] as \$w\).*?imap_search\(\$box, search_word_key/s', $f) === 1);
+t_ok('…bounded, so a long query cannot fan out', strpos($f, 'count($words) <= 6 && count($folders) <= 8') !== false);
+$l = (string)@file_get_contents(T_ROOT . '/lib/search.php');
+t_ok('a quoted phrase is never stemmed', preg_match('/function search_terms.*?preg_match\(.\/\\\\s\/., \$t\).*?exact/s', $l) === 1);
+t_ok('operators are carried onto every rung, not relaxed', preg_match('/function search_plan.*?\$fixed = /s', $l) === 1);
+
+t_group('search: best match is a choice, and the page says what it did');
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('the whole message is searched by default', strpos($js, "scope = scope || 'full'") !== false);
+t_ok('best-match order is asked for explicitly', strpos($js, "searchRank = (v === 'best')") !== false && strpos($js, "'&rank=' + (searchRank ? '1' : '0')") !== false);
+t_ok('…and the cache knows the difference', substr_count($js, "searchRank ? 'best' : 'order'") >= 2);
+t_ok('the rung that answered is shown above the rows', preg_match('/searchNote\s+= data\.note/', $js) === 1 && strpos($js, "escapeHtml(searchNote)") !== false);
+t_ok('date headings are dropped when the rows are in best-match order', strpos($js, "searchSort === 'date' && !searchRanked") !== false);
+$ib = (string)@file_get_contents(T_ROOT . '/inbox.php');
+t_ok('the sort control offers it first', preg_match('/<option value="best">Best match<\/option>\s*<option value="date:desc">Newest first/', $ib) === 1);
+$f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
+t_ok('the server takes the choice, and defaults to it', strpos($f, "isset(\$_GET['rank']) ? (\$_GET['rank'] === '1')") !== false);
+t_ok('a whole-message search is bounded in time', strpos($f, '$deadline = microtime(true) + 12.0') !== false
+     && strpos($f, "microtime(true) > \$rank['deadline']") !== false
+     && preg_match('/if \(microtime\(true\) > \$deadline\) break;/', $f) === 1);

@@ -421,6 +421,7 @@ $prefs        = load_prefs($email);
                 <label class="search-select-wrap search-sort-wrap">
                     <span class="search-select-label">Sort</span>
                     <select class="search-select" id="searchSort" aria-label="Sort results">
+                        <option value="best">Best match</option>
                         <option value="date:desc">Newest first</option>
                         <option value="date:asc">Oldest first</option>
                         <option value="from:asc">Sender A–Z</option>

@@ -201,3 +201,92 @@ t_eq('ten entries survive', count($capped['flags']), 10);
 t_eq('and they are the highest UIDs', min(array_keys($capped['flags'])), 21);
 
 @unlink($path); @unlink($path . '.lock'); @rmdir($tmp);
+
+/* =========================================================================
+   A sentence, understood: stemming, stop words, the ladder, the ranking.
+   ========================================================================= */
+
+t_group('search: the stem of a word');
+foreach ([['quote','quot'],['quotes','quot'],['quoting','quot'],['quotation','quot'],['quotations','quot']] as [$w,$e]) {
+    t_eq("$w → $e", search_stem($w), $e);
+}
+t_eq('a whole family meets at one stem', array_unique(array_map('search_stem', ['book','books','booking','booked','bookings'])), ['book']);
+t_eq('…and another',                     array_unique(array_map('search_stem', ['invoice','invoices','invoicing'])), ['invoic']);
+t_eq('plurals alone',                    array_unique(array_map('search_stem', ['safari','safaris'])), ['safari']);
+t_eq('y plurals',                        search_stem('queries'), 'query');
+t_ok('short words are left alone',       search_stem('car') === 'car' && search_stem('cars') === 'car' && search_stem('the') === 'the');
+t_ok('a double s is not a plural',       search_stem('address') === 'address' && search_stem('press') === 'press');
+t_ok('a stem is never shorter than three letters', !array_filter(['ties','uses','ages','eyes','axes'], fn($w) => mb_strlen(search_stem($w)) < 3));
+t_eq('anything that is not a word is untouched', [search_stem('a1b2'), search_stem('x@y.com'), search_stem('')], ['a1b2', 'x@y.com', '']);
+
+t_group('search: words that cannot narrow anything down');
+t_ok('the usual suspects', search_is_stop('the') && search_is_stop('For') && search_is_stop('and') && search_is_stop('with'));
+t_ok('…and real words are not', !search_is_stop('safari') && !search_is_stop('quote') && !search_is_stop('invoice'));
+
+t_group('search: sorting the words of a sentence');
+$t = search_terms(search_parse('quote for the safari package'));
+t_eq('meaning-carrying words are stemmed and required', $t['required'], ['quot', 'safari', 'packag']);
+t_eq('…the rest only help the ranking',                 $t['optional'], ['for', 'the']);
+t_eq('…and the sentence is kept whole for the first attempt', $t['phrase'], 'quote for the safari package');
+$t = search_terms(search_parse('"final invoice" urgent'));
+t_eq('a quoted phrase is never broken up or stemmed', $t['exact'], ['final invoice']);
+t_eq('…while the loose word still is',                $t['required'], ['urgent']);
+$t = search_terms(search_parse('safari'));
+t_eq('one word is not a phrase', $t['phrase'], '');
+$t = search_terms(search_parse('the and for'));
+t_ok('a query of nothing but stop words still means them', $t['required'] === [] && count($t['optional']) === 3);
+
+t_group('search: one word, in the whole message');
+t_eq('by default the body counts too', search_word_key('safari'), 'TEXT "safari"');
+t_eq('headers only when asked',        search_word_key('safari', false), 'OR OR SUBJECT "safari" FROM "safari" TO "safari"');
+t_eq('two alternatives',   search_or_keys(['A', 'B']), 'OR A B');
+t_eq('three nest to the right', search_or_keys(['A', 'B', 'C']), 'OR A OR B C');
+t_eq('one is itself',      search_or_keys(['A']), 'A');
+t_eq('none is nothing',    search_or_keys([]), '');
+
+t_group('search: the ladder of attempts');
+$plan = search_plan(search_parse('quote for the safari package'));
+t_eq('three rungs, best first', array_column($plan['attempts'], 'mode'), ['phrase', 'all', 'any']);
+t_eq('the phrase, as typed',    $plan['attempts'][0]['criterion'], 'TEXT "quote for the safari package"');
+t_eq('every word, stemmed',     $plan['attempts'][1]['criterion'], 'TEXT "quot" TEXT "safari" TEXT "packag"');
+t_eq('or any of them',          $plan['attempts'][2]['criterion'], 'OR TEXT "quot" OR TEXT "safari" TEXT "packag"');
+t_eq('falling to "all the words" is what everyone means, so it says nothing', $plan['attempts'][1]['note'], '');
+t_ok('…but giving up on some of them is a surprise, and says so', str_contains($plan['attempts'][2]['note'], 'closest matches'));
+$quoted = search_plan(search_parse('"final invoice" urgent'));
+t_ok('a phrase the user put in quotes is different — losing it is reported',
+     str_contains($quoted['attempts'][0]['note'] . $quoted['attempts'][1]['note'], 'exact phrase'));
+$plan = search_plan(search_parse('safari'));
+t_eq('one word needs no ladder', array_column($plan['attempts'], 'mode'), ['all']);
+t_eq('…and is searched whole',   $plan['attempts'][0]['criterion'], 'TEXT "safari"');
+
+t_group('search: the operators are never relaxed');
+$plan = search_plan(search_parse('from:thuraya quote safari package'));
+foreach ($plan['attempts'] as $a) {
+    t_ok('"' . $a['mode'] . '" still requires from:thuraya', str_contains($a['criterion'], 'FROM "thuraya"'));
+}
+$plan = search_plan(search_parse('quote safari is:unread has:attachment'));
+t_ok('a flag survives every rung', !array_filter($plan['attempts'], fn($a) => !str_contains($a['criterion'], 'UNSEEN')));
+$plan = search_plan(search_parse('quote -cancelled'));
+t_ok('an excluded word stays excluded', str_contains($plan['attempts'][0]['criterion'], 'NOT TEXT "cancelled"'));
+$plan = search_plan(search_parse('is:unread'));
+t_eq('filters with no words at all still search', $plan['attempts'][0]['criterion'], 'UNSEEN');
+
+t_group('search: which result is the best one');
+$terms = search_terms(search_parse('safari package quote'));
+$now = 1792400000;
+$rows = [
+    ['uid' => 1, 'subject' => 'Re: hello',                         'from_name' => 'Ada',  'from_addr' => 'a@x', 'timestamp' => $now - 86400],
+    ['uid' => 2, 'subject' => 'Safari package quote for Thuraya',  'from_name' => 'Ops',  'from_addr' => 'o@x', 'timestamp' => $now - 400 * 86400],
+    ['uid' => 3, 'subject' => 'Safari enquiry',                    'from_name' => 'Tour', 'from_addr' => 't@x', 'timestamp' => $now - 86400],
+];
+$matched = ['1' => ['safari'], '2' => ['safari', 'packag', 'quot'], '3' => ['safari', 'quot']];
+$ranked = search_rank($rows, $terms, $matched, $now);
+t_eq('the one with every word in its subject wins, though it is a year old', $ranked[0]['uid'], 2);
+t_eq('then the one with two of the words', $ranked[1]['uid'], 3);
+t_eq('the passing mention is last',        $ranked[2]['uid'], 1);
+t_ok('a subject match beats a body match', search_score(['subject' => 'safari', 'timestamp' => $now], $terms, [], $now)
+                                         > search_score(['subject' => 'x', 'timestamp' => $now], $terms, ['safari'], $now));
+t_ok('all the words beat some of them',    search_score(['subject' => 'safari packag quot', 'timestamp' => $now], $terms, [], $now)
+                                         > search_score(['subject' => 'safari packag', 'timestamp' => $now], $terms, [], $now));
+t_ok('recency decides a tie, and nothing more', search_score(['subject' => 'safari', 'timestamp' => $now], $terms, [], $now)
+                                              - search_score(['subject' => 'safari', 'timestamp' => $now - 400 * 86400], $terms, [], $now) <= 9);
