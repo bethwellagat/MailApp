@@ -158,6 +158,17 @@ function registry_may_apply($background = false, $sapi = null) {
 }
 
 /**
+ * Applying the update, behind a seam. The tests drive this instead of the real
+ * updater — a test that could rewrite the working tree is a test nobody can
+ * safely run, and one that did exactly that is why this exists.
+ */
+function registry_apply_update() {
+    if (isset($GLOBALS['REGISTRY_APPLY'])) return ($GLOBALS['REGISTRY_APPLY'])();
+    require_once __DIR__ . '/updater.php';
+    return update_apply();
+}
+
+/**
  * Report in, and act on the reply. Never throws: a registry that is down must
  * not become the visitor's problem. Returns what happened, for the tests and
  * the log.
@@ -204,8 +215,7 @@ function registry_checkin($background = false, $now = null) {
             registry_client_save($c);
             return ['ok' => true, 'update_offered' => true, 'applied' => false, 'why' => 'waiting for a background run'];
         }
-        require_once __DIR__ . '/updater.php';
-        $r = update_apply();
+        $r = registry_apply_update();
         $c = registry_client();
         $c['last_checkin'] = $now;
         $c['applied_at']   = $wanted;           // acted on this request, success or not: it is not retried in a loop

@@ -713,9 +713,9 @@ t_ok('…verifies the signature before storing', preg_match('/registry_sig_ok\(.
 t_ok('…bounds the body',                   strpos($r, 'strlen($body) > 8192') !== false);
 t_ok('…and signs its reply, so only the registry can ask an install to update', strpos($r, "\$reply['sig'] = registry_sign(") !== false);
 $l = (string)@file_get_contents(T_ROOT . '/lib/registry.php');
-t_ok('an install verifies the reply before acting on it', preg_match('/function registry_checkin.*?registry_sig_ok\(\$canon.*?update_apply\(\)/s', $l) === 1);
-t_ok('…and only when its own switch allows it', preg_match('/function registry_checkin.*?empty\(\$c\[.auto_update.\]\).*?update_apply\(\)/s', $l) === 1);
-t_ok('…and only where a visitor is not left waiting', preg_match('/function registry_checkin.*?registry_may_apply\(\$background\).*?update_apply\(\)/s', $l) === 1);
+t_ok('an install verifies the reply before acting on it', preg_match('/function registry_checkin.*?registry_sig_ok\(\$canon.*?registry_apply_update\(\)/s', $l) === 1);
+t_ok('…and only when its own switch allows it', preg_match('/function registry_checkin.*?empty\(\$c\[.auto_update.\]\).*?registry_apply_update\(\)/s', $l) === 1);
+t_ok('…and only where a visitor is not left waiting', preg_match('/function registry_checkin.*?registry_may_apply\(\$background\).*?registry_apply_update\(\)/s', $l) === 1);
 t_ok('a redirected POST keeps its payload (these hosts rewrite /registry.php)', strpos($l, 'CURLOPT_POSTREDIR') !== false);
 t_ok('an install that was never pointed at a registry sends nothing', preg_match('/function registry_tick.*?registry_configured\(\)/s', $l) === 1);
 $sess = (string)@file_get_contents(T_ROOT . '/lib/session.php');
@@ -730,3 +730,4 @@ $h = (string)@file_get_contents(T_ROOT . '/settings.php');
 t_ok('Installations pane and nav',          strpos($h, 'data-target="installations"') !== false && strpos($h, '<section id="installations"') !== false && strpos($h, 'id="regUpdateAll"') !== false);
 t_ok('Diagnostics names the registry, so where an install reports is never hidden', strpos($h, 'id="diagRegistry"') !== false);
 t_ok('an install that has just rewritten its own files says so', strpos($h, 'This install updated itself') !== false);
+t_ok('the real updater is reached only through a seam, so no test can rewrite the tree', preg_match('/function registry_apply_update.*?REGISTRY_APPLY.*?update_apply\\(\\)/s', $l) === 1 && substr_count($l, 'update_apply()') === 1);

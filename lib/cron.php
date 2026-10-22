@@ -733,6 +733,12 @@ function cron_run_all($budget = CRON_BUDGET_SECONDS, $via = 'url') {
         }
     }
 
+    // A background request is the safe place to act on a fleet update: the
+    // files can be rewritten without a visitor waiting on a half-sent page.
+    if (function_exists('registry_configured') || @include_once __DIR__ . '/registry.php') {
+        if (registry_configured()) $summary['registry'] = registry_checkin(true);
+    }
+
     $summary['seconds'] = round(microtime(true) - $started, 2);
     cron_record_run($summary);
     app_log('info', 'cron: run complete', ['via' => $via, 'accounts' => $summary['accounts'], 'jobs' => $summary['jobs'], 'errors' => count($summary['errors']), 'seconds' => $summary['seconds']]);

@@ -7,6 +7,12 @@ $GLOBALS['MAILAPP_DATA_DIR'] = t_tmpdir() . '/data';
 require_once T_ROOT . '/lib/registry.php';
 $T = 1792400000;
 
+// Armed for the whole file, before any check-in can happen: applying an update
+// is reached only through this seam, so no test — and no mutation of a guard
+// while proving it bites — can ever call the real updater and rewrite the tree.
+$GLOBALS['T_APPLIED'] = 0;
+$GLOBALS['REGISTRY_APPLY'] = function () { $GLOBALS['T_APPLIED']++; return ['version' => 'abc1234def', 'files' => 42]; };
+
 t_group('registry: signing');
 $sig = registry_sign('{"a":1}', 'shh', $T);
 t_ok('a signature is hex sha256', preg_match('/^[a-f0-9]{64}$/', $sig) === 1);
@@ -88,6 +94,18 @@ $r = registry_checkin(true, $T);
 t_ok('an install that switched remote updates off is offered and declines', !empty($r['update_offered']) && empty($r['applied']) && str_contains($r['why'], 'switched off'));
 t_eq('…and does not record it as acted on, so turning it on later still works', registry_client()['applied_at'], 0);
 $c = registry_client(); $c['auto_update'] = true; registry_client_save($c);
+$c = registry_client(); $c['auto_update'] = true; $c['applied_at'] = 0; registry_client_save($c);
+$r = registry_checkin(true, $T);
+t_ok('with the switch on, in the background, the update is applied', !empty($r['applied']) && $GLOBALS['T_APPLIED'] === 1);
+t_ok('…and what happened is recorded for the registry to read back', str_contains(registry_client()['last_result'], 'abc1234') && str_contains(registry_client()['last_result'], '42 files'));
+t_eq('…and the moment acted on is remembered', registry_client()['applied_at'], $T + 10);
+$r = registry_checkin(true, $T);
+t_ok('the same request is never applied twice', empty($r['applied']) && $GLOBALS['T_APPLIED'] === 1);
+$GLOBALS['REGISTRY_APPLY'] = function () { return ['error' => 'ZipArchive is missing']; };
+$c = registry_client(); $c['applied_at'] = 0; registry_client_save($c);
+registry_checkin(true, $T);
+t_ok('a failed update is reported, not retried in a loop', str_contains(registry_client()['last_result'], 'failed: ZipArchive') && registry_client()['applied_at'] === $T + 10);
+$c = registry_client(); $c['auto_update'] = false; $c['applied_at'] = 0; registry_client_save($c);
 t_eq('a visitor\'s request only rewrites files where the response can be finished first',
      registry_may_apply(false, 'fpm-fcgi'), function_exists('cron_can_finish_request') ? cron_can_finish_request() : false);
 t_ok('a background run always may', registry_may_apply(true, 'fpm-fcgi'));
@@ -138,4 +156,4 @@ t_group('registry: the check-in is cheap');
 $c = registry_client(); $c['last_checkin'] = $T; registry_client_save($c);
 t_ok('not due a moment later', !registry_due(registry_client(), $T + 60));
 t_ok('due after the interval', registry_due(registry_client(), $T + REGISTRY_INTERVAL));
-unset($GLOBALS['REGISTRY_TRANSPORT'], $GLOBALS['T_SERVER'], $GLOBALS['T_SERVER_SECRET'], $_SERVER['HTTP_HOST']);
+unset($GLOBALS['REGISTRY_TRANSPORT'], $GLOBALS['REGISTRY_APPLY'], $GLOBALS['T_SERVER'], $GLOBALS['T_SERVER_SECRET'], $GLOBALS['T_APPLIED'], $_SERVER['HTTP_HOST']);

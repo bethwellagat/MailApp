@@ -7303,3 +7303,17 @@ html.theme-dark .mail-page .msg-label { color: hsl(var(--lh) 80% 80%); backgroun
 .settings-page .dev-name { font-weight: 600; }
 .settings-page .dev-tag { font-size: 11px; font-weight: 600; color: var(--ip-blue); margin-left: 6px; }
 .settings-page .dev-sub { font-size: 12.5px; color: var(--ip-label-2); }
+
+/* ---- Settings: installations ---- */
+.settings-page .reg-list { display: flex; flex-direction: column; margin: 4px 0; }
+.settings-page .reg-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; }
+.settings-page .reg-row + .reg-row { border-top: 1px solid var(--ip-sep); }
+.settings-page .reg-row.quiet { opacity: 0.6; }
+.settings-page .reg-main { flex: 1; min-width: 0; }
+.settings-page .reg-host { font-weight: 600; word-break: break-all; }
+.settings-page .reg-sub { font-size: 12.5px; color: var(--ip-label-2); }
+.settings-page .reg-result { font-size: 12.5px; color: var(--ip-label-2); font-family: var(--font-mono); margin-top: 2px; word-break: break-word; }
+.settings-page .reg-tag { font-size: 10.5px; font-weight: 700; padding: 0 6px; line-height: 16px; border-radius: 999px; vertical-align: middle; }
+.settings-page .reg-tag.behind { background: var(--ip-red-ink); color: #fff; }
+.settings-page .reg-tag.quiet { background: var(--ip-fill); color: var(--ip-label-2); }
+.settings-page .reg-actions { display: flex; gap: 6px; flex: 0 0 auto; }

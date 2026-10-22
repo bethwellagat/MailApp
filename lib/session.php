@@ -71,6 +71,10 @@ if (!function_exists('cron_tick_shutdown')) {
             if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) return;
             require_once __DIR__ . '/cron.php';
             cron_tick();
+            // …and, where this install reports to a registry, check in (at most
+            // once every REGISTRY_INTERVAL install-wide).
+            require_once __DIR__ . '/registry.php';
+            registry_tick();
         } catch (\Throwable $t) {
             // a scheduler problem must never become the visitor's problem
         }

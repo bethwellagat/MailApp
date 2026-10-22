@@ -211,6 +211,10 @@ if ('serviceWorker' in navigator) {
             <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-refresh-s"/></svg></span>
             <span>Software update</span>
         </a>
+        <a class="settings-nav-item" href="#installations" data-target="installations">
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-link"/></svg></span>
+            <span>Installations</span>
+        </a>
         <a class="settings-nav-item" href="#diagnostics" data-target="diagnostics">
             <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-server"/></svg></span>
             <span>Diagnostics</span>
@@ -928,6 +932,91 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             </div>
         </section>
 
+        <section id="installations" class="settings-section">
+            <header class="settings-section-header">
+                <h2>Installations</h2>
+                <p class="settings-section-desc">Every copy of this app, and one button that updates them all. One install keeps the list; the others report to it every quarter of an hour with their domain, version and PHP &mdash; never an address, a message or a password. Updates are <strong>pulled</strong>: the registry only records that an update was asked for, and each install applies it with its own updater, from its own repository. An install that has not been pointed at a registry sends nothing at all.</p>
+            </header>
+
+            <div class="settings-card" id="regNotAdmin" hidden>
+                <p class="settings-inline-hint">Only <strong id="regAdminEmail"></strong> can manage installations for this workspace.</p>
+            </div>
+
+            <div class="settings-card" id="regOffCard" hidden>
+                <h3 class="settings-card-title">No registry yet</h3>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint">Pick one install to keep the list &mdash; this one, if you like. It carries on being an ordinary mailbox; it just also answers check-ins.</p>
+                </div>
+                <div class="settings-inline-edit">
+                    <button type="button" class="btn btn-primary" id="regBecome">Make this the registry</button>
+                    <span class="settings-status" id="regOffStatus"></span>
+                </div>
+            </div>
+
+            <div id="regOnCards" hidden>
+                <div class="settings-card">
+                    <h3 class="settings-card-title">The fleet</h3>
+                    <div class="settings-row">
+                        <div class="settings-row-label">Installs</div>
+                        <div class="settings-row-value" id="regCount">&hellip;</div>
+                    </div>
+                    <div class="reg-list" id="regList"></div>
+                    <div class="settings-inline-edit">
+                        <button type="button" class="btn btn-primary" id="regUpdateAll">Update all</button>
+                        <button type="button" class="btn" id="regRefresh">Refresh</button>
+                        <span class="settings-status" id="regStatus"></span>
+                    </div>
+                    <div class="settings-row-stack">
+                        <p class="settings-inline-hint">An install applies the update on its next check-in &mdash; within minutes where the scheduler is running, otherwise on the next visit. Each one reports back what happened.</p>
+                    </div>
+                </div>
+
+                <div class="settings-card">
+                    <h3 class="settings-card-title">Adding an install</h3>
+                    <div class="settings-row-stack">
+                        <p class="settings-inline-hint">On the other install, open <strong>Settings &rarr; Installations</strong> and paste these two. Anyone holding this key can add an install to the list and read what it reports, so send it the way you would a password.</p>
+                        <pre class="settings-cron-line" id="regUrl"></pre>
+                        <pre class="settings-cron-line" id="regSecret"></pre>
+                    </div>
+                    <div class="settings-inline-edit">
+                        <button type="button" class="btn" id="regCopyUrl">Copy address</button>
+                        <button type="button" class="btn" id="regCopySecret">Copy key</button>
+                        <button type="button" class="btn" id="regStopServer">Stop keeping the list</button>
+                        <span class="settings-status" id="regServerStatus"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-card" id="regClientCard" hidden>
+                <h3 class="settings-card-title">This install</h3>
+                <div class="settings-row">
+                    <div class="settings-row-label">Reports to</div>
+                    <div class="settings-row-value" id="regReportsTo">nowhere</div>
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <label class="settings-row-label" for="regInUrl">Registry address</label>
+                    <input type="url" id="regInUrl" class="settings-inline-input" placeholder="https://your-domain/registry.php" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="settings-row settings-row-stack">
+                    <label class="settings-row-label" for="regInSecret">Key</label>
+                    <input type="text" id="regInSecret" class="settings-inline-input" placeholder="the key the registry shows" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="settings-toggles">
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="regAutoUpdate" checked>
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-label">Let the registry update this install</span>
+                    </label>
+                </div>
+                <div class="settings-inline-edit">
+                    <button type="button" class="btn btn-primary" id="regSaveClient">Save</button>
+                    <button type="button" class="btn" id="regCheckin">Check in now</button>
+                    <button type="button" class="btn" id="regStopClient" hidden>Stop reporting</button>
+                    <span class="settings-status" id="regClientStatus"></span>
+                </div>
+            </div>
+        </section>
+
         <section id="diagnostics" class="settings-section">
             <header class="settings-section-header">
                 <h2>Diagnostics</h2>
@@ -940,6 +1029,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 <div class="settings-row"><div class="settings-row-label">Scheduler</div><div class="settings-row-value" id="diagCron">&hellip;</div></div>
                 <div class="settings-row"><div class="settings-row-label">Self-wake</div><div class="settings-row-value" id="diagWake">&hellip;</div></div>
                 <div class="settings-row"><div class="settings-row-label">Log file</div><div class="settings-row-value" id="diagLogStatus">&hellip;</div></div>
+                <div class="settings-row"><div class="settings-row-label">Reports to</div><div class="settings-row-value" id="diagRegistry">&hellip;</div></div>
             </div>
             <div class="settings-card" id="diagLogCard">
                 <h3 class="settings-card-title">Recent log</h3>
@@ -2419,6 +2509,163 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
         const rule = cachedRules.find(x => x.id === id);
         if (rule) rule.enabled = cb.checked;
     });
+})();
+</script>
+<script nonce="<?= csp_nonce() ?>">
+/* === Installations ===
+   The list, the update button, and the two fields that point this install at a
+   registry. Everything shown comes from the server; nothing is assumed here. */
+(function () {
+    const $ = id => document.getElementById(id);
+    if (!$('regList')) return;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const say = (el, msg, kind) => { if (!el) return; el.textContent = msg || ''; el.className = 'settings-status' + (kind ? ' ' + kind : ''); };
+    const ago = (ts) => {
+        if (!ts) return 'never';
+        const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+        if (s < 60) return 'just now';
+        if (s < 3600) return Math.round(s / 60) + ' min ago';
+        if (s < 86400) return Math.round(s / 3600) + ' h ago';
+        return Math.round(s / 86400) + ' d ago';
+    };
+    // What a check-in actually did — an install that has just rewritten its own
+    // files must never be reported as merely "saved".
+    const checkinWords = (c) => {
+        if (!c) return '';
+        if (c.error) return c.error;
+        if (c.applied) return 'This install updated itself: ' + (c.result || 'done') + '. Reload to see the new version.';
+        if (c.update_offered) return 'An update is waiting — ' + (c.why || 'not applied here') + '.';
+        return 'Reported in.';
+    };
+    const post = async (body) => {
+        const r = await fetch('ajax/registry.php', { method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.__CSRF__ },
+            body: new URLSearchParams(body).toString() });
+        if (r.status === 401) { window.location = 'index'; return { error: 'Signed out' }; }
+        try { return await r.json(); } catch (e) { return { error: 'Invalid server response' }; }
+    };
+
+    function paint(d) {
+        $('regNotAdmin').hidden   = !!d.is_admin;
+        $('regAdminEmail').textContent = d.admin_email || 'the administrator';
+        $('regOffCard').hidden    = !d.is_admin || d.is_registry;
+        $('regOnCards').hidden    = !d.is_admin || !d.is_registry;
+        $('regClientCard').hidden = !d.is_admin;
+
+        if (d.is_registry) {
+            $('regUrl').textContent    = d.url || '';
+            $('regSecret').textContent = d.secret || '';
+            const f = d.fleet || { installs: [] };
+            const n = f.installs.length;
+            $('regCount').textContent = n ? (n + (n === 1 ? ' install' : ' installs') + (f.newest ? ' · newest version ' + f.newest : '')) : 'None has reported in yet.';
+            $('regList').innerHTML = f.installs.map(x =>
+                '<div class="reg-row' + (x.quiet ? ' quiet' : '') + '">' +
+                    '<div class="reg-main">' +
+                        '<div class="reg-host">' + esc(x.host || x.install_id) +
+                            (x.behind ? ' <span class="reg-tag behind">behind</span>' : '') +
+                            (x.quiet ? ' <span class="reg-tag quiet">quiet</span>' : '') + '</div>' +
+                        '<div class="reg-sub">v' + esc(x.version || '?') + (x.build ? ' · build ' + esc(x.build) : '') +
+                            ' · PHP ' + esc(x.php || '?') + (x.imap ? '' : ' · no IMAP') +
+                            ' · scheduler ' + esc(x.scheduler || '?') +
+                            ' · ' + (x.users || 0) + (x.users === 1 ? ' user' : ' users') +
+                            ' · seen ' + ago(x.last_seen) + '</div>' +
+                        (x.result ? '<div class="reg-result">' + esc(x.result) + '</div>' : '') +
+                    '</div>' +
+                    '<div class="reg-actions">' +
+                        '<button type="button" class="btn" data-update="' + esc(x.install_id) + '">Update</button>' +
+                        '<button type="button" class="btn" data-forget="' + esc(x.install_id) + '">Forget</button>' +
+                    '</div>' +
+                '</div>').join('') || '<p class="settings-inline-hint">Point another install at the address below and it will appear here.</p>';
+        }
+
+        const reporting = !!d.reporting;
+        $('regReportsTo').textContent = reporting
+            ? (d.report_url + ' · last check-in ' + ago(d.last_checkin) + (d.last_error ? ' · ' + d.last_error : ''))
+            : 'nowhere — this install reports to no one';
+        $('regReportsTo').className = 'settings-row-value' + (reporting && d.last_error ? ' settings-status error' : '');
+        $('regInUrl').value    = d.report_url || '';
+        $('regInSecret').value = reporting ? '••••••••••••' : '';
+        $('regAutoUpdate').checked = !!d.auto_update;
+        $('regStopClient').hidden = !reporting;
+        if ($('diagRegistry')) $('diagRegistry').textContent = reporting ? (d.report_url + ' · ' + ago(d.last_checkin)) : 'nowhere';
+    }
+
+    async function load() {
+        const d = await fetch('ajax/registry.php?action=status', { credentials: 'same-origin' }).then(x => x.json()).catch(() => ({ error: 'Network error' }));
+        if (d.error) { say($('regStatus'), d.error, 'error'); return; }
+        paint(d);
+    }
+
+    $('regBecome').addEventListener('click', async () => {
+        say($('regOffStatus'), 'Setting up…');
+        const d = await post({ action: 'become_registry' });
+        if (d.error) { say($('regOffStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('regServerStatus'), 'This install now keeps the list.', 'ok');
+    });
+    $('regStopServer').addEventListener('click', async () => {
+        if (!window.confirm('Stop keeping the list? Other installs will keep trying to report in and be refused.')) return;
+        const d = await post({ action: 'stop_registry' });
+        if (d.error) { say($('regServerStatus'), d.error, 'error'); return; }
+        paint(d);
+    });
+    $('regRefresh').addEventListener('click', load);
+    $('regUpdateAll').addEventListener('click', async () => {
+        const n = $('regList').querySelectorAll('.reg-row').length;
+        if (!window.confirm('Ask all ' + n + ' installations to update to the latest release?\n\nEach applies it itself, on its next check-in.')) return;
+        say($('regStatus'), 'Asking…');
+        const d = await post({ action: 'update_all' });
+        if (d.error) { say($('regStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('regStatus'), 'Asked. Each install will apply it on its next check-in; refresh to see the results.', 'ok');
+    });
+    $('regList').addEventListener('click', async (e) => {
+        const u = e.target.closest('[data-update]'), f = e.target.closest('[data-forget]');
+        if (u) {
+            u.disabled = true;
+            const d = await post({ action: 'update_one', id: u.dataset.update });
+            u.disabled = false;
+            if (d.error) { say($('regStatus'), d.error, 'error'); return; }
+            paint(d); say($('regStatus'), 'Asked that install to update.', 'ok');
+        } else if (f) {
+            if (!window.confirm('Forget this installation? It reappears the next time it reports in.')) return;
+            const d = await post({ action: 'forget', id: f.dataset.forget });
+            if (d.error) { say($('regStatus'), d.error, 'error'); return; }
+            paint(d);
+        }
+    });
+    const copy = async (text, el) => {
+        try { await navigator.clipboard.writeText(text); say(el, 'Copied.', 'ok'); }
+        catch (e) { say(el, 'Select the line and copy it.', 'error'); }
+    };
+    $('regCopyUrl').addEventListener('click', () => copy($('regUrl').textContent, $('regServerStatus')));
+    $('regCopySecret').addEventListener('click', () => copy($('regSecret').textContent, $('regServerStatus')));
+
+    $('regSaveClient').addEventListener('click', async () => {
+        say($('regClientStatus'), 'Saving and checking in…');
+        const d = await post({ action: 'report_to', url: $('regInUrl').value.trim(), secret: $('regInSecret').value.trim(), auto_update: $('regAutoUpdate').checked ? '1' : '' });
+        if (d.error) { say($('regClientStatus'), d.error, 'error'); return; }
+        paint(d);
+        const c = d.checkin || {};
+        say($('regClientStatus'), c.error ? ('Saved, but the registry said: ' + c.error) : ('Saved. ' + checkinWords(c)), (c.error ? 'error' : 'ok'));
+    });
+    $('regCheckin').addEventListener('click', async () => {
+        say($('regClientStatus'), 'Checking in…');
+        const d = await post({ action: 'checkin_now' });
+        if (d.error) { say($('regClientStatus'), d.error, 'error'); return; }
+        paint(d);
+        const c = d.checkin || {};
+        say($('regClientStatus'), checkinWords(c), c.error ? 'error' : 'ok');
+    });
+    $('regStopClient').addEventListener('click', async () => {
+        if (!window.confirm('Stop reporting to the registry? This install will no longer appear in the list, and cannot be updated from there.')) return;
+        const d = await post({ action: 'stop_reporting' });
+        if (d.error) { say($('regClientStatus'), d.error, 'error'); return; }
+        paint(d);
+        say($('regClientStatus'), 'Stopped. This install reports to no one.', 'ok');
+    });
+
+    load();
 })();
 </script>
 <script nonce="<?= csp_nonce() ?>">
