@@ -2572,8 +2572,8 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                         (x.result ? '<div class="reg-result">' + esc(x.result) + '</div>' : '') +
                     '</div>' +
                     '<div class="reg-actions">' +
-                        '<button type="button" class="btn" data-update="' + esc(x.install_id) + '">Update</button>' +
-                        '<button type="button" class="btn" data-forget="' + esc(x.install_id) + '">Forget</button>' +
+                        '<button type="button" class="btn" data-update="' + esc(x.key) + '">Update</button>' +
+                        '<button type="button" class="btn" data-forget="' + esc(x.key) + '">Forget</button>' +
                     '</div>' +
                 '</div>').join('') || '<p class="settings-inline-hint">Point another install at the address below and it will appear here.</p>';
         }

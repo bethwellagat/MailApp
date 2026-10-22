@@ -130,11 +130,11 @@ if ($action === 'checkin_now') {
 
 if ($action === 'update_all' || $action === 'update_one') {
     if (!registry_server()) reg_err('This install is not the registry.', 400);
-    $id = $action === 'update_one' ? (string)($_POST['id'] ?? '') : '';
-    if ($action === 'update_one' && !registry_record($id)) reg_err('That installation is no longer listed.', 404);
-    $at = registry_request_update($id, $me);
+    $key = $action === 'update_one' ? (string)($_POST['id'] ?? '') : '';
+    if ($action === 'update_one' && !registry_record($key)) reg_err('That installation is no longer listed.', 404);
+    $at = registry_request_update($key, $me);
     if (!$at) reg_err('Could not record the request.', 500);
-    app_log('info', 'registry: update requested', ['by' => $me, 'scope' => $id === '' ? 'every install' : $id]);
+    app_log('info', 'registry: update requested', ['by' => $me, 'scope' => $key === '' ? 'every install' : $key]);
     // This install is part of its own fleet: act on it here rather than making
     // the admin wonder why the registry itself stayed behind.
     if (registry_configured()) registry_checkin(true);
@@ -142,10 +142,10 @@ if ($action === 'update_all' || $action === 'update_one') {
 }
 
 if ($action === 'forget') {
-    $id = (string)($_POST['id'] ?? '');
-    $rec = registry_record($id);
+    $key = (string)($_POST['id'] ?? '');
+    $rec = registry_record($key);
     if (!$rec) reg_err('That installation is no longer listed.', 404);
-    @unlink(registry_record_path($rec['install_id']));
+    @unlink(registry_record_path($key));
     reg_ok(reg_payload($isAdmin));
 }
 

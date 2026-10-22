@@ -266,7 +266,20 @@ function registry_server_enable($by = '') {
 
 function registry_server_disable() { return is_file(registry_server_file()) ? @unlink(registry_server_file()) : true; }
 
-function registry_record_path($id) { return registry_dir() . '/' . preg_replace('/[^a-f0-9]/', '', (string)$id) . '.json'; }
+/**
+ * A record is keyed by install AND host, not by install alone.
+ *
+ * These are deployed by copying a folder, and data/ comes with it — so two
+ * domains can carry the same install id. Keyed by id alone they would share
+ * one row and take turns overwriting it, and a fleet of five would look like
+ * one that could not make up its mind. Keyed by both, a copy lands on a new
+ * domain and simply appears, which is the behaviour that makes a copied
+ * install discoverable at all.
+ */
+function registry_record_key($id, $host) {
+    return preg_replace('/[^a-f0-9]/', '', (string)$id) . '_' . substr(hash('sha256', strtolower(trim((string)$host))), 0, 8);
+}
+function registry_record_path($key) { return registry_dir() . '/' . preg_replace('/[^a-f0-9_]/', '', (string)$key) . '.json'; }
 
 /** Remember what an install said about itself. Returns the stored record. */
 function registry_store(array $p, $now = null) {
@@ -277,10 +290,13 @@ function registry_store(array $p, $now = null) {
     // value that has to be scrubbed into shape was not written by this app.
     $id = (string)($p['install_id'] ?? '');
     if (!preg_match('/^[a-f0-9]{8,32}$/', $id)) return null;
-    $old = @json_decode((string)@file_get_contents(registry_record_path($id)), true);
+    $host = mb_substr(preg_replace('/[^A-Za-z0-9.:_-]/', '', (string)($p['host'] ?? '')), 0, 120);
+    $key  = registry_record_key($id, $host);
+    $old  = @json_decode((string)@file_get_contents(registry_record_path($key)), true);
     $rec = [
+        'key'        => $key,
         'install_id' => $id,
-        'host'       => mb_substr(preg_replace('/[^A-Za-z0-9.:_-]/', '', (string)($p['host'] ?? '')), 0, 120),
+        'host'       => $host,
         'version'    => mb_substr(preg_replace('/[^0-9A-Za-z.\-]/', '', (string)($p['version'] ?? '')), 0, 20),
         'build'      => mb_substr(preg_replace('/[^0-9a-f]/', '', (string)($p['build'] ?? '')), 0, 12),
         'php'        => mb_substr(preg_replace('/[^0-9A-Za-z.\-]/', '', (string)($p['php'] ?? '')), 0, 20),
@@ -293,7 +309,7 @@ function registry_store(array $p, $now = null) {
         'last_seen'  => $now,
         'update_at'  => (int)($old['update_at'] ?? 0),   // a request aimed at this one install
     ];
-    if (!atomic_write_json(registry_record_path($id), $rec)) return null;
+    if (!atomic_write_json(registry_record_path($key), $rec)) return null;
     registry_prune($now);
     return $rec;
 }
@@ -308,9 +324,9 @@ function registry_prune($now = null) {
     return $n;
 }
 
-/** One record, read back. */
-function registry_record($id) {
-    $r = @json_decode((string)@file_get_contents(registry_record_path($id)), true);
+/** One record, read back by its key (install + host). */
+function registry_record($key) {
+    $r = @json_decode((string)@file_get_contents(registry_record_path($key)), true);
     return is_array($r) ? $r : null;
 }
 
@@ -338,25 +354,27 @@ function registry_all($now = null) {
     $records = [];
     foreach ((array)@glob(registry_dir() . '/*.json') as $f) {
         $r = @json_decode((string)@file_get_contents($f), true);
-        if (is_array($r) && !empty($r['install_id'])) $records[] = $r;
+        if (!is_array($r) || empty($r['install_id'])) continue;
+        $r['key'] = $r['key'] ?? registry_record_key($r['install_id'], $r['host'] ?? '');
+        $records[] = $r;
     }
     return registry_summarise($records, $now);
 }
 
 /** Ask every install (or one) to update. Returns the moment that was recorded. */
-function registry_request_update($id = '', $by = '', $now = null) {
+function registry_request_update($key = '', $by = '', $now = null) {
     $now = $now ?? time();
-    if ($id === '') {
+    if ($key === '') {
         $s = registry_server();
         if (!$s) return 0;
         $s['update_at']  = $now;
         $s['updated_by'] = (string)$by;
         return registry_server_save($s) ? $now : 0;
     }
-    $rec = registry_record($id);
+    $rec = registry_record($key);
     if (!$rec) return 0;
     $rec['update_at'] = $now;
-    return atomic_write_json(registry_record_path($rec['install_id']), $rec) ? $now : 0;
+    return atomic_write_json(registry_record_path($key), $rec) ? $now : 0;
 }
 
 /**

@@ -121,10 +121,10 @@ t_ok('turning this install into a registry makes a secret', ($srv = registry_ser
 t_ok('the registry config is private', (fileperms(registry_server_file()) & 0777) === 0600);
 t_eq('asking the fleet to update records the moment', registry_request_update('', 'me@x.com', $T + 50), $T + 50);
 t_eq('…where every install will read it', registry_server()['update_at'], $T + 50);
-$id = registry_all($T)['installs'][0]['install_id'];
-t_eq('asking one install records it on that install only', registry_request_update($id, 'me@x.com', $T + 60), $T + 60);
-t_eq('…and is read back', registry_record($id)['update_at'], $T + 60);
-t_eq('asking an install nobody has heard of does nothing', registry_request_update('ffffffffffffffff', '', $T), 0);
+$key = registry_all($T)['installs'][0]['key'];
+t_eq('asking one install records it on that install only', registry_request_update($key, 'me@x.com', $T + 60), $T + 60);
+t_eq('…and is read back', registry_record($key)['update_at'], $T + 60);
+t_eq('asking an install nobody has heard of does nothing', registry_request_update('ffffffffffffffff_00000000', '', $T), 0);
 t_ok('a registry can be switched off again', registry_server_disable() && registry_server() === null);
 
 t_group('registry: the list, and what it judges');
@@ -140,6 +140,22 @@ t_eq('newest check-in first', array_column($sum['installs'], 'host'), ['current.
 t_eq('the older install is marked behind', array_column($sum['installs'], 'behind'), [false, true, false]);
 t_eq('the one that stopped reporting is marked quiet', array_column($sum['installs'], 'quiet'), [false, false, true]);
 t_ok('1.9.0 really is older than 1.17.0 (not a string comparison)', version_compare('1.9.0', '1.17.0', '<'));
+
+t_group('registry: the same copy on two domains is two installs');
+// These are deployed by copying a folder, data/ and all — so the same install
+// id turns up on a second domain. Keyed by id alone the two would share a row
+// and take turns overwriting it.
+$twin = 'aaaaaaaabbbbbbbb';
+registry_store(['install_id' => $twin, 'host' => 'first.example',  'version' => '1.18.1'], $T);
+registry_store(['install_id' => $twin, 'host' => 'second.example', 'version' => '1.18.1'], $T + 1);
+$hosts = array_column(registry_all($T + 2)['installs'], 'host');
+t_ok('both domains are listed', in_array('first.example', $hosts, true) && in_array('second.example', $hosts, true));
+t_ok('…as separate records', registry_record_key($twin, 'first.example') !== registry_record_key($twin, 'second.example'));
+t_ok('…and the same domain twice is still one record', registry_record_key($twin, 'FIRST.example') === registry_record_key($twin, 'first.example'));
+t_eq('asking one of them to update leaves the other alone',
+     [registry_request_update(registry_record_key($twin, 'first.example'), '', $T + 5) > 0,
+      (int)registry_record(registry_record_key($twin, 'second.example'))['update_at']], [true, 0]);
+t_ok('a key cannot escape the registry folder', strpos(registry_record_path('../../etc/passwd'), '..') === false);
 
 t_group('registry: a record is never trusted as sent');
 t_eq('an id this app never issued is refused outright', registry_store(['install_id' => 'BAD/../id', 'host' => 'x'], $T), null);
