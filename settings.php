@@ -33,6 +33,9 @@ $brandDomain  = $brand['domain'];
 $brandLabel   = $brand['name'] . ' WorkSpace';
 
 $prefs    = load_prefs($email);
+require_once __DIR__ . '/lib/autoupdate.php';
+$autoOn    = auto_enabled();
+$autoState = auto_state();
 $calendar = load_calendar($email);
 $rulesData = load_rules($email);
 $ooo      = load_ooo($email);
@@ -1059,6 +1062,23 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                     <div class="settings-row-label">Status</div>
                     <div class="settings-row-value" id="updateState">Not checked yet.</div>
                 </div>
+                <div class="settings-row">
+                    <div class="settings-row-label">Last automatic update</div>
+                    <div class="settings-row-value" id="updateAutoState"><?= h($autoState['last_result'] !== '' ? $autoState['last_result'] : 'none yet') ?></div>
+                </div>
+            </div>
+            <div class="settings-card">
+                <div class="settings-toggles">
+                    <label class="settings-toggle">
+                        <input type="checkbox" id="updateAutoToggle" <?= $autoOn ? 'checked' : '' ?>>
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-label">Keep this install up to date automatically</span>
+                    </label>
+                </div>
+                <div class="settings-row-stack">
+                    <p class="settings-inline-hint">On by default. This install asks the repository for the latest release every quarter of an hour and installs it itself, in the background &mdash; so a release reaches every copy without anyone opening this page. A release that fails to install is reported here and left alone for an hour rather than retried in a loop. Switch it off to pin this install where it is.</p>
+                </div>
+                <div class="settings-inline-edit"><span class="settings-status" id="updateAutoStatus"></span></div>
             </div>
             <div class="settings-actions">
                 <button class="btn" id="updateCheckBtn" type="button">Check for updates</button>
@@ -2512,6 +2532,31 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
 })();
 </script>
 <script nonce="<?= csp_nonce() ?>">
+/* === Software update: follow the repository automatically === */
+(function () {
+    const t = document.getElementById('updateAutoToggle');
+    if (!t) return;
+    const s = document.getElementById('updateAutoStatus');
+    t.addEventListener('change', async () => {
+        const on = t.checked;
+        t.disabled = true;
+        s.textContent = 'Saving…'; s.className = 'settings-status';
+        const body = new URLSearchParams({ action: 'auto', on: on ? '1' : '' });
+        let d;
+        try {
+            const r = await fetch('ajax/update.php', { method: 'POST', credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': window.__CSRF__ }, body });
+            d = await r.json();
+        } catch (e) { d = { error: 'Network error' }; }
+        t.disabled = false;
+        if (d.error) { t.checked = !on; s.textContent = d.error; s.className = 'settings-status error'; return; }
+        s.textContent = d.auto ? 'This install will follow the repository.' : 'This install is pinned where it is.';
+        s.className = 'settings-status ok';
+    });
+})();
+</script>
+
+<script nonce="<?= csp_nonce() ?>">
 /* === Installations ===
    The list, the update button, and the two fields that point this install at a
    registry. Everything shown comes from the server; nothing is assumed here. */
@@ -2568,6 +2613,7 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                             ' · PHP ' + esc(x.php || '?') + (x.imap ? '' : ' · no IMAP') +
                             ' · scheduler ' + esc(x.scheduler || '?') +
                             ' · ' + (x.users || 0) + (x.users === 1 ? ' user' : ' users') +
+                            (x.auto === false ? ' · pinned' : (x.auto ? ' · follows releases' : '')) +
                             ' · seen ' + ago(x.last_seen) + '</div>' +
                         (x.result ? '<div class="reg-result">' + esc(x.result) + '</div>' : '') +
                     '</div>' +

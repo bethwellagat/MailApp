@@ -172,4 +172,5 @@ t_group('registry: the check-in is cheap');
 $c = registry_client(); $c['last_checkin'] = $T; registry_client_save($c);
 t_ok('not due a moment later', !registry_due(registry_client(), $T + 60));
 t_ok('due after the interval', registry_due(registry_client(), $T + REGISTRY_INTERVAL));
-unset($GLOBALS['REGISTRY_TRANSPORT'], $GLOBALS['REGISTRY_APPLY'], $GLOBALS['T_SERVER'], $GLOBALS['T_SERVER_SECRET'], $GLOBALS['T_APPLIED'], $_SERVER['HTTP_HOST']);
+unset($GLOBALS['T_SERVER'], $GLOBALS['T_SERVER_SECRET'], $GLOBALS['T_APPLIED'], $_SERVER['HTTP_HOST']);
+t_safe_seams();   // hand the next test file a suite that cannot touch the tree

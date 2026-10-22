@@ -731,3 +731,23 @@ t_ok('Installations pane and nav',          strpos($h, 'data-target="installatio
 t_ok('Diagnostics names the registry, so where an install reports is never hidden', strpos($h, 'id="diagRegistry"') !== false);
 t_ok('an install that has just rewritten its own files says so', strpos($h, 'This install updated itself') !== false);
 t_ok('the real updater is reached only through a seam, so no test can rewrite the tree', preg_match('/function registry_apply_update.*?REGISTRY_APPLY.*?update_apply\\(\\)/s', $l) === 1 && substr_count($l, 'update_apply()') === 1);
+
+t_group('automatic updates: every copy follows a release on its own');
+$a = (string)@file_get_contents(T_ROOT . '/lib/autoupdate.php');
+t_ok('on unless switched off',               preg_match('/function auto_enabled.*?!array_key_exists\(.auto., \$c\)/s', $a) === 1);
+t_ok('the repository is asked on a schedule, not on every request', strpos($a, 'UPDATE_AUTO_INTERVAL') !== false && preg_match('/last_check.*?UPDATE_AUTO_INTERVAL/s', $a) === 1);
+t_ok('a failing release is not retried in a loop', strpos($a, 'failed_sha') !== false && strpos($a, 'UPDATE_AUTO_RETRY') !== false);
+t_ok('files are only rewritten where a visitor is not left waiting', preg_match('/auto_may_apply\(\$background\).*?auto_check\(\)/s', $a) === 1);
+t_ok('GitHub and the updater are both behind seams', strpos($a, "AUTOUPDATE_CHECK") !== false && strpos($a, "AUTOUPDATE_APPLY") !== false
+     && substr_count($a, 'update_check()') === 1 && substr_count($a, 'update_apply()') === 1);
+$c = (string)@file_get_contents(T_ROOT . '/lib/cron.php');
+t_ok('the scheduler follows the repository before it reports in', preg_match('/auto_tick\(true\).*?registry_checkin\(true\)/s', $c) === 1);
+$sess = (string)@file_get_contents(T_ROOT . '/lib/session.php');
+t_ok('…and so does an ordinary request, where that is safe', strpos($sess, 'auto_tick(false)') !== false);
+$h = (string)@file_get_contents(T_ROOT . '/settings.php');
+t_ok('the switch is in Software update, with what it last did', strpos($h, 'id="updateAutoToggle"') !== false && strpos($h, 'id="updateAutoState"') !== false);
+$u = (string)@file_get_contents(T_ROOT . '/ajax/update.php');
+t_ok('…and only the admin may throw it', preg_match("/action === 'auto'/", $u) === 1 && strpos($u, 'csrf_require();') !== false);
+$lib = (string)@file_get_contents(T_ROOT . '/tests/lib.php');
+t_ok('THE SUITE CANNOT REACH GITHUB OR REWRITE THE TREE', strpos($lib, 'function t_safe_seams') !== false && strpos($lib, 't_safe_seams();') !== false
+     && strpos($lib, 'AUTOUPDATE_APPLY') !== false && strpos($lib, 'REGISTRY_APPLY') !== false);

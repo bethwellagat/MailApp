@@ -8,6 +8,6 @@
  * semver bumps. Keep this a pure `return [...]` (it is included, not parsed).
  */
 return [
-    'version' => '1.18.2',
+    'version' => '1.19.0',
     'date'    => '2026-10-19',
 ];

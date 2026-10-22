@@ -37,6 +37,21 @@ if ($cfg && $cfg['admin_email'] !== '' && strtolower((string)$_SESSION['email'])
     exit;
 }
 
+require_once __DIR__ . '/../lib/autoupdate.php';
+
+if ($action === 'auto') {
+    // Follow the repository, or stop following it. The admin gate above applies.
+    if (!auto_set_enabled(!empty($_POST['on']))) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Could not save — is the data folder writable?']);
+        exit;
+    }
+    require_once __DIR__ . '/../lib/log.php';
+    app_log('info', 'auto-update ' . (auto_enabled() ? 'switched on' : 'switched off'), ['by' => (string)($_SESSION['email'] ?? '')]);
+    echo json_encode(['ok' => true, 'auto' => auto_enabled(), 'state' => auto_state()]);
+    exit;
+}
+
 if ($action === 'check') {
     echo json_encode(update_check()); // read-only: safe for any signed-in user
     exit;

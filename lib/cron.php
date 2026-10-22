@@ -733,8 +733,11 @@ function cron_run_all($budget = CRON_BUDGET_SECONDS, $via = 'url') {
         }
     }
 
-    // A background request is the safe place to act on a fleet update: the
-    // files can be rewritten without a visitor waiting on a half-sent page.
+    // A background request is the safe place to rewrite the app's own files:
+    // first follow the repository, then report in to the registry (so what it
+    // reports is the version this run just installed, not the one before it).
+    @include_once __DIR__ . '/autoupdate.php';
+    if (function_exists('auto_tick')) $summary['auto_update'] = auto_tick(true);
     if (function_exists('registry_configured') || @include_once __DIR__ . '/registry.php') {
         if (registry_configured()) $summary['registry'] = registry_checkin(true);
     }

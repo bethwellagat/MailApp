@@ -25,6 +25,7 @@
 
 require_once __DIR__ . '/log.php';     // app_data_root()
 require_once __DIR__ . '/util.php';    // atomic_write_json(), poll_gate()
+require_once __DIR__ . '/autoupdate.php';   // auto_enabled(), so the fleet list says who follows
 
 const REGISTRY_INTERVAL   = 900;    // an install checks in at most this often
 const REGISTRY_STALE      = 7200;   // not seen for this long → the registry calls it quiet
@@ -112,6 +113,7 @@ function registry_payload($now = null) {
         'imap'       => function_exists('imap_open'),
         'scheduler'  => $sched,
         'users'      => $users,
+        'auto'       => function_exists('auto_enabled') ? auto_enabled() : null,
         'applied_at' => (int)registry_client()['applied_at'],
         'result'     => (string)registry_client()['last_result'],
         'at'         => (int)($now ?? time()),
@@ -303,6 +305,7 @@ function registry_store(array $p, $now = null) {
         'imap'       => !empty($p['imap']),
         'scheduler'  => mb_substr(preg_replace('/[^a-z]/', '', (string)($p['scheduler'] ?? '')), 0, 12),
         'users'      => max(0, min(100000, (int)($p['users'] ?? 0))),
+        'auto'       => isset($p['auto']) ? (bool)$p['auto'] : null,
         'applied_at' => max(0, (int)($p['applied_at'] ?? 0)),
         'result'     => mb_substr((string)($p['result'] ?? ''), 0, 160),
         'first_seen' => (int)($old['first_seen'] ?? $now),

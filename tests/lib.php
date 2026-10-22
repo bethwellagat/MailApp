@@ -17,6 +17,25 @@
 
 define('T_ROOT', dirname(__DIR__));
 
+/**
+ * Nothing in this suite may reach the network or rewrite the app's own files.
+ *
+ * This is not belt and braces. Three times while proving guards bite, a test
+ * reached the real updater through a path that looked harmless — once through
+ * cron_run_all(), which the job tests drive — and downloaded the repository
+ * over the working tree, reverting uncommitted work. Arming the seams here,
+ * before a single test file is loaded, is what makes that impossible rather
+ * than merely unlikely. A test that wants one of these paths overrides the
+ * seam itself, and calls t_safe_seams() when it is done.
+ */
+function t_safe_seams() {
+    $GLOBALS['AUTOUPDATE_CHECK']   = fn() => ['error' => 'the test suite never reaches GitHub'];
+    $GLOBALS['AUTOUPDATE_APPLY']   = fn() => ['error' => 'the test suite never rewrites the tree'];
+    $GLOBALS['REGISTRY_APPLY']     = fn() => ['error' => 'the test suite never rewrites the tree'];
+    $GLOBALS['REGISTRY_TRANSPORT'] = fn($url, $body, $headers, $timeout) => ['', 0, 'the test suite never reaches the network'];
+}
+t_safe_seams();
+
 $GLOBALS['T_PASS'] = 0;
 $GLOBALS['T_FAIL'] = 0;
 $GLOBALS['T_FAILURES'] = [];

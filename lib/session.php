@@ -75,6 +75,10 @@ if (!function_exists('cron_tick_shutdown')) {
             // once every REGISTRY_INTERVAL install-wide).
             require_once __DIR__ . '/registry.php';
             registry_tick();
+            // Follow the repository. A no-op unless this server can finish the
+            // response first — otherwise it waits for the scheduler.
+            require_once __DIR__ . '/autoupdate.php';
+            auto_tick(false);
         } catch (\Throwable $t) {
             // a scheduler problem must never become the visitor's problem
         }
