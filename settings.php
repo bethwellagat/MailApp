@@ -1206,8 +1206,12 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
     </div>
 </div>
 
-<div class="app-footer">
+<div class="app-footer app-footer-credited">
     &copy; <?= date('Y') ?> <strong><?= h($brand['name']) ?></strong> · <?= h($brand['tagline']) ?>
+    <!-- Settings only: the one page an administrator opens, so the credit is
+         seen by the person who chose this app rather than by everyone reading
+         their mail. A real link, not a nofollow one — the point is the referral. -->
+    <span class="footer-credit">Designed and managed by <a href="https://siteboma.com" target="_blank" rel="noopener">siteboma.com</a></span>
 </div>
 
 <script nonce="<?= csp_nonce() ?>">

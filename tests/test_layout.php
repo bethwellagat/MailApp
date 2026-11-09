@@ -779,3 +779,17 @@ t_ok('the server takes the choice, and defaults to it', strpos($f, "isset(\$_GET
 t_ok('a whole-message search is bounded in time', strpos($f, '$deadline = microtime(true) + 12.0') !== false
      && strpos($f, "microtime(true) > \$rank['deadline']") !== false
      && preg_match('/if \(microtime\(true\) > \$deadline\) break;/', $f) === 1);
+
+t_group('settings: the credit line');
+$h  = (string)@file_get_contents(T_ROOT . '/settings.php');
+$ib = (string)@file_get_contents(T_ROOT . '/inbox.php');
+t_ok('the settings footer credits siteboma', strpos($h, 'Designed and managed by') !== false && strpos($h, 'href="https://siteboma.com"') !== false);
+// The referral is the point, so this one link must not be nofollowed —
+// whatever other links on the page may be.
+$credit = preg_match('/<a href="https:\/\/siteboma\.com"[^>]*>/', $h, $m) ? $m[0] : '';
+t_ok('…as a link that counts — never nofollow', $credit !== '' && strpos($credit, 'noopener') !== false && stripos($credit, 'nofollow') === false);
+t_ok('…opening away from the mailbox', preg_match('/href="https:\/\/siteboma\.com" target="_blank"/', $h) === 1);
+t_ok('Settings only — the inbox footer is untouched', strpos($ib, 'siteboma') === false && strpos($ib, 'footer-credit') === false);
+$css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
+t_ok('the pill can hold a second line without covering the page', strpos($css, '.settings-page .app-footer-credited') !== false
+     && strpos($css, '.settings-page .footer-credit a { pointer-events: auto; }') !== false);

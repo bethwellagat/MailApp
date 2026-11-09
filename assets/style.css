@@ -7317,3 +7317,11 @@ html.theme-dark .mail-page .msg-label { color: hsl(var(--lh) 80% 80%); backgroun
 .settings-page .reg-tag.behind { background: var(--ip-red-ink); color: #fff; }
 .settings-page .reg-tag.quiet { background: var(--ip-fill); color: var(--ip-label-2); }
 .settings-page .reg-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+
+/* ---- Settings: who built it ----
+   The footer pill carries a second line on Settings alone. The pill is fixed
+   and opts out of hit-testing so it cannot swallow clicks from the page
+   scrolling under it; the link inside opts back in (see .app-footer a). */
+.settings-page .app-footer-credited { max-width: min(300px, calc(100vw - 28px)); text-align: right; line-height: 1.45; }
+.settings-page .footer-credit { display: block; }
+.settings-page .footer-credit a { pointer-events: auto; }
