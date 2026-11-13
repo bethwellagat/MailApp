@@ -816,6 +816,13 @@ function search_collect($criterion, array $folders, array $opt) {
     $sortFlag = ['from' => SORTFROM, 'subject' => SORTSUBJECT, 'size' => SORTSIZE][$sort] ?? SORTDATE;
     $need     = $rank ? $reach : min($page * $perPage, $reach);
 
+    // A rung from search_plan() arrives as work to do (see search_exec_plan):
+    // one plain criterion when that is enough, otherwise lists to combine.
+    $exec       = $opt['exec'] ?? null;
+    $simpleCrit = $exec !== null ? search_exec_simple($exec) : null;
+    if ($simpleCrit !== null) $criterion = $simpleCrit;
+    $execState  = [];
+
     $rows = []; $total = 0; $searched = []; $sortApprox = false; $perFolder = [];
     $attachStats = ($attach !== null) ? ['probed' => 0, 'unknown' => 0, 'known' => 0] : null;
 
@@ -824,8 +831,18 @@ function search_collect($criterion, array $folders, array $opt) {
         if (!$box) continue;
         $searched[] = $f;
 
-        $uids = false;
-        if ($useSort) {
+        $uids = false; $execMatched = null;
+        if ($exec !== null && $simpleCrit === null) {
+            // The rung needs either/or or exclusion, which the library cannot
+            // send. Ask the simple questions and combine the answers here.
+            [$uids, $execMatched] = search_exec_run($exec, function ($c) use ($box) {
+                $r = search_imap($box, $c);
+                return is_array($r) ? $r : [];
+            }, $opt['deadline'] ?? null, $execState);
+            $uids = array_values(array_unique(array_map('intval', $uids)));
+            if ($dir === 'desc') rsort($uids); else sort($uids);
+            if (!$rank && $sort !== 'date') $sortApprox = true;
+        } elseif ($useSort) {
             $uids = @imap_sort($box, $sortFlag, $dir === 'desc' ? 1 : 0, SE_UID, $criterion, search_needs_charset($criterion) ? 'UTF-8' : null);
             if (!is_array($uids)) { $uids = false; $sortApprox = true; }
             else $uids = array_values(array_unique(array_map('intval', $uids)));
@@ -878,22 +895,13 @@ function search_collect($criterion, array $folders, array $opt) {
         // same UID is a different message in every folder.
         if ($rank && $uids) {
             $want = array_fill_keys($uids, true);
-            if (($rank['mode'] ?? 'all') === 'any') {
-                // Near-misses: which of the words does each one actually have?
-                foreach ($rank['words'] as $w) {
-                    if (microtime(true) > $rank['deadline']) break;   // a slow server must not hold the page
-                    $hit = search_imap($box, search_term_key($rank['terms'], $w, $rank['full']));
-                    if (!is_array($hit)) continue;
-                    foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[$f . '|' . (int)$u][] = $w;
-                }
-            } else {
-                // Every hit has every word. The one open question is which of
-                // them have the words in the order they were typed.
-                foreach ($uids as $u) $matchedByUid[$f . '|' . (int)$u] = $rank['words'];
-                if (($rank['phrase'] ?? '') !== '' && microtime(true) < $rank['deadline']) {
-                    $hit = search_imap($box, $rank['phrase']);
-                    if (is_array($hit)) foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[$f . '|' . (int)$u][] = SEARCH_PHRASE_HIT;
-                }
+            // Which words each hit has: the combining step already knows; a
+            // single plain criterion means every hit has every word.
+            foreach ($uids as $u) $matchedByUid[$f . '|' . (int)$u] = $execMatched !== null ? ($execMatched[(int)$u] ?? []) : $rank['words'];
+            // The one open question: which have the words in the order typed.
+            if (($rank['phrase'] ?? '') !== '' && microtime(true) < $rank['deadline']) {
+                $hit = search_imap($box, $rank['phrase']);
+                if (is_array($hit)) foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[$f . '|' . (int)$u][] = SEARCH_PHRASE_HIT;
             }
         }
 
@@ -1736,6 +1744,7 @@ if ($action === 'search') {
                 'attach' => $p['has'], 'attach_budget' => 150, 'reach' => 600,
                 'email' => $email, 'acct' => $acct,
                 'fallback' => $fallback, 'rank' => $rankOpt, 'all_rows' => $rankOn,
+                'exec' => $attempt['exec'] ?? null, 'deadline' => $deadline - 2.0,
             ]);
             $out = $try; $used = $attempt;
             if ((int)$try['total'] > 0) break;

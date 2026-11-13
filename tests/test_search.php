@@ -362,3 +362,88 @@ t_ok('…and each row says which it is', $ar['rows'][0]['top'] === true && $ar['
 $ar = search_arrange(search_rank([['folder' => 'INBOX', 'uid' => 1, 'subject' => 'safari', 'timestamp' => 1], ['folder' => 'INBOX', 'uid' => 2, 'subject' => 'safari quote', 'timestamp' => 1]], $tw, [], 5), 'any');
 t_eq('near-misses stay best-first, with no summit', [$ar['order'], $ar['rows'][0]['uid'], $ar['rows'][0]['top']], ['score', 2, false]);
 
+t_group('search: nothing the mail library refuses is ever sent');
+/* A pretend mailbox that behaves like PHP's IMAP library: a list of simple
+   keys, ANDed. Anything with OR or NOT in it is refused — which, to the
+   caller, is indistinguishable from "no messages". */
+$MAIL = [
+    1 => ['subject' => 'Revised quote for the safari', 'from' => 'wanjiru@tours.test', 'to' => 'amina@x.test', 'cc' => '', 'body' => 'the quote is attached'],
+    2 => ['subject' => 'Lunch',                         'from' => 'grace@x.test',       'to' => 'amina@x.test', 'cc' => '', 'body' => 'we got two quotations for the safari trip, both revised'],
+    3 => ['subject' => 'Invoices for October',          'from' => 'billing@x.test',     'to' => 'amina@x.test', 'cc' => 'james@x.test', 'body' => 'see the file James_Otieno_CV.pdf'],
+    4 => ['subject' => 'Safari photos',                 'from' => 'james@x.test',       'to' => 'amina@x.test', 'cc' => '', 'body' => 'nothing about prices'],
+];
+$SENT = [];
+$fake = function ($tokenServer = false) use ($MAIL, &$SENT) {
+    return function ($crit) use ($MAIL, &$SENT, $tokenServer) {
+        $SENT[] = $crit;
+        if (preg_match('/\b(OR|NOT)\b/', $crit)) return false;             // refused, as the real library does
+        if ($crit === 'ALL') return array_keys($MAIL);
+        preg_match_all('/(TEXT|SUBJECT|FROM|TO|CC) "([^"]*)"/', $crit, $m, PREG_SET_ORDER);
+        $hits = [];
+        foreach ($MAIL as $uid => $msg) {
+            $ok = true;
+            foreach ($m as [$_, $key, $val]) {
+                $hay = $key === 'TEXT' ? implode(' ', $msg) : $msg[strtolower($key)];
+                $found = $tokenServer
+                    ? in_array(mb_strtolower($val), preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower($hay)), true)
+                    : mb_stripos($hay, $val) !== false;
+                if (!$found) { $ok = false; break; }
+            }
+            if ($ok) $hits[] = $uid;
+        }
+        return $hits;
+    };
+};
+$go = function ($q, $rung = 0, $full = true, $token = false) use ($fake, &$SENT) {
+    $SENT = [];
+    $plan = search_plan(search_parse($q), $full);
+    $st = [];
+    [$uids, $matched] = search_exec_run($plan['attempts'][$rung]['exec'], function ($c) use ($fake, $token) { $r = $fake($token)($c); return is_array($r) ? $r : []; }, null, $st);
+    sort($uids);
+    return [$uids, $matched];
+};
+$noOr = function () use (&$SENT) { return !array_filter($SENT, fn($c) => preg_match('/\b(OR|NOT)\b/', $c)); };
+
+[$u] = $go('quotes');
+t_eq('a plural finds the singular and the longer form', $u, [1, 2]);
+t_ok('…without an OR on the wire', $noOr() && count($SENT) >= 1);
+[$u] = $go('revised safari quote');
+t_eq('three words, all required, each by typed form or stem', $u, [1, 2]);
+t_ok('…still no OR', $noOr());
+[$u] = $go('james');
+t_eq('a name that stems (james → jam) is still found, in a filename and a header', $u, [3, 4]);
+[$u] = $go('otieno');
+t_eq('a name that appears only inside the message — in an attached file\'s name — is found', $u, [3]);
+[$u, $mt] = $go('safari invoices', 1);
+t_eq('most of the words: the union', $u, [1, 2, 3, 4]);
+t_eq('…and it knows which word each one has', [$mt[3], $mt[4]], [['invoic'], ['safari']]);
+[$u] = $go('safari -revised');
+t_eq('an excluded word is taken away here, not with NOT', $u, [4]);
+t_ok('…no NOT on the wire', $noOr());
+[$u] = $go('to:james');
+t_eq('to: means To or Cc, as two searches', $u, [3]);
+t_ok('…no OR on the wire', $noOr());
+[$u] = $go('safari -from:james');
+t_eq('an excluded sender is taken away', $u, [1, 2]);
+[$u] = $go('quotes safari', 0, false);
+t_eq('subjects-and-senders only: each word in any of the three headers', $u, [1]);
+t_ok('…as plain SUBJECT / FROM / TO searches', $noOr() && !array_filter($SENT, fn($c) => str_contains($c, 'TEXT')));
+[$u] = $go('quotes', 0, true, true);
+t_eq('a whole-word server finds the word as typed', $u, []);   // only "quote" and "quotations" exist as whole words
+[$u] = $go('quotations revised', 0, true, true);
+t_eq('…and the typed form is what rescues it there', $u, [2]);
+
+$plan = search_plan(search_parse('safari from:james'), true);
+t_eq('a query with one way to be true is one criterion — the fast, sortable path', search_exec_simple($plan['attempts'][0]['exec']), 'TEXT "safari" FROM "james"');
+t_eq('…a word with two spellings is not', search_exec_simple(search_plan(search_parse('quotes'), true)['attempts'][0]['exec']), null);
+t_eq('…nor is anything excluded', search_exec_simple(search_plan(search_parse('safari -lunch'), true)['attempts'][0]['exec']), null);
+t_eq('filters alone stay one criterion', search_exec_simple(search_plan(search_parse('is:unread'), true)['attempts'][0]['exec']), 'UNSEEN');
+t_ok('the simple keys never carry OR or NOT', !preg_match('/\b(OR|NOT)\b/', search_plan(search_parse('a -b to:c -to:d -from:e -subject:f quotes'), true)['attempts'][0]['exec']['simple']));
+t_ok('the phrase used for ranking is one plain key', search_plan(search_parse('revised safari quote'), true)['phrase'] === 'TEXT "revised safari quote"' && search_plan(search_parse('revised safari quote'), false)['phrase'] === 'SUBJECT "revised safari quote"');
+
+// A substring server is recognised once, and the longer spellings are skipped after that.
+$SENT = []; $st = [];
+$ex = search_plan(search_parse('invoices quotes'), true)['attempts'][1]['exec'];
+search_exec_run($ex, function ($c) use ($fake) { $r = $fake(false)($c); return is_array($r) ? $r : []; }, null, $st);
+t_ok('a server that matches substrings is not asked twice per word', ($st['substring'] ?? null) === true && count($SENT) === 3);
+

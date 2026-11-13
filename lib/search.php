@@ -610,15 +610,160 @@ function search_plan(array $p, $fullText = true) {
     $multi = count($terms['words']) > 1 || $terms['exact'];
     $all = search_text_criterion($terms, 'all', $fullText);
     if ($all !== '') {
-        $plan[] = ['mode' => 'all', 'criterion' => $join($all), 'note' => ''];
+        $plan[] = ['mode' => 'all', 'criterion' => $join($all), 'note' => '', 'exec' => search_exec_plan($p, $terms, 'all', $fullText)];
     }
     if ($multi && count(array_merge($terms['required'], $terms['exact'])) > 1) {
         $plan[] = ['mode' => 'any', 'criterion' => $join(search_text_criterion($terms, 'any', $fullText)),
-                   'note' => 'No message has all of those words — showing the closest matches, best first.'];
+                   'note' => 'No message has all of those words — showing the closest matches, best first.',
+                   'exec' => search_exec_plan($p, $terms, 'any', $fullText)];
     }
-    if (!$plan) $plan[] = ['mode' => 'filters', 'criterion' => $join(''), 'note' => ''];
-    $phrase = ($terms['phrase'] !== '' && !$terms['exact']) ? search_word_key($terms['phrase'], $fullText) : '';
+    if (!$plan) $plan[] = ['mode' => 'filters', 'criterion' => $join(''), 'note' => '', 'exec' => search_exec_plan($p, $terms, 'filters', $fullText)];
+    // One simple key: the library cannot be sent an OR (see search_exec_plan).
+    $phrase = ($terms['phrase'] !== '' && !$terms['exact'])
+            ? ($fullText ? 'TEXT ' : 'SUBJECT ') . search_imap_quote($terms['phrase']) : '';
     return ['terms' => $terms, 'attempts' => $plan, 'phrase' => $phrase];
+}
+
+/* ===========================================================================
+ * Running a search without OR or NOT
+ *
+ * PHP's IMAP library parses search criteria itself, and it knows only the
+ * oldest keys: a list of simple ones, ANDed. It has no OR and no NOT — a
+ * criterion containing either is refused outright, which looks exactly like
+ * "no messages match". So nothing here ever sends one. Each alternative is
+ * its own simple search, and the either/or, the every-word and the
+ * excluding are done on the UID lists that come back.
+ *
+ * The plan is data and the runner takes the search as a callable, so the
+ * whole thing is tested against a pretend mailbox that refuses OR.
+ * ======================================================================== */
+
+/** The simple searches that find one word as written: the whole message, or the three headers. */
+function search_word_queries($word, $fullText = true) {
+    $q = search_imap_quote($word);
+    return $fullText ? ["TEXT $q"] : ["SUBJECT $q", "FROM $q", "TO $q"];
+}
+
+/** A word's spellings to try: its stem first, then each way it was typed. */
+function search_term_variants(array $terms, $w) {
+    $out = [(string)$w];
+    foreach (($terms['origs'][$w] ?? []) as $o) if (!in_array($o, $out, true)) $out[] = $o;
+    return $out;
+}
+
+/**
+ * One rung, as work to do:
+ *   simple — keys the library does understand, ANDed onto every search
+ *   words  — per word, its variants, each a list of alternative simple searches
+ *   also   — other either/or groups that must hold (to: is To or Cc)
+ *   nots   — groups whose matches are taken away
+ *   mode   — all | any | filters
+ */
+function search_exec_plan(array $p, array $terms, $mode, $fullText = true) {
+    $simple = search_to_imap(array_merge($p, ['text' => [], 'not_text' => [], 'to' => [], 'not_to' => [],
+                                              'not_from' => [], 'not_subject' => []]), false);
+    if ($simple === 'ALL') $simple = '';
+
+    $words = array_merge($terms['required'], $terms['exact']);
+    if (!$words) $words = $terms['optional'];
+    $groups = [];
+    if ($mode !== 'filters') foreach ($words as $w) {
+        $variants = [];
+        foreach (search_term_variants($terms, $w) as $v) $variants[] = search_word_queries($v, $fullText);
+        $groups[] = ['word' => $w, 'variants' => $variants];
+    }
+
+    $also = [];
+    foreach ($p['to'] ?? [] as $v) { $q = search_imap_quote($v); $also[] = ["TO $q", "CC $q"]; }
+
+    $nots = [];
+    foreach ($p['not_text'] ?? [] as $t) {
+        $g = search_word_queries($t, $fullText);
+        $stem = search_stem($t);
+        if ($stem !== '' && $stem !== mb_strtolower($t) && !preg_match('/\s/', $t)) $g = array_merge($g, search_word_queries($stem, $fullText));
+        $nots[] = $g;
+    }
+    foreach ($p['not_from'] ?? []    as $v) $nots[] = ['FROM ' . search_imap_quote($v)];
+    foreach ($p['not_subject'] ?? [] as $v) $nots[] = ['SUBJECT ' . search_imap_quote($v)];
+    foreach ($p['not_to'] ?? []      as $v) { $q = search_imap_quote($v); $nots[] = ["TO $q", "CC $q"]; }
+
+    return ['simple' => $simple, 'words' => $groups, 'also' => $also, 'nots' => $nots, 'mode' => $mode];
+}
+
+/**
+ * The single criterion that answers the whole rung, when one can: every part
+ * has exactly one way to be true and nothing is excluded. That is the fast
+ * path (and the one the server can sort). Null when the lists must be combined.
+ */
+function search_exec_simple(array $exec) {
+    if ($exec['nots'] || $exec['also']) return null;
+    if ($exec['mode'] === 'any' && count($exec['words']) > 1) return null;
+    $keys = [];
+    foreach ($exec['words'] as $g) {
+        if (count($g['variants']) !== 1 || count($g['variants'][0]) !== 1) return null;
+        $keys[] = $g['variants'][0][0];
+    }
+    $c = trim(implode(' ', $keys) . ' ' . $exec['simple']);
+    return $c === '' ? 'ALL' : $c;
+}
+
+/**
+ * Run a rung. $run takes ONE simple criterion and returns the UIDs it matches
+ * (an empty list for none, or for a refusal). Returns [uids, matched] where
+ * matched maps each uid to the words it has.
+ *
+ * $state is carried between folders: once a server has shown that searching
+ * a stem also finds the longer word (it matches substrings), the longer
+ * spellings are not searched again — half the work, same answer.
+ */
+function search_exec_run(array $exec, callable $run, $deadline = null, array &$state = []) {
+    $simple = $exec['simple'];
+    $late   = fn() => $deadline !== null && microtime(true) > $deadline;
+    $ask    = function ($crit) use ($run, $simple) {
+        $c = trim($crit . ' ' . $simple);
+        $set = [];
+        foreach ((array)$run($c === '' ? 'ALL' : $c) as $u) $set[(int)$u] = true;
+        return $set;
+    };
+    $group = function (array $alts) use ($ask) {
+        $set = [];
+        foreach ($alts as $k) $set += $ask($k);
+        return $set;
+    };
+
+    $sets = [];
+    foreach ($exec['words'] as $g) {
+        if ($late() && $sets) break;                      // out of time: answer with the words searched so far
+        $set = [];
+        foreach ($g['variants'] as $i => $alts) {
+            if ($i > 0 && !empty($state['substring'])) break;
+            $hits = $group($alts);
+            if ($i > 0 && $hits && !isset($state['substring'])) {
+                $state['substring'] = !array_diff_key($hits, $set);   // the stem already found every one of them
+            }
+            $set += $hits;
+        }
+        $sets[$g['word']] = $set;
+    }
+
+    if ($sets) {
+        $base = null;
+        foreach ($sets as $set) {
+            if ($base === null) { $base = $set; continue; }
+            $base = ($exec['mode'] === 'any') ? $base + $set : array_intersect_key($base, $set);
+        }
+    } else {
+        $base = $ask('');
+    }
+    foreach ($exec['also'] as $alts) { if (!$base) break; $base = array_intersect_key($base, $group($alts)); }
+    foreach ($exec['nots'] as $alts) { if (!$base) break; $base = array_diff_key($base, $group($alts)); }
+
+    $matched = [];
+    foreach ($base as $u => $_) {
+        $matched[$u] = [];
+        foreach ($sets as $w => $set) if (isset($set[$u])) $matched[$u][] = $w;
+    }
+    return [array_keys($base), $matched];
 }
 
 /**

@@ -759,7 +759,9 @@ t_ok('the body is searched unless speed is asked for', strpos($f, "(\$_GET['scop
 t_ok('the rungs are tried in order and the first answer wins', preg_match('/foreach \(\$plan\[.attempts.\] as \$attempt\).*?if \(\(int\)\$try\[.total.\] > 0\) break;/s', $f) === 1);
 t_ok('…and the page is told which rung answered', preg_match("/'matched'\\s+=> \\\$used\\['mode'\\]/", $f) === 1 && preg_match("/'note'\\s+=> \\\$note/", $f) === 1);
 t_ok('ranking holds the whole candidate set before paging', strpos($f, '$need     = $rank ? $reach :') !== false);
-t_ok('…and asks the server which words each message has', preg_match('/foreach \(\$rank\[.words.\] as \$w\).*?search_imap\(\$box, search_term_key/s', $f) === 1);
+t_ok('…and knows which words each message has from the combining step', strpos($f, '$execMatched[(int)$u] ?? []') !== false);
+t_ok('a rung that needs either/or is combined here, never sent as OR', strpos($f, 'search_exec_run($exec, function ($c) use ($box)') !== false && strpos($f, "'exec' => \$attempt['exec'] ?? null") !== false);
+t_ok('no search_term_key (an OR) reaches the server from the endpoint', strpos($f, 'search_term_key(') === false);
 t_ok('…bounded, so a long query cannot fan out', strpos($f, 'count($words) <= 6 && count($folders) <= 8') !== false);
 $l = (string)@file_get_contents(T_ROOT . '/lib/search.php');
 t_ok('a quoted phrase is never stemmed', preg_match('/function search_terms.*?preg_match\(.\/\\\\s\/., \$t\).*?exact/s', $l) === 1);
@@ -777,7 +779,9 @@ t_ok('the sort control offers it first', preg_match('/<option value="best">Best 
 $f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
 t_ok('the server takes the choice, and defaults to it', strpos($f, "isset(\$_GET['rank']) ? (\$_GET['rank'] === '1')") !== false);
 t_ok('a whole-message search is bounded in time', strpos($f, '$deadline = $started + 12.0') !== false
-     && strpos($f, "microtime(true) > \$rank['deadline']") !== false
+     && strpos($f, "microtime(true) < \$rank['deadline']") !== false
+     && strpos($f, "'deadline' => \$deadline - 2.0") !== false
+     && strpos((string)@file_get_contents(T_ROOT . '/lib/search.php'), 'if ($late() && $sets) break;') !== false
      && preg_match('/if \(microtime\(true\) > \$deadline\) break;/', $f) === 1);
 
 t_group('settings: the credit line');
