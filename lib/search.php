@@ -467,6 +467,9 @@ function search_resolve_folder($in, array $folders) {
  * and says so. Everything here is a pure function over the parsed query.
  * ======================================================================== */
 
+/** A marker among a row's matched words: the whole sentence was found, in order. */
+const SEARCH_PHRASE_HIT = "\0phrase";
+
 /** Words that are in every message and so cannot narrow anything down. */
 function search_is_stop($w) {
     static $stop = ['a'=>1,'an'=>1,'and'=>1,'any'=>1,'are'=>1,'as'=>1,'at'=>1,'be'=>1,'been'=>1,'but'=>1,'by'=>1,
@@ -516,14 +519,20 @@ function search_stem($w) {
  * someone who typed quotes meant those words in that order.
  */
 function search_terms(array $p) {
-    $required = []; $optional = []; $exact = [];
+    $required = []; $optional = []; $exact = []; $origs = [];
     foreach ($p['text'] as $t) {
         $t = trim((string)$t);
         if ($t === '') continue;
         if (preg_match('/\s/', $t)) { $exact[] = $t; continue; }   // a quoted phrase, kept whole
         if (search_is_stop($t)) { $optional[] = $t; continue; }
         $stem = search_stem($t);
-        if ($stem !== '' && !in_array($stem, $required, true)) $required[] = $stem;
+        if ($stem === '') continue;
+        if (!in_array($stem, $required, true)) $required[] = $stem;
+        // The word as typed is kept beside its stem: a server that matches
+        // whole words (a full-text index) finds the word; one that matches
+        // substrings finds the stem. Searching both is never worse than either.
+        $low = mb_strtolower($t);
+        if ($low !== $stem && !in_array($low, $origs[$stem] ?? [], true)) $origs[$stem][] = $low;
     }
     // The whole thing as one phrase, for the first and best attempt.
     $phrase = '';
@@ -531,7 +540,7 @@ function search_terms(array $p) {
     if (count($words) > 1 && !$exact) $phrase = implode(' ', $words);
     elseif (count($exact) === 1 && !$words) $phrase = $exact[0];
     return ['required' => $required, 'optional' => $optional, 'exact' => $exact, 'phrase' => $phrase,
-            'words' => array_values($words)];
+            'words' => array_values($words), 'origs' => $origs];
 }
 
 /** One IMAP key for a word: the whole message by default, headers when asked. */
@@ -550,6 +559,14 @@ function search_or_keys(array $keys) {
     return $expr;
 }
 
+/** The key for one term: its stem, or the word(s) as typed — whichever the server can match. */
+function search_term_key(array $terms, $w, $fullText = true) {
+    $keys = [];
+    foreach (($terms['origs'][$w] ?? []) as $orig) $keys[] = search_word_key($orig, $fullText);
+    $keys[] = search_word_key($w, $fullText);
+    return search_or_keys($keys);
+}
+
 /**
  * What the text part of the query becomes, at one rung of the ladder:
  *   phrase — the sentence, in that order
@@ -563,8 +580,9 @@ function search_text_criterion(array $terms, $mode, $fullText = true) {
     $words = array_merge($terms['required'], $terms['exact']);
     if (!$words) $words = $terms['optional'];           // a query of nothing but stop words still means them
     if (!$words) return '';
-    if ($mode === 'any') return search_or_keys(array_map(fn($w) => search_word_key($w, $fullText), $words));
-    return implode(' ', array_map(fn($w) => search_word_key($w, $fullText), $words));   // a list is an AND
+    $keys = array_map(fn($w) => search_term_key($terms, $w, $fullText), $words);
+    if ($mode === 'any') return search_or_keys($keys);
+    return implode(' ', $keys);   // a list is an AND
 }
 
 /**
@@ -584,28 +602,23 @@ function search_plan(array $p, $fullText = true) {
         $c = trim(($text === '' ? '' : $text) . ' ' . $fixed);
         return $c === '' ? 'ALL' : $c;
     };
+    // The sentence as a phrase is NOT a rung. It used to be the first one, and
+    // when five messages held the exact wording it stopped there — hiding the
+    // forty that had every word in another order, which reads as a search
+    // that misses mail. The phrase now only lifts those five to the top.
     $plan  = [];
     $multi = count($terms['words']) > 1 || $terms['exact'];
-    if ($terms['phrase'] !== '') {
-        $plan[] = ['mode' => 'phrase', 'criterion' => $join(search_text_criterion($terms, 'phrase', $fullText)),
-                   'note' => 'Showing messages containing that exact wording.'];
-    }
     $all = search_text_criterion($terms, 'all', $fullText);
     if ($all !== '') {
-        // Only say something when it would otherwise be a surprise. Falling
-        // from "the whole sentence" to "all of these words" is what everyone
-        // means anyway; saying so on every search is noise. Falling back from
-        // a phrase the user put in quotes is not — they asked for those words
-        // in that order.
-        $plan[] = ['mode' => 'all', 'criterion' => $join($all),
-                   'note' => $terms['exact'] ? 'Nothing has that exact phrase — showing messages with all of those words.' : ''];
+        $plan[] = ['mode' => 'all', 'criterion' => $join($all), 'note' => ''];
     }
     if ($multi && count(array_merge($terms['required'], $terms['exact'])) > 1) {
         $plan[] = ['mode' => 'any', 'criterion' => $join(search_text_criterion($terms, 'any', $fullText)),
                    'note' => 'No message has all of those words — showing the closest matches, best first.'];
     }
     if (!$plan) $plan[] = ['mode' => 'filters', 'criterion' => $join(''), 'note' => ''];
-    return ['terms' => $terms, 'attempts' => $plan];
+    $phrase = ($terms['phrase'] !== '' && !$terms['exact']) ? search_word_key($terms['phrase'], $fullText) : '';
+    return ['terms' => $terms, 'attempts' => $plan, 'phrase' => $phrase];
 }
 
 /**
@@ -625,6 +638,9 @@ function search_score(array $row, array $terms, array $matched = [], $now = null
     $score   = 0;
 
     if ($terms['phrase'] !== '' && $subject !== '' && mb_strpos($subject, mb_strtolower($terms['phrase'])) !== false) $score += 120;
+    // The words in the order they were typed, anywhere in the message (the
+    // server said so): the strongest sign this is the one being looked for.
+    if (in_array(SEARCH_PHRASE_HIT, $matched, true)) $score += 70;
     foreach ($words as $w) {
         $w = mb_strtolower($w);
         if ($w === '') continue;
@@ -649,11 +665,17 @@ function search_score(array $row, array $terms, array $matched = [], $now = null
     return $score;
 }
 
+/**
+ * A message is a folder AND a UID. UIDs are per folder — 3383 in the Inbox
+ * and 3383 in Sent are different messages — so anything remembered about a
+ * search hit is keyed by both.
+ */
+function search_row_key(array $row) { return (string)($row['folder'] ?? '') . '|' . (int)($row['uid'] ?? 0); }
+
 /** Best first, then newest. Pure. */
 function search_rank(array $rows, array $terms, array $matchedByUid = [], $now = null) {
     foreach ($rows as $i => $r) {
-        $uid = (string)($r['uid'] ?? '');
-        $rows[$i]['score'] = search_score($r, $terms, $matchedByUid[$uid] ?? [], $now);
+        $rows[$i]['score'] = search_score($r, $terms, $matchedByUid[search_row_key($r)] ?? [], $now);
     }
     usort($rows, function ($a, $b) {
         if ($a['score'] !== $b['score']) return $b['score'] - $a['score'];
@@ -662,3 +684,132 @@ function search_rank(array $rows, array $terms, array $matchedByUid = [], $now =
     return $rows;
 }
 
+
+
+/* ===========================================================================
+ * Showing the answer
+ *
+ * A list of senders and subjects does not say WHY a message matched — and
+ * when the match is in the body, nothing on the row shows it at all. So each
+ * result carries the line of the message the words were found in, the words
+ * are marked wherever they appear, the strongest few answers are lifted to
+ * the top, and everything else stays in date order, where people look for
+ * mail. All pure functions; the IMAP side only feeds them.
+ * ======================================================================== */
+
+/** Does the criterion need the server told its charset? Anything not ASCII does. */
+function search_needs_charset($criterion) { return preg_match('/[^\x00-\x7F]/', (string)$criterion) === 1; }
+
+/** What to mark on screen: the stems (as the start of a word) and any exact phrase. */
+function search_needles(array $terms) {
+    $stems = array_values(array_filter($terms['required'], fn($w) => mb_strlen($w) >= 2));
+    $phrases = $terms['exact'];
+    if ($terms['phrase'] !== '' && !in_array($terms['phrase'], $phrases, true)) $phrases[] = $terms['phrase'];
+    return ['stems' => $stems, 'phrases' => array_values($phrases)];
+}
+
+/** A message body as one line of readable text. HTML loses its markup, styles and scripts; whitespace collapses. */
+function search_plain_text($body, $isHtml = false) {
+    $t = (string)$body;
+    if ($isHtml) {
+        $t = preg_replace('#<(style|script|head|title)\b[^>]*>.*?</\1>#is', ' ', $t) ?? $t;
+        $t = preg_replace('#<br\s*/?>|</(p|div|tr|li|h[1-6])>#i', ' ', $t) ?? $t;
+        $t = strip_tags($t);
+        $t = html_entity_decode($t, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+    $t = str_replace("\xC2\xA0", ' ', $t);
+    $t = preg_replace('/\s+/u', ' ', $t) ?? $t;
+    return trim($t);
+}
+
+/**
+ * The stretch of a message that best answers the query: where the phrase is,
+ * or failing that the window holding the most of the words. When none of the
+ * words is in the text (the match was a sender or an attachment name) the
+ * opening of the message stands in, which is still more than a subject says.
+ */
+function search_snippet($text, array $needles, $width = 170) {
+    $text = (string)$text;
+    if ($text === '') return '';
+    if (mb_strlen($text) > 20000) $text = mb_substr($text, 0, 20000);   // bounded: the answer is rarely on page nine
+    $len = mb_strlen($text);
+    $pos = -1;
+
+    foreach ($needles['phrases'] ?? [] as $ph) {
+        $at = mb_stripos($text, (string)$ph);
+        if ($at !== false) { $pos = $at; break; }
+    }
+    if ($pos < 0 && !empty($needles['stems'])) {
+        $alts = implode('|', array_map(fn($w) => preg_quote($w, '/'), $needles['stems']));
+        if (preg_match_all('/(?<![\p{L}\p{N}])(' . $alts . ')/iu', $text, $m, PREG_OFFSET_CAPTURE)) {
+            $best = -1; $bestCount = 0;
+            foreach (array_slice($m[1], 0, 40) as [$hit, $byteOff]) {
+                $at  = mb_strlen(substr($text, 0, $byteOff));
+                $win = mb_strtolower(mb_substr($text, max(0, $at - 50), $width));
+                $n = 0;
+                foreach ($needles['stems'] as $w) if (mb_strpos($win, mb_strtolower($w)) !== false) $n++;
+                if ($n > $bestCount) { $bestCount = $n; $best = $at; }
+            }
+            $pos = $best;
+        }
+    }
+    if ($pos < 0) return $len > $width ? rtrim(mb_substr($text, 0, $width)) . '…' : $text;
+
+    $start = max(0, $pos - 50);
+    if ($start > 0) {                                   // start on a word, not inside one
+        $sp = mb_strpos($text, ' ', $start);
+        if ($sp !== false && $sp < $pos) $start = $sp + 1;
+    }
+    $out = mb_substr($text, $start, $width);
+    if ($start + $width < $len) {                       // …and end on one
+        $sp = mb_strrpos($out, ' ');
+        if ($sp !== false && $sp > $width * 0.6) $out = mb_substr($out, 0, $sp);
+        $out = rtrim($out) . '…';
+    }
+    return ($start > 0 ? '…' : '') . $out;
+}
+
+/**
+ * The few answers worth lifting above the date order: the highest scores, but
+ * only when they stand clear of the rest — in a search where every result is
+ * as good as every other, nothing is "top". Returns row keys. Pure.
+ */
+function search_pick_top(array $rows, $max = 3) {
+    if (count($rows) <= 5) return [];                   // a short list needs no summit
+    $scores = array_map(fn($r) => (int)($r['score'] ?? 0), $rows);
+    $best   = max($scores);
+    sort($scores);
+    $median = $scores[(int)floor(count($scores) / 2)];
+    if ($best < 60 || $best - $median < 25) return [];
+    $ranked = $rows;
+    usort($ranked, fn($a, $b) => ((int)$b['score'] - (int)$a['score']) ?: ((int)($b['timestamp'] ?? 0) - (int)($a['timestamp'] ?? 0)));
+    $top = [];
+    foreach (array_slice($ranked, 0, $max) as $r) {
+        if ((int)$r['score'] >= $best * 0.75 && (int)$r['score'] - $median >= 25) $top[] = search_row_key($r);
+    }
+    return $top;
+}
+
+/**
+ * The order results are shown in.
+ *   'any' rung — best first: these are near-misses, and the nearest matters most.
+ *   otherwise  — every result has all the words, so they go newest first, which
+ *                is how people look for mail, with the standout answers lifted
+ *                to the top and marked.
+ * Rows must already carry 'score' (search_rank). Pure.
+ */
+function search_arrange(array $rows, $mode) {
+    if ($mode === 'any') {
+        foreach ($rows as $i => $r) $rows[$i]['top'] = false;
+        return ['order' => 'score', 'rows' => $rows];
+    }
+    $topKeys = array_flip(search_pick_top($rows));
+    $top = []; $rest = [];
+    foreach ($rows as $r) {
+        if (isset($topKeys[search_row_key($r)])) { $r['top'] = true; $top[] = $r; }
+        else { $r['top'] = false; $rest[] = $r; }
+    }
+    usort($top,  fn($a, $b) => ((int)$b['score'] - (int)$a['score']) ?: ((int)($b['timestamp'] ?? 0) - (int)($a['timestamp'] ?? 0)));
+    usort($rest, fn($a, $b) => (int)($b['timestamp'] ?? 0) - (int)($a['timestamp'] ?? 0));
+    return ['order' => 'date', 'rows' => array_merge($top, $rest)];
+}

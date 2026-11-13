@@ -757,9 +757,9 @@ t_group('search: a sentence is understood, not spelled out');
 $f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
 t_ok('the body is searched unless speed is asked for', strpos($f, "(\$_GET['scope'] ?? '') !== 'headers'") !== false);
 t_ok('the rungs are tried in order and the first answer wins', preg_match('/foreach \(\$plan\[.attempts.\] as \$attempt\).*?if \(\(int\)\$try\[.total.\] > 0\) break;/s', $f) === 1);
-t_ok('…and the page is told which rung answered', strpos($f, "'matched'        => \$used['mode']") !== false && strpos($f, "'note'           =>") !== false);
+t_ok('…and the page is told which rung answered', preg_match("/'matched'\\s+=> \\\$used\\['mode'\\]/", $f) === 1 && preg_match("/'note'\\s+=> \\\$note/", $f) === 1);
 t_ok('ranking holds the whole candidate set before paging', strpos($f, '$need     = $rank ? $reach :') !== false);
-t_ok('…and asks the server which words each message has', preg_match('/foreach \(\$rank\[.words.\] as \$w\).*?imap_search\(\$box, search_word_key/s', $f) === 1);
+t_ok('…and asks the server which words each message has', preg_match('/foreach \(\$rank\[.words.\] as \$w\).*?search_imap\(\$box, search_term_key/s', $f) === 1);
 t_ok('…bounded, so a long query cannot fan out', strpos($f, 'count($words) <= 6 && count($folders) <= 8') !== false);
 $l = (string)@file_get_contents(T_ROOT . '/lib/search.php');
 t_ok('a quoted phrase is never stemmed', preg_match('/function search_terms.*?preg_match\(.\/\\\\s\/., \$t\).*?exact/s', $l) === 1);
@@ -771,12 +771,12 @@ t_ok('the whole message is searched by default', strpos($js, "scope = scope || '
 t_ok('best-match order is asked for explicitly', strpos($js, "searchRank = (v === 'best')") !== false && strpos($js, "'&rank=' + (searchRank ? '1' : '0')") !== false);
 t_ok('…and the cache knows the difference', substr_count($js, "searchRank ? 'best' : 'order'") >= 2);
 t_ok('the rung that answered is shown above the rows', preg_match('/searchNote\s+= data\.note/', $js) === 1 && strpos($js, "escapeHtml(searchNote)") !== false);
-t_ok('date headings are dropped when the rows are in best-match order', strpos($js, "searchSort === 'date' && !searchRanked") !== false);
+t_ok('date headings follow the order the server arranged, not a guess', strpos($js, "searchOrder === 'date'") !== false && strpos($js, 'search-top-header') !== false);
 $ib = (string)@file_get_contents(T_ROOT . '/inbox.php');
 t_ok('the sort control offers it first', preg_match('/<option value="best">Best match<\/option>\s*<option value="date:desc">Newest first/', $ib) === 1);
 $f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
 t_ok('the server takes the choice, and defaults to it', strpos($f, "isset(\$_GET['rank']) ? (\$_GET['rank'] === '1')") !== false);
-t_ok('a whole-message search is bounded in time', strpos($f, '$deadline = microtime(true) + 12.0') !== false
+t_ok('a whole-message search is bounded in time', strpos($f, '$deadline = $started + 12.0') !== false
      && strpos($f, "microtime(true) > \$rank['deadline']") !== false
      && preg_match('/if \(microtime\(true\) > \$deadline\) break;/', $f) === 1);
 
@@ -793,3 +793,47 @@ t_ok('Settings only — the inbox footer is untouched', strpos($ib, 'siteboma') 
 $css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
 t_ok('the pill can hold a second line without covering the page', strpos($css, '.settings-page .app-footer-credited') !== false
      && strpos($css, '.settings-page .footer-credit a { pointer-events: auto; }') !== false);
+
+t_group('search: the answer is complete, findable, and explains itself');
+$f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
+t_ok('a query that is not ASCII tells the server its charset', preg_match("/function search_imap.*?search_needs_charset\(\\\$criterion\).*?'UTF-8'/s", $f) === 1);
+// The only raw calls left are the two inside the helper itself.
+t_ok('…on every search the collector makes', substr_count($f, '@imap_search($box,') === 2 && substr_count($f, ' search_imap($box,') >= 4);
+t_ok('what a hit matched is remembered by folder AND uid', strpos($f, "\$matchedByUid[\$f . '|' . (int)\$u]") !== false);
+t_ok('the phrase lifts a result; it never filters the rest out', strpos($f, 'SEARCH_PHRASE_HIT') !== false && strpos((string)@file_get_contents(T_ROOT . '/lib/search.php'), "'mode' => 'phrase'") === false);
+t_ok('nothing in the usual folders → the others are searched before saying so', preg_match('/\(int\)\$out\[.total.\] === 0 && \$where !== .all. && \$p\[.in.\] === null.*?\$escalated = true/s', $f) === 1);
+t_ok('…and the page is told where the results came from', strpos($f, 'these are from your other folders') !== false);
+t_ok('page two is a slice of the same answer, not a second search', strpos($f, 'search_cache_get($email, $acct, $cacheKey)') !== false && strpos($f, 'search_cache_put($email, $acct, $cacheKey') !== false);
+t_ok('…remembered as folders and UIDs only — never a subject or a sender', preg_match('/\$refs  = array_map\(fn\(\$r\) => \[\$fIdx\[\$r\[.folder.\]\] \?\? 0, \(int\)\$r\[.uid.\], \$r\[.top.\] \? 1 : 0, \(int\)\$r\[.score.\]\]/', $f) === 1);
+t_ok('snippets are fetched with PEEK — looking never marks mail as read', preg_match('/function search_snippet_text.*?FT_UID \| FT_PEEK/s', $f) === 1);
+t_ok('…bounded in size, count and time', strpos($f, '> 262144') !== false && strpos($f, 'array_slice($refs, 0, 30)') !== false && strpos($f, 'break 2;') !== false);
+t_ok('…and the words to mark come from the server\'s own reading of the query', strpos($f, "'highlight' => search_needles(\$terms)") !== false);
+
+t_group('search: the display says why each result is there');
+$js  = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+$css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
+t_ok('every result carries the line that matched, fetched behind the list', strpos($js, 'function loadSearchSnippets') !== false && strpos($js, 'action=search_snippets') !== false && strpos($js, 'loadSearchSnippets(q);') !== false);
+t_ok('…written into the rows on screen, with no re-render', preg_match('/function paintSearchSnippets.*?el\.innerHTML = markHits\(sn\.s, searchHitRe\)/s', $js) === 1);
+t_ok('a stale snippet answer never lands on a newer search', strpos($js, 'if (seq !== searchSnippetSeq || state.searchQuery !== q) return;') !== false);
+t_ok('matched words are marked in sender, subject and snippet', substr_count($js, 'markHits(') >= 5);
+t_ok('…as the start of a word, built from the server\'s reading', strpos($js, "'(?<![\\\\p{L}\\\\p{N}])(?:'") !== false && strpos($js, 'buildHitRe(searchHighlight)') !== false);
+t_ok('…and escaped before they are marked — a subject can never inject markup', preg_match('/function markHits.*?escapeHtml\(text\.slice\(last, m\.index\)\).*?escapeHtml\(m\[0\]\)/s', $js) === 1);
+t_ok('the same marks appear inside the opened message, text nodes only', preg_match('/function markHitsIn.*?NodeFilter\.SHOW_TEXT/s', $js) === 1 && substr_count($js, 'markHitsIn(body)') >= 2 && strpos($js, "querySelectorAll('.thread-msg-body').forEach(markHitsIn)") !== false);
+t_ok('a result in Sent says who it went to', strpos($js, "folderType(m.folder) === 'sent' && m.to") !== false);
+t_ok('the folder being looked at is searched, not just the Inbox', strpos($js, "'&folder=' + encodeURIComponent(state.currentFolder)") !== false);
+t_ok('where the results are is one click from narrowing to it', strpos($js, 'data-facet-folder') !== false && strpos($js, "searchToggleOperator('in',") !== false);
+t_ok('paperclips reach search results', preg_match('/function paintSearchSnippets.*?ic-paperclip/s', $js) === 1);
+t_ok('the filter bar is one scrolling row, not three wrapped ones', strpos($css, '.mail-page .search-filters { flex-wrap: nowrap; overflow-x: auto;') !== false);
+t_ok('the marks are styled for both themes', strpos($css, '.mail-page mark.search-hit') !== false && strpos($css, 'html.theme-dark .mail-page mark.search-hit') !== false);
+
+t_group('search: the box remembers, and forgets when it should');
+t_ok('people and recent searches are suggested under the box', strpos($js, 'function suggInit') !== false && strpos($js, "ajax/contacts.php?q=") !== false && strpos($js, 'mailapp.recentSearches') !== false);
+t_ok('…wired before the search\'s own key handler', preg_match('/suggInit\(\);.*?\$\(.searchInput.\)\.addEventListener\(.input./s', $js) === 1);
+t_ok('a person becomes from:their-address', strpos($js, "' from:' + it.email") !== false);
+$ix = (string)@file_get_contents(T_ROOT . '/index.php');
+t_ok('recent searches are wiped on the sign-in page, as its own statement', preg_match("/^try \{ localStorage\.removeItem\('mailapp\.recentSearches'\); \} catch \(e\) \{\}$/m", $ix) === 1);
+t_ok('a marked sender stays running text, not a row of spaced-out flex items', strpos($css, '.mail-page .search-result .msg-from { display: block;') !== false);
+t_ok('the avatar initials come from the name, not the address', strpos($js, 'avatarInitial(who.name, who.seed)') !== false);
+t_ok('the open result keeps its solid ground — no tint under white text', strpos($css, '.mail-page .search-result.search-top:not(.active)') !== false && strpos($css, '.mail-page .msg-item.active mark.search-hit') !== false);
+t_ok('marks inside a message read on white paper in the dark theme too', strpos($css, 'html.theme-dark .mail-page .thread-msg-body mark.search-hit { color: #1c1c1e; background: #ffd60a; }') !== false);
+

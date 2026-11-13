@@ -63,6 +63,14 @@
     let searchNote          = '';        // what the server says about that rung
     let searchRanked        = false;     // the results on screen came back in best-match order
     let searchRank          = true;      // …and that is what was asked for
+    let searchHighlight     = { stems: [], phrases: [] };  // what to mark, from the server's reading of the query
+    let searchHitRe         = null;      // …compiled once per search
+    let searchByFolder      = {};        // folder → how many of the results are in it
+    let searchOrder         = 'date';    // 'date' (standouts, then newest) | 'score' (near-misses) | 'sort'
+    let searchTookMs        = 0;
+    let searchSnippets      = new Map(); // "folder|uid" → { s: the line that matched, a: has an attachment }
+    let searchSnippetQuery  = '';        // the query those snippets answer
+    let searchSnippetSeq    = 0;
     let searchResultWhere   = 'default'; // breadth of those results ('default' | 'all')
     let searchFoldersCapped = false;     // true when "all folders" hit the server-side cap
     let searchFolderCount   = 0;         // how many folders the server actually searched
@@ -1114,6 +1122,235 @@
         return out;
     }
 
+    /* ---------- Showing why a result matched ---------- */
+
+    /**
+     * One expression for everything to mark: each stem as the START of a word
+     * (so "quot" lights up "Quotation" but not "misquoted"), and any phrase.
+     * Built from the server's reading of the query, never from the raw text.
+     */
+    function buildHitRe(h) {
+        const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const parts = [];
+        (h.phrases || []).forEach(p => { if (p && p.length > 1) parts.push(escRe(p).replace(/\s+/g, '\\s+')); });
+        (h.stems   || []).forEach(w => { if (w) parts.push(escRe(w) + '[\\p{L}\\p{N}]*'); });
+        if (!parts.length) return null;
+        try { return new RegExp('(?<![\\p{L}\\p{N}])(?:' + parts.join('|') + ')', 'giu'); }
+        catch (e) {
+            // An engine without lookbehind or \p{}: mark a little more loosely rather than not at all.
+            try { return new RegExp('(?:' + parts.join('|').replace(/\[\\p\{L\}\\p\{N\}\]\*/g, '\\w*') + ')', 'gi'); }
+            catch (e2) { return null; }
+        }
+    }
+    /** Text → safe HTML with the matched words wrapped in <mark>. */
+    function markHits(text, re) {
+        text = String(text == null ? '' : text);
+        if (!re || !text) return escapeHtml(text);
+        let out = '', last = 0, m, n = 0;
+        re.lastIndex = 0;
+        while ((m = re.exec(text)) !== null && n++ < 60) {
+            if (m[0] === '') { re.lastIndex++; continue; }
+            out += escapeHtml(text.slice(last, m.index)) + '<mark class="search-hit">' + escapeHtml(m[0]) + '</mark>';
+            last = m.index + m[0].length;
+        }
+        return out + escapeHtml(text.slice(last));
+    }
+    /** Who a result is "from": in Sent that is you, every time — so say who it went TO. */
+    function searchRowWho(m) {
+        if (folderType(m.folder) === 'sent' && m.to) {
+            const list = String(m.to).split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(x => x.trim()).filter(Boolean);
+            const first = (list[0] || '').replace(/<[^>]*>/, '').replace(/"/g, '').trim() || (list[0] || '').replace(/[<>"]/g, '');
+            return { label: 'To: ' + first + (list.length > 1 ? ' +' + (list.length - 1) : ''), seed: first, name: first };
+        }
+        return { label: m.from_name || m.from_addr || '(unknown)', seed: m.from_addr || m.from_name || '?', name: m.from_name };
+    }
+    const searchKey = (m) => m.folder + '|' + m.uid;
+
+    /** The matched line of each result, fetched after the list is up. */
+    async function loadSearchSnippets(q) {
+        if (state.starredActive || !state.searchActive) return;
+        const seq  = ++searchSnippetSeq;
+        const need = state.searchResults.filter(m => !searchSnippets.has(searchKey(m)));
+        if (!need.length) { paintSearchSnippets(); return; }
+        const refs = need.slice(0, 30).map(m => [m.folder, m.uid]);
+        let data;
+        try {
+            const r = await fetch('ajax/fetch.php?action=search_snippets&q=' + encodeURIComponent(q) +
+                                  '&refs=' + encodeURIComponent(JSON.stringify(refs)) + acctParam(viewAcct()),
+                                  { credentials: 'same-origin' });
+            data = await r.json();
+        } catch (e) { data = null; }
+        if (seq !== searchSnippetSeq || state.searchQuery !== q) return;   // a newer search owns the list now
+        const got = (data && data.snippets) || {};
+        // Asked-for rows that came back empty are remembered too, so they are not asked for again.
+        refs.forEach(([f, u]) => { const k = f + '|' + u; searchSnippets.set(k, got[k] || { s: '', a: false }); });
+        if (searchSnippets.size > 400) searchSnippets = new Map([...searchSnippets].slice(-200));
+        paintSearchSnippets();
+    }
+    /** Write the snippets into the rows already on screen — no re-render, no flicker. */
+    function paintSearchSnippets() {
+        document.querySelectorAll('#messageList .search-result').forEach(row => {
+            const sn = searchSnippets.get(row.dataset.key);
+            const el = row.querySelector('.msg-snippet');
+            if (!sn || !el) return;
+            el.classList.remove('loading');
+            if (sn.s) el.innerHTML = markHits(sn.s, searchHitRe);
+            else el.remove();
+            if (sn.a && !row.querySelector('.msg-indicator')) {
+                const meta = row.querySelector('.msg-meta');
+                if (meta) meta.insertAdjacentHTML('afterbegin', '<svg class="msg-indicator" width="12" height="12"><use href="#ic-paperclip"/></svg>');
+            }
+        });
+    }
+    /**
+     * Mark the words inside an opened message, so the eye lands where the
+     * search did. Text nodes only — the message's own markup is never touched.
+     */
+    function markHitsIn(root) {
+        if (!root || !searchHitRe || !state.searchActive || state.starredActive) return;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: (n) => (!n.nodeValue || !n.nodeValue.trim() || n.parentNode.closest('mark, script, style, textarea, .img-block-bar, .msg-attachments, .invite-card'))
+                ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+        });
+        const nodes = [];
+        while (walker.nextNode() && nodes.length < 4000) nodes.push(walker.currentNode);
+        let marks = 0;
+        for (const node of nodes) {
+            if (marks > 300) break;
+            searchHitRe.lastIndex = 0;
+            if (!searchHitRe.test(node.nodeValue)) continue;
+            const span = document.createElement('span');
+            span.innerHTML = markHits(node.nodeValue, searchHitRe);
+            marks += span.querySelectorAll('mark').length;
+            const frag = document.createDocumentFragment();
+            while (span.firstChild) frag.appendChild(span.firstChild);
+            node.parentNode.replaceChild(frag, node);
+        }
+    }
+
+    /* ---------- The search box: what you looked for before, and who ---------- */
+    // Two kinds of suggestion under the box: people from the address book (one
+    // click writes from:their-address) and this browser's recent searches.
+    // Recent searches live in localStorage and are wiped on the sign-in page,
+    // with the cached mail, so they never outlive the session on a shared PC.
+    const sugg = { box: null, items: [], active: -1, seq: 0 };
+    function recentSearches() {
+        try {
+            const v = JSON.parse(localStorage.getItem('mailapp.recentSearches') || '[]');
+            return Array.isArray(v) ? v.filter(x => typeof x === 'string' && x.trim()).slice(0, 8) : [];
+        } catch (e) { return []; }
+    }
+    function rememberSearch(q) {
+        q = String(q || '').trim();
+        if (q.length < 2) return;
+        try {
+            const list = recentSearches().filter(x => x.toLowerCase() !== q.toLowerCase());
+            list.unshift(q);
+            localStorage.setItem('mailapp.recentSearches', JSON.stringify(list.slice(0, 8)));
+        } catch (e) {}
+    }
+    function suggClose() {
+        if (sugg.box) sugg.box.hidden = true;
+        sugg.items = []; sugg.active = -1;
+        const i = $('searchInput'); if (i) i.setAttribute('aria-expanded', 'false');
+    }
+    function suggRender() {
+        if (!sugg.box) return;
+        if (!sugg.items.length) { suggClose(); return; }
+        let html = '', lastKind = '';
+        sugg.items.forEach((it, i) => {
+            if (it.kind !== lastKind) {
+                html += '<div class="search-suggest-head">' + (it.kind === 'person' ? 'People' : 'Recent searches') + '</div>';
+                lastKind = it.kind;
+            }
+            html += '<div class="search-suggest-item' + (i === sugg.active ? ' active' : '') + '" role="option" data-i="' + i + '">' +
+                    '<svg class="icon" width="13" height="13"><use href="#' + (it.kind === 'person' ? 'ic-user' : 'ic-clock') + '"/></svg>' +
+                    '<span class="search-suggest-main">' + escapeHtml(it.label) + '</span>' +
+                    (it.sub ? '<span class="search-suggest-sub">' + escapeHtml(it.sub) + '</span>' : '') +
+                    '</div>';
+        });
+        html += '<div class="search-suggest-tip">Try <code>from:name</code> · <code>has:attachment</code> · <code>newer:7d</code> · <code>"exact phrase"</code></div>';
+        sugg.box.innerHTML = html;
+        sugg.box.hidden = false;
+        $('searchInput').setAttribute('aria-expanded', 'true');
+    }
+    function suggApply(i) {
+        const it = sugg.items[i];
+        const input = $('searchInput');
+        if (!it || !input) return;
+        if (it.kind === 'person') {
+            // Replace the word being typed with from:<address>; keep the rest of the query.
+            const parts = input.value.replace(/\s+$/, '').split(/\s+/);
+            parts.pop();
+            input.value = (parts.join(' ') + ' from:' + it.email).trim() + ' ';
+        } else {
+            input.value = it.label;
+        }
+        state.searchQuery = input.value.trim();
+        suggClose();
+        rememberSearch(state.searchQuery);
+        runSearchNow();
+    }
+    async function suggUpdate() {
+        const input = $('searchInput');
+        if (!input || !sugg.box) return;
+        const seq  = ++sugg.seq;
+        const full = input.value;
+        const word = (full.split(/\s+/).pop() || '').trim();
+        const low  = full.trim().toLowerCase();
+        const recent = recentSearches().filter(x => !low || (x.toLowerCase().includes(low) && x.toLowerCase() !== low))
+                                       .slice(0, 5).map(x => ({ kind: 'recent', label: x }));
+        let people = [];
+        if (word.length >= 2 && !word.includes(':')) {
+            try {
+                const r = await fetch('ajax/contacts.php?q=' + encodeURIComponent(word) + '&limit=4', { credentials: 'same-origin' });
+                const d = await r.json();
+                people = ((d && d.contacts) || []).filter(c => c.email && !c.group).slice(0, 4)
+                    .map(c => ({ kind: 'person', label: c.name || c.email, sub: c.name ? c.email : 'mail from this address', email: c.email }));
+            } catch (e) {}
+        }
+        if (seq !== sugg.seq || document.activeElement !== input) return;
+        sugg.items = people.concat(recent);
+        sugg.active = -1;
+        suggRender();
+    }
+    function suggInit() {
+        const input = $('searchInput');
+        if (!input || sugg.box) return;
+        const box = document.createElement('div');
+        box.className = 'search-suggest';
+        box.id = 'searchSuggest';
+        box.hidden = true;
+        box.setAttribute('role', 'listbox');
+        input.parentNode.appendChild(box);
+        input.setAttribute('aria-controls', 'searchSuggest');
+        input.setAttribute('aria-expanded', 'false');
+        input.setAttribute('autocomplete', 'off');
+        sugg.box = box;
+        box.addEventListener('mousedown', (e) => e.preventDefault());   // keep the caret in the box
+        box.addEventListener('click', (e) => {
+            const row = e.target.closest('.search-suggest-item');
+            if (row) suggApply(parseInt(row.dataset.i, 10));
+        });
+        let t = null;
+        const later = () => { clearTimeout(t); t = setTimeout(suggUpdate, 120); };
+        input.addEventListener('focus', later);
+        input.addEventListener('input', later);
+        input.addEventListener('blur', () => setTimeout(suggClose, 120));
+        // Registered before the search's own key handler, so Enter on a
+        // highlighted suggestion picks it instead of running the half-typed text.
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { if (!sugg.box.hidden) { suggClose(); e.stopImmediatePropagation(); } return; }
+            if (sugg.box.hidden || !sugg.items.length) { if (e.key === 'Enter') { rememberSearch(input.value); suggClose(); } return; }
+            if (e.key === 'ArrowDown') { e.preventDefault(); sugg.active = (sugg.active + 1) % sugg.items.length; suggRender(); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); sugg.active = sugg.active <= 0 ? sugg.items.length - 1 : sugg.active - 1; suggRender(); }
+            else if (e.key === 'Enter') {
+                if (sugg.active >= 0) { e.preventDefault(); e.stopImmediatePropagation(); suggApply(sugg.active); }
+                else { rememberSearch(input.value); suggClose(); }
+            }
+        });
+    }
+
     function renderSearchResults() {
         const results = state.searchResults;
         toggleFilterPane(false);
@@ -1195,44 +1432,71 @@
             return;
         }
 
+        // Where the results are, as buttons: one click narrows to that folder.
+        let summary = '';
+        if (!state.starredActive) {
+            const facets = Object.entries(searchByFolder).filter(([, n]) => n > 0).sort((x, y) => y[1] - x[1]);
+            const chips = facets.length > 1
+                ? facets.slice(0, 6).map(([f, n]) =>
+                    '<button type="button" class="search-facet" data-facet-folder="' + escapeAttr(f) + '" title="Show only ' + escapeAttr(displayFolderName(f)) + '">' +
+                        escapeHtml(displayFolderName(f)) + ' <span class="search-facet-n">' + n + '</span></button>').join('')
+                : '';
+            const took = searchTookMs ? '<span class="search-took">' + (searchTookMs < 950 ? searchTookMs + ' ms' : (searchTookMs / 1000).toFixed(1) + ' s') + '</span>' : '';
+            if (chips || took) summary = '<div class="search-summary">' + chips + took + '</div>';
+        }
+
         let html = '';
         let lastGroup = null;
+        const byDate = state.starredActive ? (searchSort === 'date') : (searchOrder === 'date' || (searchOrder === 'sort' && searchSort === 'date'));
+        const anyTop = results.some(m => m.top);
+        let openedTop = false, closedTop = false;
         for (const m of results) {
-            // Group headers only make sense when the rows are in date order.
-            if (searchSort === 'date' && !searchRanked) {
+            if (m.top && !openedTop) { html += '<div class="list-group-header search-top-header">Top results</div>'; openedTop = true; }
+            if (!m.top && byDate) {
+                // Date headings belong to rows in date order; the standouts above sit outside them.
                 const group = dateGroupLabel(m.timestamp);
-                if (group !== lastGroup) {
+                if (group !== lastGroup || (anyTop && !closedTop)) {
                     html += '<div class="list-group-header">' + escapeHtml(group) + '</div>';
-                    lastGroup = group;
+                    lastGroup = group; closedTop = true;
                 }
             }
             const cls = ['msg-item', 'search-result'];
+            if (m.top) cls.push('search-top');
             if (!m.seen) cls.push('unread');
-            const isActive = (m.uid === state.currentUid);
+            const isActive = (m.uid === state.currentUid && (!state.currentMsgFolder || state.currentMsgFolder === m.folder));
             if (isActive) cls.push('active');
-            const seed       = m.from_addr || m.from_name || '?';
-            const initial    = avatarInitial(m.from_name, m.from_addr);
-            const color      = avatarColor(seed);
-            const fromDisp   = m.from_name || m.from_addr || '(unknown)';
+            const who        = searchRowWho(m);
+            const initial    = avatarInitial(who.name, who.seed);
+            const color      = avatarColor(who.seed);
             const folderTag  = '<span class="msg-folder-badge" data-folder-type="' + folderType(m.folder) + '">' + escapeHtml(displayFolderName(m.folder)) + '</span>';
-            const clip       = m.has_attachments ? '<svg class="msg-indicator" width="12" height="12"><use href="#ic-paperclip"/></svg>' : '';
+            const key        = searchKey(m);
+            const sn         = searchSnippets.get(key);
+            const clip       = (m.has_attachments || (sn && sn.a)) ? '<svg class="msg-indicator" width="12" height="12"><use href="#ic-paperclip"/></svg>' : '';
+            const flag       = m.flagged ? '<svg class="msg-indicator msg-indicator-pin" width="12" height="12"><use href="#ic-pin"/></svg>' : '';
+            // The line that matched: filled at once when already known, otherwise a
+            // quiet placeholder that the snippet request replaces.
+            const snippet    = state.starredActive ? ''
+                : (sn ? (sn.s ? '<div class="msg-snippet">' + markHits(sn.s, searchHitRe) + '</div>' : '')
+                      : '<div class="msg-snippet loading" aria-hidden="true">&nbsp;</div>');
             html +=
-                '<div class="' + cls.join(' ') + '" data-uid="' + m.uid + '" data-folder="' + escapeAttr(m.folder) + '"' +
+                '<div class="' + cls.join(' ') + '" data-uid="' + m.uid + '" data-folder="' + escapeAttr(m.folder) + '" data-key="' + escapeAttr(key) + '"' +
                      ' role="option" id="msgrow-' + m.uid + '" aria-selected="' + (isActive ? 'true' : 'false') + '"' +
                      ' tabindex="' + (isActive ? '0' : '-1') + '">' +
                     '<span class="msg-dot"></span>' +
                     '<div class="msg-avatar" style="background:' + color + '">' + escapeHtml(initial) + '</div>' +
                     '<div class="msg-body">' +
                         '<div class="msg-row1">' +
-                            '<span class="msg-from">' + escapeHtml(fromDisp) + folderTag + '</span>' +
-                            '<span class="msg-meta">' + clip +
+                            '<span class="msg-from">' + markHits(who.label, searchHitRe) + '</span>' +
+                            '<span class="msg-meta">' + flag + clip + folderTag +
                                 '<span class="msg-time">' + escapeHtml(formatTime(m.timestamp)) + '</span>' +
                             '</span>' +
                         '</div>' +
-                        '<div class="msg-subject">' + escapeHtml(m.subject || '(no subject)') + '</div>' +
+                        '<div class="msg-subject">' + markHits(m.subject || '(no subject)', searchHitRe) + '</div>' +
+                        snippet +
                     '</div>' +
                 '</div>';
         }
+        notes += summary;
         $('messageList').innerHTML = notes + html + fullCta;
         ensureTabbableRow();
         renderSearchPager();
@@ -1370,8 +1634,15 @@
             searchAttach        = data.attach || null;
             searchReachHit      = !!data.reach_hit;
             searchSortApprox    = !!data.sort_approx;
+            searchHighlight     = data.highlight || { stems: [], phrases: [] };
+            searchHitRe         = buildHitRe(searchHighlight);
+            searchByFolder      = data.by_folder || {};
+            searchOrder         = data.order || (searchRanked ? 'score' : 'sort');
+            searchTookMs        = data.took_ms || 0;
+            if (searchSnippetQuery !== q) { searchSnippets = new Map(); searchSnippetQuery = q; }
             state.searchResults = data.results || [];
             renderSearchResults();
+            loadSearchSnippets(q);   // fills in behind the list, the way paperclips do
         };
         if (searchCache.has(cacheKey)) { apply(searchCache.get(cacheKey)); return; }
 
@@ -1391,6 +1662,8 @@
                         (scope === 'headers' ? '&scope=headers' : '') +
                         '&rank=' + (searchRank ? '1' : '0') +
                         (where === 'all' ? '&where=all' : '') +
+                        (state.currentFolder && state.currentFolder !== OUTBOX_FOLDER && !isUnifiedView()
+                            ? '&folder=' + encodeURIComponent(state.currentFolder) : '') +
                         acctParam(viewAcct());
             const r = await fetch(url, { credentials: 'same-origin', signal: searchAbortCtrl.signal });
             if (r.status === 401) { window.location = 'index'; return; }
@@ -2219,6 +2492,8 @@
         }).join('');
 
         $('readThread').innerHTML = html;
+        // Opened from a search: mark the words inside the message as well.
+        $('readThread').querySelectorAll('.thread-msg-body').forEach(markHitsIn);
         updateExpandAllBtn();
     }
 
@@ -2249,6 +2524,7 @@
         }
         const msgForAtts = { folder, uid, acct: state.currentMsgAcct, attachments: data.attachments || [], invite: data.invite };
         body.innerHTML = renderInviteCard(msgForAtts) + renderMsgAttachments(msgForAtts) + renderMessageBody(data.body || '');
+        markHitsIn(body);
         body.dataset.loaded = 'true';
         if (data.invite && state.thread) {
             const m = state.thread.find(x => (x.uid | 0) === uid && x.folder === folder);
@@ -3077,6 +3353,7 @@
                 const data = await apiGet('message', withAcct({ folder, uid }, state.currentMsgAcct));
                 if (!data.error) {
                     body.innerHTML = renderMessageBody(data.body || '');
+                    markHitsIn(body);
                     body.dataset.loaded = 'true';
                 }
             })());
@@ -4396,6 +4673,13 @@
                 if (retryEl) { retryOutbox(viewAcct(), retryEl.dataset.outboxRetry); return; }
                 return;
             }
+            // A folder in the summary: narrow the search to it.
+            const facet = e.target.closest('[data-facet-folder]');
+            if (facet) {
+                const f = facet.dataset.facetFolder;
+                searchToggleOperator('in', /\s/.test(f) ? '"' + f.replace(/"/g, '') + '"' : f);
+                return;
+            }
             // Widen to every folder, or narrow to headers for speed.
             if (e.target.closest('[data-all-folders]')) {
                 if (state.searchQuery) runServerSearch(state.searchQuery, searchResultScope, 'all');
@@ -4409,6 +4693,8 @@
             if (!item) return;
             const uid = parseInt(item.dataset.uid, 10);
             if (isNaN(uid)) return;
+            // Opening a result is the surest sign the search was worth keeping.
+            if (state.searchActive && !state.starredActive && item.classList.contains('search-result')) rememberSearch(state.searchQuery);
 
             // Selection clicks: avatar/checkbox area, OR meta/ctrl-click anywhere in row,
             // OR plain click anywhere when selection is already active.
@@ -4497,6 +4783,7 @@
             openMsgCtxMenu(e.clientX, e.clientY, uid);
         });
 
+        suggInit();   // before the handlers below: it must see Enter first
         $('searchInput').addEventListener('input', (e) => {
             const q = e.target.value.trim();
             state.searchQuery = q;

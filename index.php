@@ -189,6 +189,9 @@ if ('caches' in window) {
     navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_MESSAGE_CACHE' });
   }
 }
+// …and what was searched for: on a shared computer the next person at this
+// page must not be shown the last one's searches.
+try { localStorage.removeItem('mailapp.recentSearches'); } catch (e) {}
 </script>
 </head>
 <body class="login-page">

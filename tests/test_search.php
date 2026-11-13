@@ -246,15 +246,22 @@ t_eq('none is nothing',    search_or_keys([]), '');
 
 t_group('search: the ladder of attempts');
 $plan = search_plan(search_parse('quote for the safari package'));
-t_eq('three rungs, best first', array_column($plan['attempts'], 'mode'), ['phrase', 'all', 'any']);
-t_eq('the phrase, as typed',    $plan['attempts'][0]['criterion'], 'TEXT "quote for the safari package"');
-t_eq('every word, stemmed',     $plan['attempts'][1]['criterion'], 'TEXT "quot" TEXT "safari" TEXT "packag"');
-t_eq('or any of them',          $plan['attempts'][2]['criterion'], 'OR TEXT "quot" OR TEXT "safari" TEXT "packag"');
-t_eq('falling to "all the words" is what everyone means, so it says nothing', $plan['attempts'][1]['note'], '');
-t_ok('…but giving up on some of them is a surprise, and says so', str_contains($plan['attempts'][2]['note'], 'closest matches'));
+t_eq('two rungs: every word, then most of them', array_column($plan['attempts'], 'mode'), ['all', 'any']);
+t_eq('the phrase is a ranking signal, never a filter that hides the rest', $plan['phrase'], 'TEXT "quote for the safari package"');
+t_eq('every word — as typed OR as its stem, so a word-indexed server and a substring one both match',
+     $plan['attempts'][0]['criterion'], 'OR TEXT "quote" TEXT "quot" TEXT "safari" OR TEXT "package" TEXT "packag"');
+t_eq('or any of them',          $plan['attempts'][1]['criterion'], 'OR OR TEXT "quote" TEXT "quot" OR TEXT "safari" OR TEXT "package" TEXT "packag"');
+t_eq('a word that is its own stem is searched once', search_term_key($plan['terms'], 'safari'), 'TEXT "safari"');
+$two = search_terms(search_parse('quote quotation'));
+t_eq('two spellings of one stem are both kept', search_term_key($two, 'quot'), 'OR TEXT "quote" OR TEXT "quotation" TEXT "quot"');
+t_eq('finding every word is the expected answer, so it says nothing', $plan['attempts'][0]['note'], '');
+t_ok('…but giving up on some of them is a surprise, and says so', str_contains($plan['attempts'][1]['note'], 'closest matches'));
 $quoted = search_plan(search_parse('"final invoice" urgent'));
-t_ok('a phrase the user put in quotes is different — losing it is reported',
-     str_contains($quoted['attempts'][0]['note'] . $quoted['attempts'][1]['note'], 'exact phrase'));
+t_ok('a phrase the user put in quotes is required as typed', str_contains($quoted['attempts'][0]['criterion'], 'TEXT "final invoice"') && $quoted['phrase'] === '');
+$sc = search_terms(search_parse('safari package'));
+t_ok('the sentence found in order outranks the same words scattered',
+     search_score(['subject' => 'x', 'timestamp' => 5], $sc, ['safari', 'packag', SEARCH_PHRASE_HIT], 5)
+   > search_score(['subject' => 'x', 'timestamp' => 5], $sc, ['safari', 'packag'], 5));
 $plan = search_plan(search_parse('safari'));
 t_eq('one word needs no ladder', array_column($plan['attempts'], 'mode'), ['all']);
 t_eq('…and is searched whole',   $plan['attempts'][0]['criterion'], 'TEXT "safari"');
@@ -279,7 +286,7 @@ $rows = [
     ['uid' => 2, 'subject' => 'Safari package quote for Thuraya',  'from_name' => 'Ops',  'from_addr' => 'o@x', 'timestamp' => $now - 400 * 86400],
     ['uid' => 3, 'subject' => 'Safari enquiry',                    'from_name' => 'Tour', 'from_addr' => 't@x', 'timestamp' => $now - 86400],
 ];
-$matched = ['1' => ['safari'], '2' => ['safari', 'packag', 'quot'], '3' => ['safari', 'quot']];
+$matched = ['|1' => ['safari'], '|2' => ['safari', 'packag', 'quot'], '|3' => ['safari', 'quot']];
 $ranked = search_rank($rows, $terms, $matched, $now);
 t_eq('the one with every word in its subject wins, though it is a year old', $ranked[0]['uid'], 2);
 t_eq('then the one with two of the words', $ranked[1]['uid'], 3);
@@ -290,3 +297,68 @@ t_ok('all the words beat some of them',    search_score(['subject' => 'safari pa
                                          > search_score(['subject' => 'safari packag', 'timestamp' => $now], $terms, [], $now));
 t_ok('recency decides a tie, and nothing more', search_score(['subject' => 'safari', 'timestamp' => $now], $terms, [], $now)
                                               - search_score(['subject' => 'safari', 'timestamp' => $now - 400 * 86400], $terms, [], $now) <= 9);
+
+/* =========================================================================
+   Showing the answer: charset, snippets, needles, top picks, arrangement.
+   ========================================================================= */
+
+t_group('search: a word that is not ASCII');
+t_ok('plain English needs no charset',  !search_needs_charset('TEXT "safari"'));
+t_ok('an accent does',                   search_needs_charset('TEXT "café"'));
+t_ok('Arabic does',                      search_needs_charset('TEXT "عرض"'));
+t_eq('non-Latin words are searched as typed, never stemmed', search_terms(search_parse('عرض سعر'))['required'], ['عرض', 'سعر']);
+
+t_group('search: the same UID in two folders is two messages');
+t_ok('keys differ by folder', search_row_key(['folder' => 'INBOX', 'uid' => 7]) !== search_row_key(['folder' => 'Sent', 'uid' => 7]));
+$tw = search_terms(search_parse('safari quote'));
+$rk = search_rank([['folder' => 'INBOX', 'uid' => 7, 'subject' => 'x', 'timestamp' => 5], ['folder' => 'Sent', 'uid' => 7, 'subject' => 'x', 'timestamp' => 5]],
+                  $tw, ['Sent|7' => ['safari', 'quot']], 5);
+t_eq('what one matched is not credited to the other', [$rk[0]['folder'], $rk[0]['score'] > $rk[1]['score']], ['Sent', true]);
+
+t_group('search: what to mark on screen');
+$n = search_needles(search_terms(search_parse('quote for the safari package')));
+t_eq('the stems, not the filler',           $n['stems'], ['quot', 'safari', 'packag']);
+t_eq('…and the sentence as a phrase',       $n['phrases'], ['quote for the safari package']);
+$n = search_needles(search_terms(search_parse('"final invoice" urgent')));
+t_eq('a quoted phrase is marked whole',     $n['phrases'], ['final invoice']);
+
+t_group('search: a message as readable text');
+t_eq('markup, styles and scripts go; words stay',
+     search_plain_text('<style>p{color:red}</style><p>Dear&nbsp;Ada,</p><div>your <b>quotation</b><br>is attached.</div><script>x()</script>', true),
+     'Dear Ada, your quotation is attached.');
+t_eq('plain text only has its whitespace tidied', search_plain_text("Hello\r\n\r\n  there\tyou"), 'Hello there you');
+
+t_group('search: the line that answers the question');
+$body = 'Dear Thuraya, thank you for your enquiry about travel in August. ' . str_repeat('We are glad to help. ', 12)
+      . 'Please find attached our quotation for the Masai Mara safari package for two guests, valid for 14 days. '
+      . str_repeat('Kind regards to all. ', 10);
+$sn = search_snippet($body, ['stems' => ['quot', 'safari', 'packag'], 'phrases' => []]);
+t_ok('it is cut from where the words are, not from the top', str_contains($sn, 'quotation') && str_contains($sn, 'safari package') && !str_contains($sn, 'Dear Thuraya'));
+t_ok('…marked as an excerpt at both ends', str_starts_with($sn, '…') && str_ends_with($sn, '…'));
+t_ok('…and of a readable length', mb_strlen($sn) <= 175);
+t_ok('…starting on a word, not inside one', preg_match('/^…[A-Za-z]/u', $sn) === 1);
+$sn = search_snippet('aaa bbb. The final invoice is attached. Then the invoice total and final notes.', ['stems' => ['final', 'invoic'], 'phrases' => ['final invoice']]);
+t_ok('a phrase wins over scattered words', str_contains($sn, 'final invoice is attached'));
+$win = search_snippet('safari here. ' . str_repeat('filler words go on. ', 20) . 'the quotation for the safari package is ready.', ['stems' => ['quot', 'safari', 'packag'], 'phrases' => []]);
+t_ok('the window with the most words wins over the first word seen', str_contains($win, 'quotation for the safari package'));
+t_eq('no word in the text → the opening stands in', search_snippet('Hello there, this is the start of the message.', ['stems' => ['zebra'], 'phrases' => []]), 'Hello there, this is the start of the message.');
+t_eq('nothing in, nothing out', search_snippet('', ['stems' => ['x'], 'phrases' => []]), '');
+t_ok('a word is matched at its start, not in the middle of another', !str_contains(search_snippet(str_repeat('zz ', 80) . 'discard this. ' . str_repeat('yy ', 80) . 'the car is here.', ['stems' => ['car'], 'phrases' => []]), 'discard'));
+t_ok('multibyte text is cut on characters, not bytes', mb_check_encoding(search_snippet(str_repeat('مرحبا بكم في رحلة السفاري ', 30), ['stems' => ['السفاري'], 'phrases' => []]), 'UTF-8'));
+
+t_group('search: which answers stand out');
+$mk = fn($uid, $score, $ts) => ['folder' => 'INBOX', 'uid' => $uid, 'score' => $score, 'timestamp' => $ts];
+$rows = [$mk(1, 180, 100), $mk(2, 60, 900), $mk(3, 58, 800), $mk(4, 55, 700), $mk(5, 150, 50), $mk(6, 52, 600), $mk(7, 50, 500)];
+t_eq('the ones that stand clear of the rest', search_pick_top($rows), ['INBOX|1', 'INBOX|5']);
+t_eq('when every result is as good as the next, nothing is "top"', search_pick_top([$mk(1, 70, 1), $mk(2, 70, 2), $mk(3, 69, 3), $mk(4, 70, 4), $mk(5, 68, 5), $mk(6, 70, 6)]), []);
+t_eq('a short list needs no summit', search_pick_top([$mk(1, 200, 1), $mk(2, 10, 2)]), []);
+t_ok('never more than three', count(search_pick_top([$mk(1, 200, 1), $mk(2, 199, 2), $mk(3, 198, 3), $mk(4, 197, 4), $mk(5, 20, 5), $mk(6, 20, 6), $mk(7, 20, 7), $mk(8, 20, 8), $mk(9, 20, 9)])) === 3);
+
+t_group('search: the order on screen');
+$ar = search_arrange($rows, 'all');
+t_eq('all the words → the standouts first, best of them leading', [$ar['rows'][0]['uid'], $ar['rows'][1]['uid']], [1, 5]);
+t_eq('…then everything else newest first', array_column(array_slice($ar['rows'], 2), 'uid'), [2, 3, 4, 6, 7]);
+t_ok('…and each row says which it is', $ar['rows'][0]['top'] === true && $ar['rows'][2]['top'] === false && $ar['order'] === 'date');
+$ar = search_arrange(search_rank([['folder' => 'INBOX', 'uid' => 1, 'subject' => 'safari', 'timestamp' => 1], ['folder' => 'INBOX', 'uid' => 2, 'subject' => 'safari quote', 'timestamp' => 1]], $tw, [], 5), 'any');
+t_eq('near-misses stay best-first, with no summit', [$ar['order'], $ar['rows'][0]['uid'], $ar['rows'][0]['top']], ['score', 2, false]);
+

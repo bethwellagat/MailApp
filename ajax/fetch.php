@@ -816,7 +816,7 @@ function search_collect($criterion, array $folders, array $opt) {
     $sortFlag = ['from' => SORTFROM, 'subject' => SORTSUBJECT, 'size' => SORTSIZE][$sort] ?? SORTDATE;
     $need     = $rank ? $reach : min($page * $perPage, $reach);
 
-    $rows = []; $total = 0; $searched = []; $sortApprox = false;
+    $rows = []; $total = 0; $searched = []; $sortApprox = false; $perFolder = [];
     $attachStats = ($attach !== null) ? ['probed' => 0, 'unknown' => 0, 'known' => 0] : null;
 
     foreach ($folders as $f) {
@@ -826,18 +826,18 @@ function search_collect($criterion, array $folders, array $opt) {
 
         $uids = false;
         if ($useSort) {
-            $uids = @imap_sort($box, $sortFlag, $dir === 'desc' ? 1 : 0, SE_UID, $criterion);
+            $uids = @imap_sort($box, $sortFlag, $dir === 'desc' ? 1 : 0, SE_UID, $criterion, search_needs_charset($criterion) ? 'UTF-8' : null);
             if (!is_array($uids)) { $uids = false; $sortApprox = true; }
             else $uids = array_values(array_unique(array_map('intval', $uids)));
         }
         if ($uids === false) {
-            $uids = @imap_search($box, $criterion, SE_UID);
+            $uids = search_imap($box, $criterion);
             if (!is_array($uids) && !empty($opt['fallback'])) {
                 // Some servers reject the nested OR form; a plain word can be
                 // retried one key at a time and the hits unioned.
                 $uids = [];
                 foreach ($opt['fallback'] as $crit) {
-                    $r = @imap_search($box, $crit, SE_UID);
+                    $r = search_imap($box, $crit);
                     if (is_array($r)) $uids = array_merge($uids, $r);
                 }
             }
@@ -870,18 +870,30 @@ function search_collect($criterion, array $folders, array $opt) {
         }
 
         $total += count($uids);
+        $perFolder[$f] = count($uids);
         if (count($uids) > $need) $uids = array_slice($uids, 0, $need);
 
-        // Which of the words each message actually has — one indexed search per
-        // word, server-side, instead of fetching bodies. It is what lets the
-        // ranking say "this one has all three" about a match in the body.
-        if ($rank && $uids && count($rank['words']) > 1 && microtime(true) < $rank['deadline']) {
+        // What the ranking needs to know about each hit, asked of the server
+        // rather than read out of message bodies. Keyed by folder AND uid: the
+        // same UID is a different message in every folder.
+        if ($rank && $uids) {
             $want = array_fill_keys($uids, true);
-            foreach ($rank['words'] as $w) {
-                if (microtime(true) > $rank['deadline']) break;   // a slow server must not hold the page
-                $hit = @imap_search($box, search_word_key($w, $rank['full']), SE_UID);
-                if (!is_array($hit)) continue;
-                foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[(string)(int)$u][] = $w;
+            if (($rank['mode'] ?? 'all') === 'any') {
+                // Near-misses: which of the words does each one actually have?
+                foreach ($rank['words'] as $w) {
+                    if (microtime(true) > $rank['deadline']) break;   // a slow server must not hold the page
+                    $hit = search_imap($box, search_term_key($rank['terms'], $w, $rank['full']));
+                    if (!is_array($hit)) continue;
+                    foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[$f . '|' . (int)$u][] = $w;
+                }
+            } else {
+                // Every hit has every word. The one open question is which of
+                // them have the words in the order they were typed.
+                foreach ($uids as $u) $matchedByUid[$f . '|' . (int)$u] = $rank['words'];
+                if (($rank['phrase'] ?? '') !== '' && microtime(true) < $rank['deadline']) {
+                    $hit = search_imap($box, $rank['phrase']);
+                    if (is_array($hit)) foreach ($hit as $u) if (isset($want[(int)$u])) $matchedByUid[$f . '|' . (int)$u][] = SEARCH_PHRASE_HIT;
+                }
             }
         }
 
@@ -899,7 +911,9 @@ function search_collect($criterion, array $folders, array $opt) {
     $offset = ($page - 1) * $perPage;
 
     return [
-        'results'     => array_slice($rows, $offset, $perPage),
+        // Ranked callers arrange the whole set themselves before paging it.
+        'results'     => !empty($opt['all_rows']) ? $rows : array_slice($rows, $offset, $perPage),
+        'by_folder'   => $perFolder,
         'total'       => $total,
         'page'        => $page,
         'pages'       => $pages,
@@ -912,6 +926,96 @@ function search_collect($criterion, array $folders, array $opt) {
         'reach_hit'   => ($page * $perPage) > $reach,
         'attach'      => $attachStats,
     ];
+}
+
+/**
+ * The readable text of one message, for a snippet: the plain part if there is
+ * one, else the HTML part with its markup removed. Parts over 256 KB are left
+ * alone (null) — a snippet is not worth downloading a newsletter for — and the
+ * fetch is a PEEK, so looking never marks a message as read.
+ */
+function search_snippet_text($box, $uid, $structure) {
+    $pick = null; $isHtml = false;
+    if (empty($structure->parts)) {
+        if ((int)$structure->type !== 0) return null;                      // not text at all
+        $pick = ['part' => $structure, 'section' => '1'];
+        $isHtml = (strtoupper((string)($structure->subtype ?? '')) === 'HTML');
+    } else {
+        $pick = find_part($structure, 'TEXT', 'PLAIN');
+        if (!$pick) { $pick = find_part($structure, 'TEXT', 'HTML'); $isHtml = (bool)$pick; }
+    }
+    if (!$pick) return null;
+    if ((int)($pick['part']->bytes ?? 0) > 262144) return null;
+    $data = @imap_fetchbody($box, $uid, $pick['section'], FT_UID | FT_PEEK);
+    if (!is_string($data) || $data === '') return null;
+    $enc = (int)($pick['part']->encoding ?? 0);
+    if ($enc === 3)     $data = (string)base64_decode($data);
+    elseif ($enc === 4) $data = quoted_printable_decode($data);
+    $charset = part_charset($pick['part']);
+    if ($charset && strtoupper($charset) !== 'UTF-8') $data = mail_to_utf8($data, $charset);
+    elseif (!mb_check_encoding($data, 'UTF-8')) { $c = @mb_convert_encoding($data, 'UTF-8', 'Windows-1252'); if ($c !== false) $data = $c; }
+    return search_plain_text($data, $isHtml);
+}
+
+/**
+ * SEARCH, telling the server the charset when the words are not ASCII.
+ * Without it a query in Arabic, or with a single accent, was sent as 7-bit
+ * text and matched nothing — silently, as if the mail did not exist. Servers
+ * that refuse the charset get the plain form as a second try.
+ */
+function search_imap($box, $criterion) {
+    if (search_needs_charset($criterion)) {
+        $r = @imap_search($box, $criterion, SE_UID, 'UTF-8');
+        if (is_array($r)) return $r;
+    }
+    return @imap_search($box, $criterion, SE_UID);
+}
+
+/* ---------- paging a ranked search without running it again ---------- */
+
+function search_cache_dir() { return __DIR__ . '/../data/searchcache'; }
+function search_cache_file($email, $acct, $key) {
+    return search_cache_dir() . '/' . substr(hash('sha256', strtolower((string)$email) . '|' . (string)$acct), 0, 24) . '-' . sha1((string)$key) . '.json';
+}
+/**
+ * Page one always runs the search. What it found — folders and UIDs only,
+ * never a subject or a sender — is kept for five minutes so page two is the
+ * next slice of the SAME answer, not a second search whose order may have
+ * shifted under the reader.
+ */
+function search_cache_put($email, $acct, $key, array $payload) {
+    $dir = search_cache_dir();
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true)) return false;
+    foreach ((array)@glob($dir . '/*.json') as $f) { $m = @filemtime($f); if ($m !== false && time() - $m > 900) @unlink($f); }
+    return (bool)atomic_write_json(search_cache_file($email, $acct, $key), $payload + ['at' => time()]);
+}
+function search_cache_get($email, $acct, $key, $ttl = 300) {
+    $f = search_cache_file($email, $acct, $key);
+    $d = is_file($f) ? @json_decode((string)@file_get_contents($f), true) : null;
+    if (!is_array($d) || empty($d['refs']) || (time() - (int)($d['at'] ?? 0)) > $ttl) return null;
+    return $d;
+}
+/** The rows for one slice of remembered refs, in the remembered order. */
+function search_rows_for_refs(array $refs, array $folders) {
+    $byFolder = [];
+    foreach ($refs as $i => $r) $byFolder[$folders[$r[0]] ?? ''][(int)$r[1]] = $i;
+    $rows = [];
+    foreach ($byFolder as $f => $uids) {
+        if ($f === '' || !valid_mailbox_name($f)) continue;
+        $box = open_box($f);
+        if (!$box) continue;
+        $ov = @imap_fetch_overview($box, implode(',', array_keys($uids)), FT_UID);
+        if (is_array($ov)) foreach ($ov as $m) {
+            $i = $uids[(int)$m->uid] ?? null;
+            if ($i === null) continue;
+            $row = search_row_from_overview($m, $f);
+            $row['top'] = !empty($refs[$i][2]); $row['score'] = (int)($refs[$i][3] ?? 0);
+            $rows[$i] = $row;
+        }
+        @imap_close($box);
+    }
+    ksort($rows);
+    return array_values($rows);
 }
 
 /** Every folder name in the account, INBOX first, plus the Sent folder's name. */
@@ -1530,6 +1634,8 @@ if ($action === 'search') {
             'folders' => [], 'searched_all' => $where === 'all', 'folders_capped' => false,
             'total' => 0, 'page' => 1, 'pages' => 1, 'sort' => $sort, 'dir' => $dir,
             'scope' => $full ? 'full' : 'headers', 'attach' => null, 'reach_hit' => false,
+            'by_folder' => (object)[], 'order' => 'date', 'matched' => '', 'note' => '', 'escalated' => false,
+            'highlight' => ['stems' => [], 'phrases' => []],
         ], $extra));
     };
     if (mb_strlen($q) < 2) $empty();
@@ -1581,48 +1687,158 @@ if ($action === 'search') {
         if ($full) $fallback[] = "BODY $qq";
     }
 
-    // Best first: the exact wording, then every word, then most of them. The
-    // first rung that finds anything is the answer — a search that falls back
-    // silently would be lying, so the rung's own sentence goes with it.
+    // Every word first, then most of them. The first rung that finds anything
+    // is the answer — and a search that falls back silently would be lying,
+    // so the rung's own sentence goes with it.
     $words   = array_merge($terms['required'], $terms['exact']);
     // Best-match order is asked for, not inferred from the sort field: "newest
     // first" must mean newest first, not "best, which is usually newest".
     $wantRank = isset($_GET['rank']) ? ($_GET['rank'] === '1') : ($sort === 'date' && $dir === 'desc');
     $byBest   = ($wantRank && count($words) > 0);
     // Searching a whole message costs real time on a server with no full-text
-    // index, and this may run three attempts plus a search per word. The work
-    // is bounded: whatever has been found when the budget runs out is the
-    // answer, rather than a page that never arrives.
-    $deadline = microtime(true) + 12.0;
-    $rankOpt  = ($byBest && count($words) <= 6 && count($folders) <= 8)
-              ? ['terms' => $terms, 'words' => $words, 'full' => $full, 'deadline' => $deadline - 3.0]
-              : null;
+    // index. The work is bounded: whatever has been found when the budget runs
+    // out is the answer, rather than a page that never arrives.
+    $started  = microtime(true);
+    $deadline = $started + 12.0;
+    $email    = (string)($_SESSION['email'] ?? '');
+    $acct     = account_effective_id();
+    $perPage  = 25;
+    $extras   = [
+        'q' => $q, 'parsed' => $describe, 'errors' => $errors,
+        'searched_all' => $where === 'all', 'folders_capped' => $capped,
+        'scope' => $full ? 'full' : 'headers',
+        'highlight' => search_needles($terms),     // what the page marks on screen
+    ];
 
-    $out = null; $used = null;
-    foreach ($plan['attempts'] as $attempt) {
-        $criterion = $attempt['criterion'];
-        $try = search_collect($criterion, $folders, [
-            'page' => $page, 'per_page' => 25, 'sort' => $sort, 'dir' => $dir,
-            'attach' => $p['has'], 'attach_budget' => 150, 'reach' => 600,
-            'email' => (string)($_SESSION['email'] ?? ''), 'acct' => account_effective_id(),
-            'fallback' => $fallback, 'rank' => $rankOpt,
-        ]);
-        $out = $try; $used = $attempt;
-        if ((int)$try['total'] > 0) break;
-        if (microtime(true) > $deadline) break;   // out of time: say what was found, not nothing
+    // Page two onward of a ranked search is the next slice of what page one
+    // found — the same answer, in the same order, without searching again.
+    $cacheKey = implode('|', [$q, $full ? 'f' : 'h', $where, $folder, $sort, $dir, $wantRank ? 'r' : 'o']);
+    if ($byBest && $page > 1 && ($hit = search_cache_get($email, $acct, $cacheKey)) !== null) {
+        $refs  = $hit['refs'];
+        $pages = max(1, (int)ceil(count($refs) / $perPage));
+        $page  = min($page, $pages);
+        $rows  = search_rows_for_refs(array_slice($refs, ($page - 1) * $perPage, $perPage), $hit['folders']);
+        ok(array_merge($hit['meta'], $extras, [
+            'results' => $rows, 'page' => $page, 'pages' => $pages, 'from_cache' => true,
+            'took_ms' => (int)round((microtime(true) - $started) * 1000),
+        ]));
     }
 
-    ok(array_merge($out, [
-        'q'              => $q,
-        'parsed'         => $describe,
-        'errors'         => $errors,
-        'criterion'      => $criterion,          // what was sent to IMAP — invaluable in a bug report
-        'matched'        => $used['mode'],       // phrase | all | any | filters
-        'note'           => (int)$out['total'] > 0 ? $used['note'] : '',
-        'searched_all'   => $where === 'all',
+    $ladder = function (array $folders) use ($plan, $terms, $words, $full, $byBest, $deadline, $page, $perPage, $sort, $dir, $p, $fallback, $email, $acct) {
+        $rankOn = $byBest && count($words) <= 6 && count($folders) <= 8;
+        $out = null; $used = null; $criterion = '';
+        foreach ($plan['attempts'] as $attempt) {
+            $criterion = $attempt['criterion'];
+            $rankOpt = $rankOn ? ['terms' => $terms, 'words' => $words, 'full' => $full, 'deadline' => $deadline - 3.0,
+                                  'mode' => $attempt['mode'], 'phrase' => $plan['phrase']] : null;
+            $try = search_collect($criterion, $folders, [
+                'page' => $page, 'per_page' => $perPage, 'sort' => $sort, 'dir' => $dir,
+                'attach' => $p['has'], 'attach_budget' => 150, 'reach' => 600,
+                'email' => $email, 'acct' => $acct,
+                'fallback' => $fallback, 'rank' => $rankOpt, 'all_rows' => $rankOn,
+            ]);
+            $out = $try; $used = $attempt;
+            if ((int)$try['total'] > 0) break;
+            if (microtime(true) > $deadline) break;   // out of time: say what was found, not nothing
+        }
+        return [$out, $used, $criterion, $rankOn];
+    };
+
+    [$out, $used, $criterion, $rankOn] = $ladder($folders);
+
+    // Nothing in the usual places. Before saying "no results", look everywhere
+    // else — a message filed in a folder is still the message being looked
+    // for — and say that is where these came from.
+    $escalated = false;
+    if ((int)$out['total'] === 0 && $where !== 'all' && $p['in'] === null && microtime(true) < $deadline) {
+        $rest = array_values(array_diff($allFolders, $folders));
+        if (count($rest) > 40) { $rest = array_slice($rest, 0, 40); $capped = true; }
+        if ($rest) {
+            [$out2, $used2, $criterion2, $rankOn2] = $ladder($rest);
+            if ((int)$out2['total'] > 0) {
+                [$out, $used, $criterion, $rankOn] = [$out2, $used2, $criterion2, $rankOn2];
+                $escalated = true;
+            }
+        }
+    }
+
+    $note = (int)$out['total'] > 0 ? $used['note'] : '';
+    if ($escalated) $note = trim('Nothing in Inbox or Sent — these are from your other folders. ' . $note);
+
+    $meta = [
+        'total'       => (int)$out['total'],
+        'by_folder'   => (object)array_filter($out['by_folder'] ?? []),
+        'folders'     => $out['folders'],
+        'sort'        => $out['sort'], 'dir' => $out['dir'],
+        'sort_approx' => $out['sort_approx'], 'ranked' => $rankOn,
+        'reach'       => $out['reach'], 'attach' => $out['attach'],
+        'criterion'   => $criterion,              // what was sent to IMAP — invaluable in a bug report
+        'matched'     => $used['mode'],           // all | any | filters
+        'note'        => $note,
+        'escalated'   => $escalated,
+        'order'       => 'sort',
+    ];
+
+    if ($rankOn) {
+        // Arrange the whole answer, then page it: the standouts first, the
+        // rest newest first (or best first, when these are near-misses).
+        $arr   = search_arrange($out['results'], $used['mode']);
+        $rows  = $arr['rows'];
+        $meta['order'] = $arr['order'];
+        $pages = max(1, (int)ceil(count($rows) / $perPage));
+        $page  = min($page, $pages);
+        $fIdx  = array_flip($out['folders']);
+        $refs  = array_map(fn($r) => [$fIdx[$r['folder']] ?? 0, (int)$r['uid'], $r['top'] ? 1 : 0, (int)$r['score']], $rows);
+        if (count($rows) > $perPage) search_cache_put($email, $acct, $cacheKey, ['refs' => $refs, 'folders' => $out['folders'], 'meta' => $meta]);
+        ok(array_merge($meta, $extras, [
+            'results'   => array_slice($rows, ($page - 1) * $perPage, $perPage),
+            'page'      => $page, 'pages' => $pages,
+            'reach_hit' => (int)$out['total'] > count($rows),
+            'folders_capped' => $capped,
+            'took_ms'   => (int)round((microtime(true) - $started) * 1000),
+        ]));
+    }
+
+    ok(array_merge($meta, $extras, [
+        'results'   => $out['results'], 'page' => $out['page'], 'pages' => $out['pages'],
+        'reach_hit' => $out['reach_hit'],
         'folders_capped' => $capped,
-        'scope'          => $full ? 'full' : 'headers',
+        'took_ms'   => (int)round((microtime(true) - $started) * 1000),
     ]));
+}
+
+/* The line of each result that answers the question, fetched after the list
+   is on screen (the way paperclips are) so the results never wait for it.
+   PEEK throughout: looking for a snippet must not mark anything as read. */
+if ($action === 'search_snippets') {
+    $q    = trim((string)($_GET['q'] ?? ''));
+    $refs = json_decode((string)($_GET['refs'] ?? '[]'), true);
+    if (!is_array($refs) || $q === '') ok(['snippets' => (object)[]]);
+    $needles = search_needles(search_terms(search_parse($q)));
+    $byFolder = [];
+    foreach (array_slice($refs, 0, 30) as $r) {
+        if (!is_array($r) || count($r) < 2) continue;
+        $f = (string)$r[0]; $u = (int)$r[1];
+        if ($u > 0 && valid_mailbox_name($f)) $byFolder[$f][] = $u;
+    }
+    $deadline = microtime(true) + 8.0;
+    $out = [];
+    foreach ($byFolder as $f => $uids) {
+        $box = open_box($f);
+        if (!$box) continue;
+        foreach ($uids as $u) {
+            if (microtime(true) > $deadline) break 2;
+            $st = @imap_fetchstructure($box, $u, FT_UID);
+            if (!$st) continue;
+            $text = search_snippet_text($box, $u, $st);
+            $out[$f . '|' . $u] = [
+                's' => $text === null ? '' : search_snippet($text, $needles),
+                'a' => structure_has_attachment($st),
+            ];
+        }
+        @imap_close($box);
+    }
+    ok(['snippets' => (object)$out, 'highlight' => $needles]);
 }
 
 if ($action === 'thread') {
