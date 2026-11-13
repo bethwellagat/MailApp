@@ -658,8 +658,12 @@ function search_term_variants(array $terms, $w) {
  *   also   — other either/or groups that must hold (to: is To or Cc)
  *   nots   — groups whose matches are taken away
  *   mode   — all | any | filters
+ *
+ * $literal takes the words at their word: nothing is stemmed, here or in the
+ * excluding. The search box wants the stem (someone is watching the results);
+ * a filter does not (see search_exec_literal).
  */
-function search_exec_plan(array $p, array $terms, $mode, $fullText = true) {
+function search_exec_plan(array $p, array $terms, $mode, $fullText = true, $literal = false) {
     $simple = search_to_imap(array_merge($p, ['text' => [], 'not_text' => [], 'to' => [], 'not_to' => [],
                                               'not_from' => [], 'not_subject' => []]), false);
     if ($simple === 'ALL') $simple = '';
@@ -679,7 +683,7 @@ function search_exec_plan(array $p, array $terms, $mode, $fullText = true) {
     $nots = [];
     foreach ($p['not_text'] ?? [] as $t) {
         $g = search_word_queries($t, $fullText);
-        $stem = search_stem($t);
+        $stem = $literal ? '' : search_stem($t);
         if ($stem !== '' && $stem !== mb_strtolower($t) && !preg_match('/\s/', $t)) $g = array_merge($g, search_word_queries($stem, $fullText));
         $nots[] = $g;
     }
@@ -688,6 +692,32 @@ function search_exec_plan(array $p, array $terms, $mode, $fullText = true) {
     foreach ($p['not_to'] ?? []      as $v) { $q = search_imap_quote($v); $nots[] = ["TO $q", "CC $q"]; }
 
     return ['simple' => $simple, 'words' => $groups, 'also' => $also, 'nots' => $nots, 'mode' => $mode];
+}
+
+/**
+ * A parsed query as work to do, taken at its word: every term as typed, none
+ * dropped and none stemmed.
+ *
+ * The search box is allowed to guess — it stems, it lets stop words go, it
+ * falls back to "any of these" — because someone is watching what comes back
+ * and can see it guessed. A filter runs unattended and acts on mail: it
+ * matches what it was told and nothing wider.
+ */
+function search_exec_literal(array $p, $fullText = false) {
+    $words = [];
+    foreach ($p['text'] ?? [] as $t) {
+        $t = trim((string)$t);
+        if ($t !== '' && !in_array($t, $words, true)) $words[] = $t;
+    }
+    // Every word goes in as "exact": kept whole, matched as written.
+    $terms = ['required' => [], 'optional' => [], 'exact' => $words, 'origs' => [],
+              'phrase' => '', 'words' => $words];
+    return search_exec_plan($p, $terms, 'all', $fullText, true);
+}
+
+/** True when a plan asks for nothing: run as it is, it would match everything. */
+function search_exec_is_empty(array $exec) {
+    return ($exec['simple'] ?? '') === '' && !($exec['words'] ?? []) && !($exec['also'] ?? []) && !($exec['nots'] ?? []);
 }
 
 /**

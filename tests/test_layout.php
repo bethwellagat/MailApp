@@ -654,7 +654,8 @@ t_ok('the list says "or" for any-mode rules', strpos($h, "r.match.mode === 'any'
 $a = (string)@file_get_contents(T_ROOT . '/ajax/rules.php');
 t_ok('a query the parser rejects is refused on add and update', substr_count($a, 'rule_query_errors(') >= 2);
 $l = (string)@file_get_contents(T_ROOT . '/lib/rules.php');
-t_ok('the rule query is translated by the search translator, not a second parser', strpos($l, 'search_to_imap(search_parse(') !== false);
+t_ok('the rule query is planned by the search library, not a second parser', strpos($l, 'search_exec_literal(search_parse(') !== false);
+t_ok('a rule never builds a criterion the mail library refuses', !preg_match("/'(OR|NOT) |\\bNOT '/", $l));
 
 t_group('labels: wired end to end');
 $ib = (string)@file_get_contents(T_ROOT . '/inbox.php');

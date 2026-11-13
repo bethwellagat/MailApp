@@ -25,17 +25,76 @@ t_ok('has:attachment in the query ticks the box', sanitize_rule(['match' => ['qu
 t_eq('a query the parser rejects is reported', rule_query_errors('after:yesterday-ish') !== [], true);
 t_eq('a good query has no errors', rule_query_errors('from:a -subject:b larger:5M'), []);
 
-t_group('rules: IMAP translation');
+t_group('rules: the match as work to do');
+/* A rule is never one expression. PHP's IMAP library has no OR and no NOT, so
+   each condition is its own plain search (see lib/rules.php). */
 $m = ['mode' => 'all', 'from' => 'a@x', 'cc' => 'c@x', 'subject' => 'Report', 'larger' => 1048576, 'smaller' => 0, 'older_than' => 0, 'newer_than' => 7, 'query' => ''];
-t_eq('all: one list, which IMAP ANDs', rule_to_imap_search($m, $NOW), 'FROM "a@x" CC "c@x" SUBJECT "Report" LARGER 1048576 SINCE ' . search_imap_date(date('Y-m-d', $NOW - 7 * 86400)));
-$m['mode'] = 'any';
-t_eq('any: nested OR', rule_to_imap_search($m, $NOW), 'OR (FROM "a@x") (OR (CC "c@x") (OR (SUBJECT "Report") (OR (LARGER 1048576) (SINCE ' . search_imap_date(date('Y-m-d', $NOW - 7 * 86400)) . '))))');
-t_eq('any with one condition needs no OR', rule_to_imap_search(['mode' => 'any', 'from' => 'a@x'], $NOW), 'FROM "a@x"');
-t_eq('older than 30 days', rule_to_imap_search(['older_than' => 30], $NOW), 'BEFORE ' . search_imap_date(date('Y-m-d', $NOW - 30 * 86400)));
-t_eq('the query speaks the search box\'s language', rule_to_imap_search(['query' => 'from:boss is:unread -subject:newsletter'], $NOW), 'FROM "boss" NOT SUBJECT "newsletter" UNSEEN');
-t_eq('query plus boxes, any-mode', rule_to_imap_search(['mode' => 'any', 'subject' => 'Invoice', 'query' => 'from:accounts'], $NOW), 'OR (SUBJECT "Invoice") (FROM "accounts")');
-t_eq('nothing is ALL', rule_to_imap_search(['mode' => 'any'], $NOW), 'ALL');
-t_eq('a quote in a value is escaped', rule_to_imap_search(['from' => 'a"b'], $NOW), 'FROM "a\\"b"');
-t_eq('OR join of three', rule_or_join(['A', 'B', 'C']), 'OR (A) (OR (B) (C))');
-t_eq('OR join of two', rule_or_join(['A', 'B']), 'OR (A) (B)');
-t_eq('OR join of one', rule_or_join(['A']), 'A');
+$crits = fn($plan) => array_column(array_filter($plan['conds'], fn($c) => isset($c['crit'])), 'crit');
+t_eq('every box is its own plain key', $crits(rule_exec_plan($m, $NOW)),
+     ['FROM "a@x"', 'CC "c@x"', 'SUBJECT "Report"', 'LARGER 1048576', 'SINCE ' . search_imap_date(date('Y-m-d', $NOW - 7 * 86400))]);
+t_eq('the mode is carried, not baked into an expression', [rule_exec_plan($m, $NOW)['mode'], rule_exec_plan(['mode' => 'any', 'from' => 'a@x'], $NOW)['mode']], ['all', 'any']);
+t_eq('older than 30 days', $crits(rule_exec_plan(['older_than' => 30], $NOW)), ['BEFORE ' . search_imap_date(date('Y-m-d', $NOW - 30 * 86400))]);
+t_eq('a quote in a value is escaped', $crits(rule_exec_plan(['from' => 'a"b'], $NOW)), ['FROM "a\\"b"']);
+t_eq('nothing to match asks nothing', rule_exec_plan(['mode' => 'any'], $NOW), ['mode' => 'any', 'conds' => [], 'nots' => []]);
+t_eq('"doesn\'t have the words" is taken away, never sent as NOT', rule_exec_plan(['not_words' => 'spam'], $NOW)['nots'], [['TEXT "spam"']]);
+
+$q = rule_exec_plan(['query' => 'from:boss is:unread -subject:newsletter'], $NOW)['conds'][0]['exec'];
+t_eq('the query speaks the search box\'s language', $q['simple'], 'FROM "boss" UNSEEN');
+t_eq('…and what it excludes is a group to take away', $q['nots'], [['SUBJECT "newsletter"']]);
+t_eq('a query that asks nothing is not a condition', rule_exec_plan(['from' => 'a@x', 'query' => 'in:Archive'], $NOW)['conds'], [['crit' => 'FROM "a@x"']]);
+$lit = rule_exec_plan(['query' => 'quotes -cancelled'], $NOW)['conds'][0]['exec'];
+t_eq('a rule takes its words literally — no stem, so it acts on what it was told',
+     [$lit['words'][0]['variants'], $lit['nots']],
+     [[['SUBJECT "quotes"', 'FROM "quotes"', 'TO "quotes"']], [['SUBJECT "cancelled"', 'FROM "cancelled"', 'TO "cancelled"']]]);
+
+t_group('rules: nothing the mail library refuses is ever sent');
+/* The same pretend mailbox the search tests use: a list of simple keys, ANDed.
+   Anything with OR or NOT in it is refused — which, to the caller, is
+   indistinguishable from "no message matched". */
+$MAIL = [
+    1 => ['subject' => 'Revised quote',  'from' => 'boss@x.test',    'to' => 'me@x.test', 'cc' => '',           'body' => 'the quote is attached'],
+    2 => ['subject' => 'Lunch',          'from' => 'grace@x.test',   'to' => 'me@x.test', 'cc' => '',           'body' => 'nothing much'],
+    3 => ['subject' => 'Invoice 42',     'from' => 'billing@x.test', 'to' => 'ap@x.test', 'cc' => 'me@x.test',  'body' => 'payment due'],
+    4 => ['subject' => 'Newsletter',     'from' => 'boss@x.test',    'to' => 'all@x.test','cc' => '',           'body' => 'unsubscribe here'],
+];
+$SENT = [];
+$run = function ($crit) use ($MAIL, &$SENT) {
+    $SENT[] = $crit;
+    if (preg_match('/\b(OR|NOT)\b/', $crit)) return [];          // refused, as the real library is
+    if ($crit === 'ALL') return array_keys($MAIL);
+    preg_match_all('/(TEXT|SUBJECT|FROM|TO|CC) "([^"]*)"/', $crit, $mm, PREG_SET_ORDER);
+    $hits = [];
+    foreach ($MAIL as $uid => $msg) {
+        $ok = true;
+        foreach ($mm as [$_, $key, $val]) {
+            $hay = $key === 'TEXT' ? implode(' ', $msg) : $msg[strtolower($key)];
+            if (mb_stripos($hay, $val) === false) { $ok = false; break; }
+        }
+        if ($ok) $hits[] = $uid;
+    }
+    return $hits;
+};
+$go = function ($match) use ($run, &$SENT, $NOW) {
+    $SENT = [];
+    return rule_exec_run(rule_exec_plan($match, $NOW), $run);
+};
+$clean = fn() => !array_filter($SENT, fn($c) => preg_match('/\b(OR|NOT)\b/', $c));
+
+t_eq('match all: one search, as it always was', $go(['from' => 'boss', 'subject' => 'quote']), [1]);
+t_eq('…and it was one', count($SENT), 1);
+t_eq('match any finds either side', $go(['mode' => 'any', 'from' => 'grace', 'subject' => 'Invoice']), [2, 3]);
+t_ok('…without an OR on the wire', $clean() && count($SENT) === 2);
+t_eq('an any-rule of one condition is still that condition', $go(['mode' => 'any', 'from' => 'boss']), [1, 4]);
+t_eq('"doesn\'t have the words" takes mail away', $go(['from' => 'boss', 'not_words' => 'unsubscribe']), [1]);
+t_ok('…with no NOT on the wire', $clean());
+t_eq('under any, "doesn\'t have" is everything without them', $go(['mode' => 'any', 'from' => 'nobody', 'not_words' => 'quote']), [2, 3, 4]);
+t_eq('a bare word in the query matches across the headers', $go(['query' => 'invoice']), [3]);
+t_ok('…and the alternatives went one at a time', $clean());
+t_eq('to: in a query is To or Cc', $go(['query' => 'to:me@x.test']), [1, 2, 3]);
+t_eq('-from: in a query excludes', $go(['query' => 'invoice -from:billing']), []);
+t_eq('the query and the boxes are ANDed under all', $go(['from' => 'boss', 'query' => 'newsletter']), [4]);
+t_ok('…with the boxes riding along on the query\'s searches, not a search of their own',
+     count($SENT) === 3 && !array_filter($SENT, fn($c) => strpos($c, 'FROM "boss"') === false));
+t_eq('…and ORed under any', $go(['mode' => 'any', 'subject' => 'Lunch', 'query' => 'from:billing']), [2, 3]);
+t_eq('nothing to match is the whole folder', $go(['mode' => 'any']), [1, 2, 3, 4]);
+t_ok('no criterion the library refuses was sent, in any of it', $clean());
