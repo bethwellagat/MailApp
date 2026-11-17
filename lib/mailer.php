@@ -15,6 +15,106 @@ if (!function_exists('mime_header_encode')) {
     }
 }
 
+if (!function_exists('addr_list_format')) {
+    /**
+     * Turn what the user typed in To/Cc/Bcc into a valid RFC 5322 address list.
+     *
+     * The field held the raw text, so autocomplete's `Lagat, Bethwel <b@x.com>, `
+     * went out unquoted with a trailing comma. Receivers read that as two
+     * recipients ("Lagat" plus Bethwel), Gmail showed "to Lagat, me", and a
+     * broken address header is a spam signal. Here a piece with no address that
+     * precedes a `Name <addr>` piece is folded back into that name, names are
+     * quoted (or encoded) when they need it, and stray separators are dropped.
+     *
+     * Returns ['header' => string, 'emails' => [addr,...], 'bad' => [piece,...]].
+     */
+    function addr_list_format($raw) {
+        $out = ['header' => '', 'emails' => [], 'bad' => []];
+        $raw = preg_replace('/[\r\n]+/', ' ', (string)$raw);
+        if (trim($raw) === '') return $out;
+
+        // Split on , or ; outside quotes and angle brackets.
+        $tokens = []; $buf = ''; $inQ = false; $inA = false; $esc = false;
+        $len = strlen($raw);
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $raw[$i];
+            if ($esc)                              { $buf .= $ch; $esc = false; continue; }
+            if ($ch === '\\' && $inQ)              { $buf .= $ch; $esc = true;  continue; }
+            if ($ch === '"' && !$inA)              { $inQ = !$inQ; $buf .= $ch; continue; }
+            if ($ch === '<' && !$inQ)              { $inA = true;  $buf .= $ch; continue; }
+            if ($ch === '>' && !$inQ)              { $inA = false; $buf .= $ch; continue; }
+            if (($ch === ',' || $ch === ';') && !$inQ && !$inA) { $tokens[] = $buf; $buf = ''; continue; }
+            $buf .= $ch;
+        }
+        $tokens[] = $buf;
+        $tokens = array_values(array_filter(array_map('trim', $tokens), fn($t) => $t !== ''));
+
+        $entries = []; $pending = [];
+        foreach ($tokens as $tok) {
+            if (preg_match('/^(.*)<\s*([^<>\s]+)\s*>$/s', $tok, $m)) {
+                $name = trim($m[1]); $email = trim($m[2]);
+                if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    // "Lagat, Bethwel <b@x>": the address-less pieces before it were the name.
+                    if ($pending) { $name = trim(implode(', ', $pending) . ($name !== '' ? ', ' . $name : '')); $pending = []; }
+                    $entries[] = [$name, $email];
+                    continue;
+                }
+                foreach ($pending as $p) $out['bad'][] = $p; $pending = [];
+                $out['bad'][] = $tok;
+                continue;
+            }
+            $bare = trim($tok, " \t<>");
+            if (filter_var($bare, FILTER_VALIDATE_EMAIL)) {
+                foreach ($pending as $p) $out['bad'][] = $p; $pending = [];
+                $entries[] = ['', $bare];
+                continue;
+            }
+            $pending[] = $tok;
+        }
+        foreach ($pending as $p) $out['bad'][] = $p;
+
+        $seen = []; $parts = [];
+        foreach ($entries as [$name, $email]) {
+            $key = strtolower($email);
+            if (isset($seen[$key])) continue;
+            $seen[$key] = true;
+            $out['emails'][] = $email;
+            // Unwrap a name that was already quoted, then re-quote it correctly.
+            if (strlen($name) >= 2 && $name[0] === '"' && substr($name, -1) === '"') {
+                $name = stripcslashes(substr($name, 1, -1));
+            }
+            $name = trim(preg_replace('/\s+/', ' ', $name));
+            if ($name === '' || strcasecmp($name, $email) === 0) { $parts[] = $email; continue; }
+            if (!preg_match('/^[\x20-\x7e]*$/', $name)) {
+                $parts[] = mime_header_encode($name) . ' <' . $email . '>';
+            } elseif (preg_match('/[()<>\[\]:;@\\\\,."]/', $name)) {
+                $parts[] = '"' . addcslashes($name, '"\\') . '" <' . $email . '>';
+            } else {
+                $parts[] = $name . ' <' . $email . '>';
+            }
+        }
+        $out['header'] = implode(', ', $parts);
+        return $out;
+    }
+}
+
+if (!function_exists('message_restamp_date')) {
+    /**
+     * Set a built message's Date header to now. A queued send (Undo Send,
+     * Schedule Send) was built, and stamped, when the user pressed Send, then
+     * left minutes later, so receivers saw a Date older than the Received
+     * hops. Only the top-level header block is touched.
+     */
+    function message_restamp_date($message) {
+        $message = (string)$message;
+        $cut = strpos($message, "\r\n\r\n");
+        if ($cut === false) return $message;
+        $head = substr($message, 0, $cut);
+        $new  = preg_replace('/^Date: [^\r\n]*/mi', 'Date: ' . date('r'), $head, 1, $n);
+        return $n ? $new . substr($message, $cut) : $message;
+    }
+}
+
 if (!function_exists('html_to_text')) {
     function html_to_text($html) {
         $t = preg_replace('#<br\s*/?>#i', "\n", $html);

@@ -94,6 +94,7 @@ if ($action === 'send_now' && $method === 'POST') {
         delete_outbox_message($email, $id);
         ok_ob(['ok' => true, 'already_sent' => true]);
     }
+    $rec['message'] = message_restamp_date($rec['message']); // Date = when it left
     $r = smtp_send($_SESSION['smtp_host'], $email, $rec['rcpts'], $rec['message'], $email, $_SESSION['password']);
     if (!$r['ok']) fail_ob('Send failed: ' . $r['error'], 500);
     $rec['sent_at'] = gmdate('c'); // see the sweep: record delivery before the slow append

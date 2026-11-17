@@ -85,6 +85,14 @@ if ($action === 'save') {
     $mime .= "--$alt\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" . quoted_printable_encode(wrap_html($body)) . "\r\n\r\n--$alt--\r\n";
 
     $mid = '<draft-' . bin2hex(random_bytes(10)) . '@' . substr(strrchr($from_addr, '@'), 1) . '>';
+    // Same quoting as a real send, but only when the field parses cleanly: a
+    // draft may hold a half-typed address that must be kept as the user left it.
+    foreach (['to', 'cc', 'bcc'] as $_k) {
+        if ($$_k === '') continue;
+        $_f = addr_list_format($$_k);
+        if (!$_f['bad'] && $_f['header'] !== '') $$_k = $_f['header'];
+    }
+    unset($_k, $_f);
     $headers = ['From: ' . $from_header, 'To: ' . $to];
     if ($cc  !== '') $headers[] = 'Cc: '  . $cc;
     if ($bcc !== '') $headers[] = 'Bcc: ' . $bcc;

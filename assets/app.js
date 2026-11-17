@@ -3007,16 +3007,28 @@
     }
 
     // Boundaries of the recipient token surrounding the caret (delimited by , or ;).
+    // Bounds of the recipient under the caret. A comma inside a quoted name
+    // ("Lagat, Bethwel" <b@x.com>) is part of the name, not a separator.
     function acTokenBounds(value, caret) {
-        let start = 0;
-        for (let i = caret - 1; i >= 0; i--) {
-            if (value[i] === ',' || value[i] === ';') { start = i + 1; break; }
-        }
-        let end = value.length;
-        for (let i = caret; i < value.length; i++) {
-            if (value[i] === ',' || value[i] === ';') { end = i; break; }
+        let start = 0, end = value.length, inQ = false;
+        for (let i = 0; i < value.length; i++) {
+            const ch = value[i];
+            if (ch === '"') { inQ = !inQ; continue; }
+            if (inQ || (ch !== ',' && ch !== ';')) continue;
+            if (i < caret) start = i + 1;
+            else { end = i; break; }
         }
         return { start, end };
+    }
+
+    // One recipient as it should sit in the field: a name with a comma, quote
+    // or other special character is quoted, or the server and receivers read
+    // "Lagat, Bethwel <b@x.com>" as two recipients.
+    function acFormatAddr(name, email) {
+        name = (name || '').trim().replace(/^"(.*)"$/, '$1').trim();
+        if (!name || name.toLowerCase() === String(email).toLowerCase()) return email;
+        if (/[()<>\[\]:;@\\,."]/.test(name)) name = '"' + name.replace(/(["\\])/g, '\\$1') + '"';
+        return name + ' <' + email + '>';
     }
 
     function acCaret(input) {
@@ -3068,7 +3080,7 @@
         const { start, end } = acTokenBounds(input.value, acCaret(input));
         const formatted = c.group
             ? (c.emails || []).filter(e => !input.value.toLowerCase().includes(e.toLowerCase())).join(', ')
-            : ((c.name && c.name.trim()) ? (c.name.trim() + ' <' + c.email + '>') : c.email);
+            : acFormatAddr(c.name, c.email);
         if (formatted === '') { acClose(); return; }   // every member of the group is already in the field
         const left  = input.value.slice(0, start).replace(/[\s,;]+$/, '');
         const right = input.value.slice(end).replace(/^[\s,;]+/, '');

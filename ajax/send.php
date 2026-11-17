@@ -108,20 +108,27 @@ if ($subject === '' && trim(strip_tags($body)) === '') {
     exit;
 }
 
+// Rebuild each address field as a valid header (quoted names, no stray
+// separators) instead of copying what was typed. A piece that is not an
+// address used to be dropped silently, so a typo meant a recipient quietly got
+// nothing — now the user is told.
 $rcpts = [];
-foreach ([$to, $cc, $bcc] as $field) {
+$fields = ['To' => &$to, 'Cc' => &$cc, 'Bcc' => &$bcc];
+foreach ($fields as $label => &$field) {
     if ($field === '') continue;
-    foreach (preg_split('/[,;]/', $field) as $piece) {
-        $piece = trim($piece);
-        if ($piece === '') continue;
-        if (preg_match('/<([^>]+)>/', $piece, $m) && filter_var($m[1], FILTER_VALIDATE_EMAIL)) {
-            $rcpts[] = $m[1];
-        } elseif (filter_var($piece, FILTER_VALIDATE_EMAIL)) {
-            $rcpts[] = $piece;
-        }
+    $f = addr_list_format($field);
+    if ($f['bad']) {
+        http_response_code(400);
+        echo json_encode(['error' => $label . ': "' . $f['bad'][0] . '" is not a valid email address.']);
+        exit;
     }
+    $field = $f['header'];
+    foreach ($f['emails'] as $e) $rcpts[] = $e;
 }
-$rcpts = array_values(array_unique($rcpts));
+unset($field, $fields);
+$_seen = [];
+$rcpts = array_values(array_filter($rcpts, function ($e) use (&$_seen) { $k = strtolower($e); if (isset($_seen[$k])) return false; return $_seen[$k] = true; }));
+unset($_seen);
 if (empty($rcpts)) {
     http_response_code(400);
     echo json_encode(['error' => 'No valid recipient email addresses found.']);

@@ -79,6 +79,8 @@ function job_outbox_process($email, array $opts = []) {
             delete_outbox_message($email, $rec['id']);
             continue;
         }
+        // Date must be when it left, not when Send was pressed (Undo / Schedule Send).
+        $rec['message'] = message_restamp_date($rec['message']);
         $r = smtp_send($_SESSION['smtp_host'], $email, $rec['rcpts'], $rec['message'], $email, $_SESSION['password']);
         if ($r['ok']) {
             // Mark delivered BEFORE filing the Sent copy. Filing is an IMAP append
