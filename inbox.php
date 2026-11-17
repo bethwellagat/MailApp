@@ -146,6 +146,9 @@ $prefs        = load_prefs($email);
     <symbol id="ic-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>
     </symbol>
+    <symbol id="ic-more" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+      <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+    </symbol>
     <symbol id="ic-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
     </symbol>
@@ -304,6 +307,20 @@ $prefs        = load_prefs($email);
             <svg class="icon"><use href="#ic-refresh"/></svg>
             <span>Sync</span>
         </button>
+        <?php /* Phones only: the actions that do not fit the bar. Each item presses
+                 the real button above, so there is one implementation of every action. */ ?>
+        <div class="ab-btn-wrap ab-more-wrap">
+            <button class="ab-btn ab-icon-only" id="abMore" aria-label="More actions" aria-haspopup="menu" aria-expanded="false">
+                <svg class="icon"><use href="#ic-more"/></svg>
+            </button>
+            <div class="dropdown" id="moreDropdown" role="menu">
+                <button type="button" class="dropdown-item" role="menuitem" data-press="abSpam"><svg class="icon" width="16" height="16"><use href="#ic-spam"/></svg>Report spam</button>
+                <button type="button" class="dropdown-item" role="menuitem" data-press="abFlag"><svg class="icon" width="16" height="16"><use href="#ic-flag"/></svg>Flag</button>
+                <button type="button" class="dropdown-item" role="menuitem" data-press="abMarkRead"><svg class="icon" width="16" height="16"><use href="#ic-envelope-open"/></svg>Mark as read</button>
+                <button type="button" class="dropdown-item" role="menuitem" data-press="abMarkUnread"><svg class="icon" width="16" height="16"><use href="#ic-envelope"/></svg>Mark as unread</button>
+                <button type="button" class="dropdown-item" role="menuitem" data-press="abSync"><svg class="icon" width="16" height="16"><use href="#ic-refresh"/></svg>Sync</button>
+            </div>
+        </div>
     </nav>
 
     <main class="app-main" id="appMain">

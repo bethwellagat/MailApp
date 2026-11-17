@@ -853,3 +853,32 @@ t_ok('a search result keeps its avatar under the pointer', strpos($css, '.mail-p
 t_ok('a scrolling chip row fades at its edge instead of cutting a chip', preg_match('/\.mail-page \.list-filters,\s*\.mail-page \.search-filters \{\s*-webkit-mask-image/', $css) === 1);
 t_ok('on a phone the sort menu yields to the folder title', strpos($css, '.mail-page .list-head-row .list-sort { max-width: 112px;') !== false);
 
+t_group('dark theme: the reading pane follows it when the mail allows');
+$js  = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+$css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
+$ib  = (string)@file_get_contents(T_ROOT . '/inbox.php');
+t_ok('the two blocks that hold the pane white stand aside for .reading-dark', strpos($css, "html.theme-dark .reading-pane:not(.reading-dark) {\n  --c-brand") !== false
+     && strpos($css, "html.theme-dark .mail-page .reading-pane:not(.reading-dark) {\n  --m-surface") !== false);
+t_ok('…and neither survives in its unconditional form', strpos($css, "html.theme-dark .reading-pane {\n") === false && strpos($css, "html.theme-dark .mail-page .reading-pane {\n") === false);
+t_ok('the decision is measured on the white pane, never on the dark one', preg_match("/function applyReadingTheme.*?classList\.remove\('reading-dark'\);.*?theme-dark.*?mailBodyAdapts.*?classList\.add\('reading-dark'\)/s", $js) === 1);
+t_ok('any background keeps the paper white', strpos($js, "if (!paintIsNone(cs.backgroundColor) || (cs.backgroundImage && cs.backgroundImage !== 'none')) return false;") !== false && strpos($js, "el.hasAttribute('bgcolor')") !== false);
+t_ok('…so does any ink that is not black or grey', strpos($js, 'if (ownText && !inkIsNeutral(cs.color)) return false;') !== false);
+t_ok('…and styling still held back with blocked images counts as unknown', strpos($js, "el.hasAttribute('data-blocked-style')) return false") !== false);
+t_ok('a very large message is not vouched for', strpos($js, 'if (els.length > 1500) return false;') !== false);
+t_ok('the app\'s own pieces inside a message are not mistaken for its design', strpos($js, "el.closest('.img-block-bar, .msg-attachments-wrap, .invite-card, .list-loading, mark')") !== false);
+t_ok('it re-decides when the pane\'s content or the theme changes, before the next paint', strpos($js, 'new MutationObserver(queueReadingTheme).observe(pane') !== false
+     && strpos($js, 'new MutationObserver(queueReadingTheme).observe(document.documentElement') !== false && strpos($js, 'requestAnimationFrame(() => { readingThemeQueued = false; applyReadingTheme(); })') !== false);
+t_ok('…and is switched on at start-up', strpos($js, 'watchReadingTheme();') !== false);
+t_ok('black ink set on the message is lifted only in that state', strpos($css, 'html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body font[color]:not(a):not(mark) { color: inherit !important; }') !== false);
+
+t_group('phone toolbar: what does not fit is behind More');
+t_ok('the More button and its icon exist', strpos($ib, 'id="abMore"') !== false && strpos($ib, '<symbol id="ic-more"') !== false && strpos($ib, 'href="#ic-more"') !== false);
+foreach (['abSpam', 'abFlag', 'abMarkRead', 'abMarkUnread', 'abSync'] as $_id) {
+    t_ok("$_id is in the menu and hidden from the phone bar", strpos($ib, 'data-press="' . $_id . '"') !== false && strpos($css, '.mail-page .actionbar > #' . $_id) !== false);
+}
+t_ok('an item presses the real button — one implementation of each action', strpos($js, 'if (real && !real.disabled) real.click();') !== false);
+t_ok('…and takes its enabled state from it each time the menu opens', strpos($js, 'it.disabled = !real || real.disabled;') !== false);
+t_ok('wider screens never see the extra button', strpos($css, '.mail-page .ab-more-wrap { display: none; }') !== false
+     && preg_match('/@media \(max-width: 720px\) \{\s*\.mail-page \.ab-more-wrap \{ display: block;/', $css) === 1);
+t_ok('Escape closes it and the menu items are full touch targets', strpos($js, "e.key === 'Escape' && dd.classList.contains('open')") !== false && strpos($css, '.mail-page #moreDropdown .dropdown-item { min-height: 44px; }') !== false);
+

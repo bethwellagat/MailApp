@@ -299,6 +299,63 @@
     }
 
     /** Body HTML prepared for display: notice bar + images neutralised. */
+    /* ---- the reading pane in the dark theme ----
+       Mail is written for white paper, so the pane used to stay white whatever
+       the theme: correct for a designed newsletter, a glare for "Thanks, see
+       you Friday". A message that brings no colours of its own — no
+       backgrounds, no ink but black and grey — reads perfectly well in the
+       app's dark colours, so the pane goes dark for those (and when nothing is
+       open) and stays white the moment anything in the conversation is
+       designed. Measured from what the browser computed, not from the markup. */
+    function inkIsNeutral(rgb) {
+        const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(rgb || '');
+        if (!m) return false;
+        const r = +m[1], g = +m[2], b = +m[3];
+        return Math.max(r, g, b) <= 125 && (Math.max(r, g, b) - Math.min(r, g, b)) <= 45;
+    }
+    function paintIsNone(c) { return !c || c === 'transparent' || /rgba\([^)]*,\s*0\)$/.test(c); }
+    function mailBodyAdapts(body) {
+        const els = body.querySelectorAll('*');
+        if (els.length > 1500) return false;                      // too big to vouch for
+        for (const el of els) {
+            if (el.closest('.img-block-bar, .msg-attachments-wrap, .invite-card, .list-loading, mark')) continue;   // the app's own pieces
+            if (el.hasAttribute('bgcolor') || el.hasAttribute('background')) return false;
+            if (el.hasAttribute('data-blocked-style')) return false;   // styling held back with the images: unknown
+            const cs = getComputedStyle(el);
+            if (!paintIsNone(cs.backgroundColor) || (cs.backgroundImage && cs.backgroundImage !== 'none')) return false;
+            if (el.tagName === 'A') continue;                     // links take the theme's colour
+            let ownText = false;
+            for (const n of el.childNodes) if (n.nodeType === 3 && n.nodeValue.trim()) { ownText = true; break; }
+            if (ownText && !inkIsNeutral(cs.color)) return false;
+        }
+        return true;
+    }
+    let readingThemeQueued = false;
+    function applyReadingTheme() {
+        const pane = document.querySelector('.reading-pane');
+        if (!pane) return;
+        // Always measured on the white pane, where "black ink" is black.
+        pane.classList.remove('reading-dark');
+        if (!document.documentElement.classList.contains('theme-dark')) return;
+        const bodies = pane.querySelectorAll('.thread-msg-body');
+        for (const b of bodies) if (!mailBodyAdapts(b)) return;
+        pane.classList.add('reading-dark');
+    }
+    function queueReadingTheme() {
+        if (readingThemeQueued) return;
+        readingThemeQueued = true;
+        requestAnimationFrame(() => { readingThemeQueued = false; applyReadingTheme(); });   // before the next paint: no flash
+    }
+    function watchReadingTheme() {
+        const pane = document.querySelector('.reading-pane');
+        if (!pane || typeof MutationObserver === 'undefined') return;
+        // Anything that changes what is in the pane — a message opening, a body
+        // arriving, blocked images being shown — and the theme itself.
+        new MutationObserver(queueReadingTheme).observe(pane, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'bgcolor', 'hidden'] });
+        new MutationObserver(queueReadingTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        applyReadingTheme();
+    }
+
     function renderMessageBody(html) {
         const r = deferRemoteImages(html);
         return remoteImageNotice(r.blocked) + r.html;
@@ -4803,7 +4860,8 @@
             openMsgCtxMenu(e.clientX, e.clientY, uid);
         });
 
-        suggInit();   // before the handlers below: it must see Enter first
+        suggInit();
+        watchReadingTheme();   // before the handlers below: it must see Enter first
         $('searchInput').addEventListener('input', (e) => {
             const q = e.target.value.trim();
             state.searchQuery = q;
@@ -5135,6 +5193,43 @@
             updateSelectionBar();
         });
         $('abSync').addEventListener('click', actSync);
+
+        // Phones: the overflow menu. An item presses the real toolbar button, so
+        // each action keeps its one implementation and its own enabled state.
+        if ($('abMore')) {
+            const more = $('abMore'), dd = $('moreDropdown');
+            const closeMore = () => { dd.classList.remove('open'); more.setAttribute('aria-expanded', 'false'); };
+            more.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (dd.classList.contains('open')) { closeMore(); return; }
+                $('moveDropdown').classList.remove('open');
+                dd.querySelectorAll('[data-press]').forEach(it => {
+                    const real = $(it.dataset.press);
+                    it.disabled = !real || real.disabled;
+                    // The spam button changes its own name inside the Spam folder ("Not spam").
+                    if (it.dataset.press === 'abSpam' && real) {
+                        const lbl = real.getAttribute('aria-label') || 'Report spam';
+                        it.lastChild.nodeValue = lbl;
+                    }
+                });
+                const r = more.getBoundingClientRect();
+                dd.style.top = (r.bottom + 2) + 'px';
+                dd.style.left = 'auto';
+                dd.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+                dd.classList.add('open');
+                more.setAttribute('aria-expanded', 'true');
+            });
+            dd.addEventListener('click', (e) => {
+                const it = e.target.closest('[data-press]');
+                if (!it || it.disabled) return;
+                e.stopPropagation();
+                closeMore();
+                const real = $(it.dataset.press);
+                if (real && !real.disabled) real.click();
+            });
+            document.addEventListener('click', closeMore);
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && dd.classList.contains('open')) { closeMore(); more.focus(); } });
+        }
 
         $('abMove').addEventListener('click', (e) => {
             e.stopPropagation();

@@ -156,7 +156,7 @@ html.theme-dark {
    headers, dividers, message bodies) reads cleaner light. Re-declaring the
    colour tokens here, scoped to the pane, flips every descendant that uses
    var(--c-*) to light automatically. */
-html.theme-dark .reading-pane {
+html.theme-dark .reading-pane:not(.reading-dark) {
   --c-brand: #0078d4;
   --c-brand-hover: #106ebe;
   --c-brand-active: #005a9e;
@@ -5746,7 +5746,7 @@ html.theme-dark .mail-page {
    tokens need the same treatment or the subject renders white-on-white and the
    empty-state placeholder drops to 1.18:1. Re-declaring them here flips every
    descendant rule at once, so no reading-pane rule has to special-case dark. */
-html.theme-dark .mail-page .reading-pane {
+html.theme-dark .mail-page .reading-pane:not(.reading-dark) {
   --m-surface: #ffffff;
   --m-sep:     rgba(60, 60, 67, 0.22);
   --m-label:   #000000;
@@ -7463,4 +7463,38 @@ html.theme-dark .mail-page .thread-msg-body mark.search-hit { color: #1c1c1e; ba
    "Inbox · 9 messag…". The title is the thing being read; the menu yields. */
 @media (max-width: 720px) {
   .mail-page .list-head-row .list-sort { max-width: 112px; padding: 4px 6px; }
+}
+
+/* ---- the reading pane follows the dark theme when the mail allows it ----
+   .reading-dark is set by app.js (applyReadingTheme) when nothing is open or
+   every message in the conversation is plain: no backgrounds, no ink but black
+   and grey. The two token blocks that hold the pane white are written
+   :not(.reading-dark), so here the pane simply inherits the app's dark tokens;
+   what is left is the handful of rules that named white outright. */
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body { background: transparent; color: var(--m-label); }
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body a { color: var(--m-blue); }
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body blockquote { border-left-color: var(--m-sep-solid, #3a3a3c); color: var(--m-label-2); }
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body pre { background: var(--m-fill); color: var(--m-label); }
+/* Black or grey ink set on the message itself would vanish on the dark ground.
+   Safe to override: this state exists only when that is the only ink there is. */
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body [style*="color"]:not(a):not(mark),
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body font[color]:not(a):not(mark) { color: inherit !important; }
+html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body hr { border-color: var(--m-sep-solid, #3a3a3c); }
+
+/* ---- phone toolbar: what does not fit goes behind "More" ----
+   The bar scrolled sideways with nothing to say so; Flag, Mark read, Mark
+   unread and Sync sat off the edge. On a phone the bar now holds what fits
+   and the rest is one tap away. Wider screens never see the extra button. */
+.mail-page .ab-more-wrap { display: none; }
+@media (max-width: 720px) {
+  .mail-page .ab-more-wrap { display: block; margin-left: auto; }
+  .mail-page .actionbar > #abSpam,
+  .mail-page .actionbar > #abFlag,
+  .mail-page .actionbar > #abMarkRead,
+  .mail-page .actionbar > #abMarkUnread,
+  .mail-page .actionbar > #abSync,
+  .mail-page .actionbar > .ab-divider { display: none; }
+  .mail-page .actionbar .ab-chev { display: none; }
+  .mail-page #moreDropdown .dropdown-item { min-height: 44px; }
+  .mail-page #moreDropdown .dropdown-item:disabled { opacity: 0.4; }
 }
