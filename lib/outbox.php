@@ -47,7 +47,8 @@ function load_outbox_message($email, $id) {
  */
 function outbox_sent_copy($rec) {
     $bcc = trim((string)($rec['bcc'] ?? ''));
-    return $bcc !== '' ? 'Bcc: ' . $bcc . "\r\n" . $rec['message'] : $rec['message'];
+    $line = function_exists('header_fold') ? header_fold('Bcc: ' . $bcc) : 'Bcc: ' . $bcc;
+    return $bcc !== '' ? $line . "\r\n" . $rec['message'] : $rec['message'];
 }
 
 function list_outbox_messages($email) {

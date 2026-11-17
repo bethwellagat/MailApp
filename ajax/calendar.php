@@ -111,14 +111,14 @@ function _cal_build_reply_mime($from, $fromName, $to, $verb, $summary, $icsReply
     $boundary = 'rsvp_' . bin2hex(random_bytes(8));
     $domain   = substr(strrchr($from, '@'), 1) ?: 'localhost';
     $msgId    = '<' . bin2hex(random_bytes(12)) . '@' . $domain . '>';
-    $fromHdr  = $fromName !== '' ? mime_header_encode($fromName) . ' <' . $from . '>' : $from;
+    $fromHdr  = addr_format($fromName, $from);
     $subject  = $verb . ': ' . $summary;
     $text     = $verb . ' the invitation "' . $summary . '".' . "\r\n";
 
     $headers = [
         'From: ' . $fromHdr,
         'To: ' . $to,
-        'Subject: ' . mime_header_encode($subject),
+        header_fold('Subject: ' . mime_header_encode($subject)),
         'MIME-Version: 1.0',
         'Date: ' . date('r'),
         'Message-ID: ' . $msgId,

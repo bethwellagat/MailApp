@@ -9,9 +9,85 @@ require_once __DIR__ . '/util.php'; // imap_tls_flags(), tls_verify_enabled(), t
  */
 
 if (!function_exists('mime_header_encode')) {
-    function mime_header_encode($s) {
+    /**
+     * RFC 2047. An encoded-word may be at most 75 characters, so a long value
+     * becomes several, each cut on a whole UTF-8 character and joined by a
+     * fold. One 300-character word (a long Arabic subject) is malformed: some
+     * receivers show it raw and filters count it against the message.
+     * $fold = false keeps it to one word, for places a fold cannot go (inside
+     * a quoted MIME parameter such as an attachment's filename).
+     */
+    function mime_header_encode($s, $fold = true) {
+        $s = (string)$s;
         if ($s === '' || preg_match('/^[\x20-\x7e]*$/', $s)) return $s;
-        return '=?UTF-8?B?' . base64_encode($s) . '?=';
+        if (!$fold || strlen($s) <= 39) return '=?UTF-8?B?' . base64_encode($s) . '?=';
+        $words = []; $chunk = '';
+        foreach (preg_split('//u', $s, -1, PREG_SPLIT_NO_EMPTY) ?: [$s] as $ch) {
+            if ($chunk !== '' && strlen($chunk) + strlen($ch) > 39) { $words[] = $chunk; $chunk = ''; }   // 39 bytes → 52 base64 → 64 with the wrapper, 73 after "Subject: "
+            $chunk .= $ch;
+        }
+        if ($chunk !== '') $words[] = $chunk;
+        return implode("\r\n ", array_map(fn($w) => '=?UTF-8?B?' . base64_encode($w) . '?=', $words));
+    }
+}
+
+if (!function_exists('addr_format')) {
+    /**
+     * One mailbox as a valid header value: Name <addr>, with the name quoted
+     * when it holds a character that means something in an address header (a
+     * comma above all — unquoted, it splits one sender into two, and Gmail
+     * refuses a message with two From addresses) and encoded when not ASCII.
+     */
+    function addr_format($name, $email) {
+        $name  = trim(preg_replace('/[\r\n\t ]+/', ' ', (string)$name));
+        $email = trim((string)$email);
+        if (strlen($name) >= 2 && $name[0] === '"' && substr($name, -1) === '"') $name = trim(stripcslashes(substr($name, 1, -1)));
+        if ($name === '' || strcasecmp($name, $email) === 0) return $email;
+        if (!preg_match('/^[\x20-\x7e]*$/', $name)) return mime_header_encode($name) . ' <' . $email . '>';
+        if (preg_match('/[()<>\[\]:;@\\\\,."]/', $name)) return '"' . addcslashes($name, '"\\') . '" <' . $email . '>';
+        return $name . ' <' . $email . '>';
+    }
+}
+
+if (!function_exists('header_fold')) {
+    /**
+     * Fold one "Name: value" header at its spaces so no line runs past 78
+     * characters. Twenty recipients on one line passes 998, the hard limit, and
+     * a server may refuse or re-wrap the message — and re-wrapping breaks its
+     * signature. A value that is already folded is left as it is.
+     */
+    function header_fold($line, $max = 78) {
+        $line = (string)$line;
+        if (strlen($line) <= $max || strpos($line, "\n") !== false) return $line;
+        $out = ''; $cur = '';
+        foreach (preg_split('/(?= )/', $line) as $tok) {          // each piece keeps its leading space
+            // …and the header's name is never left alone on its line.
+            if ($cur !== '' && trim($tok) !== '' && strlen($cur) + strlen($tok) > $max && !preg_match('/^[^ :]+:$/', $cur)) { $out .= $cur . "\r\n"; $cur = $tok; }
+            else $cur .= $tok;
+        }
+        return $out . $cur;
+    }
+}
+
+if (!function_exists('mail_crlf')) {
+    /** Every line ending as CRLF, which is what mail is made of; a bare LF is refused by strict servers. */
+    function mail_crlf($s) { return preg_replace('/\r\n|\r|\n/', "\r\n", (string)$s); }
+}
+
+if (!function_exists('attachment_safe_name')) {
+    /** A filename that cannot break out of the quoted parameter it is written into. */
+    function attachment_safe_name($name) {
+        $name = preg_replace('/[\x00-\x1f\x7f"\\\\\/]+/', '_', basename((string)$name));
+        $name = trim($name);
+        return $name === '' ? 'attachment' : $name;
+    }
+}
+if (!function_exists('attachment_safe_type')) {
+    /** The browser's word for the file's type, used only if it is shaped like one. */
+    function attachment_safe_type($type) {
+        $type = strtolower(trim((string)$type));
+        if (!preg_match('#^[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$#', $type) || $type === 'application/x-php') return 'application/octet-stream';
+        return $type;
     }
 }
 
@@ -79,19 +155,7 @@ if (!function_exists('addr_list_format')) {
             if (isset($seen[$key])) continue;
             $seen[$key] = true;
             $out['emails'][] = $email;
-            // Unwrap a name that was already quoted, then re-quote it correctly.
-            if (strlen($name) >= 2 && $name[0] === '"' && substr($name, -1) === '"') {
-                $name = stripcslashes(substr($name, 1, -1));
-            }
-            $name = trim(preg_replace('/\s+/', ' ', $name));
-            if ($name === '' || strcasecmp($name, $email) === 0) { $parts[] = $email; continue; }
-            if (!preg_match('/^[\x20-\x7e]*$/', $name)) {
-                $parts[] = mime_header_encode($name) . ' <' . $email . '>';
-            } elseif (preg_match('/[()<>\[\]:;@\\\\,."]/', $name)) {
-                $parts[] = '"' . addcslashes($name, '"\\') . '" <' . $email . '>';
-            } else {
-                $parts[] = $name . ' <' . $email . '>';
-            }
+            $parts[] = addr_format($name, $email);
         }
         $out['header'] = implode(', ', $parts);
         return $out;

@@ -122,12 +122,12 @@ function ooo_build_reply_mime($fromAddr, $fromName, $toAddr, $origSubject, $body
     $alt .= "--$altBoundary--\r\n";
 
     $messageId  = '<' . bin2hex(random_bytes(12)) . '@' . substr(strrchr($fromAddr, '@'), 1) . '>';
-    $fromHeader = $fromName ? mime_header_encode($fromName) . ' <' . $fromAddr . '>' : $fromAddr;
+    $fromHeader = addr_format($fromName, $fromAddr);
 
     $headers = [
         'From: ' . $fromHeader,
         'To: '   . $toAddr,
-        'Subject: ' . mime_header_encode($subject),
+        header_fold('Subject: ' . mime_header_encode($subject)),
         'MIME-Version: 1.0',
         'Date: ' . date('r'),
         'Message-ID: ' . $messageId,

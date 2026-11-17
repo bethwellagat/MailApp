@@ -78,7 +78,7 @@ if ($action === 'save') {
 
     $from_addr   = $_SESSION['email'];
     $from_name   = $_SESSION['display_name'] ?? '';
-    $from_header = $from_name ? mime_header_encode($from_name) . ' <' . $from_addr . '>' : $from_addr;
+    $from_header = addr_format($from_name, $from_addr);
     $plain = html_to_text($body);
     $alt   = 'alt_' . bin2hex(random_bytes(8));
     $mime  = "--$alt\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" . quoted_printable_encode($plain) . "\r\n\r\n";
@@ -93,10 +93,10 @@ if ($action === 'save') {
         if (!$_f['bad'] && $_f['header'] !== '') $$_k = $_f['header'];
     }
     unset($_k, $_f);
-    $headers = ['From: ' . $from_header, 'To: ' . $to];
-    if ($cc  !== '') $headers[] = 'Cc: '  . $cc;
-    if ($bcc !== '') $headers[] = 'Bcc: ' . $bcc;
-    $headers[] = 'Subject: ' . mime_header_encode($subject);
+    $headers = ['From: ' . $from_header, header_fold('To: ' . $to)];
+    if ($cc  !== '') $headers[] = header_fold('Cc: '  . $cc);
+    if ($bcc !== '') $headers[] = header_fold('Bcc: ' . $bcc);
+    $headers[] = header_fold('Subject: ' . mime_header_encode($subject));
     $headers[] = 'MIME-Version: 1.0';
     $headers[] = 'Date: ' . date('r');
     $headers[] = 'Message-ID: ' . $mid;

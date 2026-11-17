@@ -145,9 +145,9 @@ if (!empty($harvest)) contacts_record($_SESSION['email'], $harvest);
 
 $from_addr   = $_SESSION['email'];
 $from_name   = $_SESSION['display_name'] ?? '';
-$from_header = $from_name
-    ? mime_header_encode($from_name) . ' <' . $from_addr . '>'
-    : $from_addr;
+// Quoted or encoded as it needs: a display name with a comma would otherwise
+// make From two addresses, which Gmail rejects outright.
+$from_header = addr_format($from_name, $from_addr);
 
 $plain = html_to_text($body);
 
@@ -183,11 +183,10 @@ if (!empty($_FILES['attachments']) && is_array($_FILES['attachments']['name'])) 
         }
         $data = @file_get_contents($tmp);
         if ($data === false) continue;
-        $type = (string)($_FILES['attachments']['type'][$i] ?? 'application/octet-stream');
-        if ($type === '' || $type === 'application/x-php') $type = 'application/octet-stream';
+        // Both come from the browser and both are written into headers.
         $attachments[] = [
-            'name' => basename($name),
-            'type' => $type,
+            'name' => attachment_safe_name($name),
+            'type' => attachment_safe_type($_FILES['attachments']['type'][$i] ?? ''),
             'data' => $data,
         ];
     }
@@ -200,11 +199,11 @@ $mixedBoundary = 'mix_' . bin2hex(random_bytes(8));
 $altPart  = "--$altBoundary\r\n";
 $altPart .= "Content-Type: text/plain; charset=UTF-8\r\n";
 $altPart .= "Content-Transfer-Encoding: quoted-printable\r\n\r\n";
-$altPart .= quoted_printable_encode($plain) . "\r\n\r\n";
+$altPart .= quoted_printable_encode(mail_crlf($plain)) . "\r\n\r\n";
 $altPart .= "--$altBoundary\r\n";
 $altPart .= "Content-Type: text/html; charset=UTF-8\r\n";
 $altPart .= "Content-Transfer-Encoding: quoted-printable\r\n\r\n";
-$altPart .= quoted_printable_encode(wrap_html($body)) . "\r\n\r\n";
+$altPart .= quoted_printable_encode(mail_crlf(wrap_html($body))) . "\r\n\r\n";
 $altPart .= "--$altBoundary--\r\n";
 
 if (empty($attachments)) {
@@ -219,7 +218,7 @@ if (empty($attachments)) {
     $body_mime .= "Content-Type: multipart/alternative; boundary=\"$altBoundary\"\r\n\r\n";
     $body_mime .= $altPart . "\r\n";
     foreach ($attachments as $a) {
-        $encName = mime_header_encode($a['name']);
+        $encName = mime_header_encode($a['name'], false);   // inside quotes: one word, no fold
         $body_mime .= "--$mixedBoundary\r\n";
         $body_mime .= "Content-Type: " . $a['type'] . "; name=\"" . $encName . "\"\r\n";
         $body_mime .= "Content-Disposition: attachment; filename=\"" . $encName . "\"\r\n";
@@ -240,7 +239,7 @@ $base_headers = [
     'Message-ID: ' . $message_id,
     'Content-Type: ' . $topMime . '; boundary="' . $topBoundary . '"',
 ];
-if ($cc !== '') $base_headers[] = 'Cc: ' . $cc;
+if ($cc !== '') $base_headers[] = header_fold('Cc: ' . $cc);
 
 if ($inReplyTo !== '') {
     $base_headers[] = 'In-Reply-To: ' . $inReplyTo;
@@ -249,15 +248,15 @@ if ($inReplyTo !== '') {
     if ($refs === '' || strpos($refs, $inReplyTo) === false) {
         $refs = $refs === '' ? $inReplyTo : ($refs . ' ' . $inReplyTo);
     }
-    $base_headers[] = 'References: ' . $refs;
+    $base_headers[] = header_fold('References: ' . $refs);
 } elseif ($references !== '') {
     // Forward-style: References without In-Reply-To (we don't currently emit these,
     // but allow it for clients that pass References through).
-    $base_headers[] = 'References: ' . $references;
+    $base_headers[] = header_fold('References: ' . $references);
 }
 
 $smtp_headers = array_merge(
-    ['To: ' . $to, 'Subject: ' . mime_header_encode($subject)],
+    [header_fold('To: ' . $to), header_fold('Subject: ' . mime_header_encode($subject))],
     $base_headers
 );
 $full_message = implode("\r\n", $smtp_headers) . "\r\n\r\n" . $body_mime;
@@ -307,9 +306,15 @@ if (!$result['ok']) {
     // Some shared hosts put mail() in disable_functions; calling it then is a
     // fatal (not a catchable warning), so guard it and fall through to the clean
     // "Send failed" JSON error instead of a 500 with a stack trace.
-    $sent = function_exists('mail')
-        ? @mail($to, mime_header_encode($subject), $body_mime, implode("\r\n", $mailHeaders))
-        : false;
+    // -f sets the envelope sender to the account. Without it the message
+    // leaves as the web server's own user, which fails SPF and DMARC for the
+    // From domain and is filed as spam. Hosts that forbid -f get the plain call.
+    $sent = false;
+    if (function_exists('mail')) {
+        $mailTo = $to; $mailSubj = mime_header_encode($subject); $mailHdr = implode("\r\n", $mailHeaders);
+        if (filter_var($from_addr, FILTER_VALIDATE_EMAIL)) $sent = @mail($mailTo, $mailSubj, $body_mime, $mailHdr, '-f' . $from_addr);
+        if (!$sent) $sent = @mail($mailTo, $mailSubj, $body_mime, $mailHdr);
+    }
     if (!$sent) {
         http_response_code(500);
         echo json_encode(['error' => 'Send failed: ' . $result['error']]);
@@ -320,7 +325,7 @@ if (!$result['ok']) {
 // The Sent copy carries the Bcc header so the user can later see who was
 // bcc'd; $full_message (what actually went over SMTP) must never include it.
 // $bcc is CRLF-stripped above, so this cannot smuggle extra headers.
-$saved = append_to_sent($bcc !== '' ? 'Bcc: ' . $bcc . "\r\n" . $full_message : $full_message);
+$saved = append_to_sent($bcc !== '' ? header_fold('Bcc: ' . $bcc) . "\r\n" . $full_message : $full_message);
 
 echo json_encode(['ok' => true, 'saved_to_sent' => $saved]);
 exit;
