@@ -115,13 +115,19 @@
     function escapeAttr(s) { return escapeHtml(s); }
 
     function avatarInitial(name, addr) {
-        const src = (name && name.trim()) || addr || '?';
-        const parts = src.replace(/<.*?>/g, '').split(/[\s_\-\.]+/).filter(p => /[A-Za-z0-9]/.test(p));
-        if (parts.length >= 2) {
-            return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+        // With no name, the part before the @ is the name: "billing@shop.co" is BI, not BC.
+        const src = (name && name.trim()) || String(addr || '').split('@')[0] || '?';
+        // Letters of any script: a sender called محمد or Zoë is not a "?".
+        // Array.from keeps a character outside the basic plane whole.
+        const first = (w) => Array.from(w.replace(/^[^\p{L}\p{N}]+/u, ''))[0] || '';
+        const parts = src.replace(/<.*?>/g, '').split(/[\s_\-\.]+/).filter(p => /[\p{L}\p{N}]/u.test(p));
+        const clean = Array.from(src.replace(/[^\p{L}\p{N}]/gu, ''));
+        // Scripts that join their letters (Arabic, Hebrew) read wrongly as two loose ones: show one.
+        const joined = /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F]/.test(clean[0] || '');
+        if (parts.length >= 2 && !joined) {
+            return (first(parts[0]) + first(parts[1])).toUpperCase();
         }
-        const clean = src.replace(/[^A-Za-z0-9]/g, '');
-        return (clean.substring(0, 2) || '?').toUpperCase();
+        return (clean.slice(0, joined ? 1 : 2).join('') || '?').toUpperCase();
     }
     function avatarColor(seed) {
         const s = String(seed || '');
@@ -135,22 +141,24 @@
         const d = new Date(ts * 1000);
         const now = new Date();
         const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-        if (sameDay) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (sameDay) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         const diffDays = Math.floor((now - d) / 86400000);
         if (diffDays === 1) return 'Yesterday';
         if (diffDays < 7 && diffDays > 0) return d.toLocaleDateString([], { weekday: 'short' });
-        if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
-        return d.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: '2-digit' });
+        // The month as a word. "11/08" is the 8th of November to one reader and
+        // the 11th of August to another; "8 Nov" is the same day to both.
+        if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+        return d.toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' });
     }
     function formatFullDate(ts) {
         if (!ts) return '';
         const d = new Date(ts * 1000);
         const now = new Date();
         const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-        if (sameDay) return 'Today at ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        if (sameDay) return 'Today at ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
-        if (d.toDateString() === yesterday.toDateString()) return 'Yesterday at ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        return d.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        if (d.toDateString() === yesterday.toDateString()) return 'Yesterday at ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        return d.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' });
     }
     function dateGroupLabel(ts) {
         if (!ts) return 'Older';

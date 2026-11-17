@@ -7439,3 +7439,28 @@ html.theme-dark .mail-page .thread-msg-body mark.search-hit { color: #1c1c1e; ba
 .mail-page .search-result .msg-from { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mail-page .search-result.active .msg-snippet { color: #fff; opacity: 0.92; }
 .mail-page .search-result.active .msg-folder-badge { color: #fff; background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.45); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   UI PASS — November 2026
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* A search result has no tick box behind its avatar (results are opened, not
+   bulk-selected), so the hover that fades the avatar to reveal one left a hole. */
+.mail-page .search-result:hover .msg-avatar,
+.mail-page .msg-list-selecting .search-result .msg-avatar { opacity: 1; }
+
+/* A row of chips that scrolls sideways gave no sign of it: the last chip was
+   simply cut ("No atta"). The row now fades out at its trailing edge, and the
+   end padding lets the final chip clear the fade once scrolled to. */
+.mail-page .list-filters,
+.mail-page .search-filters {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+          mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  padding-right: 28px;
+}
+
+/* On a phone the sort menu took half the header and the title read
+   "Inbox · 9 messag…". The title is the thing being read; the menu yields. */
+@media (max-width: 720px) {
+  .mail-page .list-head-row .list-sort { max-width: 112px; padding: 4px 6px; }
+}

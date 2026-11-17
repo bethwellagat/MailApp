@@ -842,3 +842,14 @@ t_ok('the avatar initials come from the name, not the address', strpos($js, 'ava
 t_ok('the open result keeps its solid ground — no tint under white text', strpos($css, '.mail-page .search-result.search-top:not(.active)') !== false && strpos($css, '.mail-page .msg-item.active mark.search-hit') !== false);
 t_ok('marks inside a message read on white paper in the dark theme too', strpos($css, 'html.theme-dark .mail-page .thread-msg-body mark.search-hit { color: #1c1c1e; background: #ffd60a; }') !== false);
 
+t_group('UI pass: dates, initials and the phone header read correctly');
+$js  = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+$css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
+t_ok('a list date names its month — never an ambiguous 11/08', strpos($js, "{ day: 'numeric', month: 'short' }") !== false && strpos($js, "month: '2-digit'") === false);
+t_ok('times have no leading zero', strpos($js, "hour: '2-digit'") === false);
+t_ok('initials come from letters of any script, not only A–Z', strpos($js, "/[\\p{L}\\p{N}]/u.test(p)") !== false && preg_match('/function avatarInitial.*?\[\^A-Za-z0-9\]/s', substr($js, 0, 12000)) !== 1);
+t_ok('an address with no name takes its initials from before the @', strpos($js, "String(addr || '').split('@')[0]") !== false);
+t_ok('a search result keeps its avatar under the pointer', strpos($css, '.mail-page .search-result:hover .msg-avatar') !== false);
+t_ok('a scrolling chip row fades at its edge instead of cutting a chip', preg_match('/\.mail-page \.list-filters,\s*\.mail-page \.search-filters \{\s*-webkit-mask-image/', $css) === 1);
+t_ok('on a phone the sort menu yields to the folder title', strpos($css, '.mail-page .list-head-row .list-sort { max-width: 112px;') !== false);
+
