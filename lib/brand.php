@@ -103,3 +103,35 @@ function resolve_brand($host = null) {
     }
     return $defaults;
 }
+
+/**
+ * What to draw on top of the brand colour.
+ *
+ * The inbox header is filled with the install's own colour, and that colour is
+ * whatever the tenant chose — a pale yellow is as valid as a navy. White ink is
+ * used wherever it is readable (3:1, the floor for large text and icons, which
+ * is everything the bar holds); a colour too light for that gets near-black ink
+ * instead, so no choice of brand colour can make the header unreadable.
+ *
+ * Returns ['bar' => '#rrggbb', 'ink' => '#rrggbb', 'dark_ink' => bool].
+ * Anything that is not a six-digit hex falls back to the default blue.
+ */
+function brand_bar_colors($hex) {
+    $hex = is_string($hex) ? strtolower(trim($hex)) : '';
+    if (!preg_match('/^#[0-9a-f]{6}$/', $hex)) $hex = '#0078d4';
+    $lum = brand_luminance($hex);
+    // Contrast of white against the colour: (1.0 + 0.05) / (L + 0.05).
+    $white = 1.05 / ($lum + 0.05);
+    $darkInk = $white < 3.0;
+    return ['bar' => $hex, 'ink' => $darkInk ? '#1a1d23' : '#ffffff', 'dark_ink' => $darkInk];
+}
+
+/** WCAG relative luminance of a #rrggbb colour, 0 (black) to 1 (white). */
+function brand_luminance($hex) {
+    $v = hexdec(substr($hex, 1));
+    $lin = function ($c) {
+        $c /= 255;
+        return $c <= 0.03928 ? $c / 12.92 : pow(($c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * $lin(($v >> 16) & 255) + 0.7152 * $lin(($v >> 8) & 255) + 0.0722 * $lin($v & 255);
+}

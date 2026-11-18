@@ -56,6 +56,11 @@ $prefs        = load_prefs($email);
 <link rel="apple-touch-icon" href="assets/apple-touch-icon-180.png?v=<?= @filemtime(__DIR__.'/assets/apple-touch-icon-180.png') ?>">
 <!-- Inter is self-hosted via @font-face in assets/style.css (no external font CDN). -->
 <link rel="stylesheet" href="assets/style.css?v=<?= @filemtime(__DIR__.'/assets/style.css') ?>">
+<?php /* The header is filled with this install's brand colour. brand_bar_colors()
+         only ever returns validated six-digit hex, and picks the ink that is
+         readable on it, so nothing free-form reaches the stylesheet. */
+$bar = brand_bar_colors($brand['color']); ?>
+<style>:root{--brand-bar:<?= h($bar['bar']) ?>;--brand-bar-ink:<?= h($bar['ink']) ?>;--brand-bar-plate:<?= $bar['dark_ink'] ? '#1c1c1e' : h($bar['bar']) ?>}</style>
 </head>
 <body class="mail-page">
 
@@ -502,6 +507,14 @@ $prefs        = load_prefs($email);
                 <h1 class="reading-subject" id="readSubject"></h1>
                 <div class="reading-thread-summary" id="readThreadSummary" hidden></div>
                 <div class="reading-thread" id="readThread"></div>
+                <?php /* The same three actions as the icons at the top, where the
+                         eye is when a message has just been read. Each presses
+                         the real button, so there is one implementation. */ ?>
+                <div class="reading-foot" id="readingFoot">
+                    <button type="button" class="reading-foot-btn" data-press="replyBtn"><svg class="icon" width="16" height="16"><use href="#ic-reply"/></svg><span>Reply</span></button>
+                    <button type="button" class="reading-foot-btn" data-press="replyAllBtn"><svg class="icon" width="16" height="16"><use href="#ic-reply-all"/></svg><span>Reply all</span></button>
+                    <button type="button" class="reading-foot-btn" data-press="forwardBtn"><svg class="icon" width="16" height="16"><use href="#ic-forward"/></svg><span>Forward</span></button>
+                </div>
             </div>
         </section>
 

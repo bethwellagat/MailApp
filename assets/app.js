@@ -5100,6 +5100,14 @@
         $('replyBtn').addEventListener('click', () => startReply(false));
         $('replyAllBtn').addEventListener('click', () => startReply(true));
         $('forwardBtn').addEventListener('click', startForward);
+        // The buttons under the message press the ones above it — one implementation.
+        if ($('readingFoot')) {
+            $('readingFoot').addEventListener('click', (e) => {
+                const it = e.target.closest('[data-press]');
+                const real = it && $(it.dataset.press);
+                if (real && !real.disabled && !real.hidden) real.click();
+            });
+        }
         $('printBtn').addEventListener('click', printOpenThread);
         $('unsubscribeBtn').addEventListener('click', handleUnsubscribe);
 

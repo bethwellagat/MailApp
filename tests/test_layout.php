@@ -907,3 +907,28 @@ t_ok('the one raw checkbox is drawn as the switch every other pane has', strpos(
 t_ok('on a phone the menu strip follows the open pane', strpos($st, "l.scrollIntoView({ block: 'nearest', inline: 'center' })") !== false);
 t_ok('the back link stays on one line', strpos($css, '.settings-page .settings-back { white-space: nowrap; }') !== false);
 
+
+t_group('workspace shell: brand header, ribbon and cards');
+$ib = (string)@file_get_contents(T_ROOT . '/inbox.php');
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('the page hands the stylesheet a validated bar colour and its ink',
+     strpos($ib, 'brand_bar_colors($brand[\'color\'])') !== false && strpos($ib, '--brand-bar-ink:') !== false);
+t_ok('the header is filled with the brand colour', preg_match('/\.mail-page \.topbar \{\s*background: var\(--brand-bar, #0078d4\);/', $css) === 1);
+/* White must never be assumed on the bar: every ink colour comes from the token. */
+$shell = substr($css, (int)strpos($css, 'WORKSPACE SHELL — November 2026'));
+preg_match_all('/\.mail-page \.topbar \.(topbar-logo-text|topbar-user|topbar-user-name|topbar-user-logout|topbar-icon-light)[^{]*\{([^}]*)\}/', $shell, $inkRules, PREG_SET_ORDER);
+$literalInk = [];
+foreach ($inkRules as $r) {
+    if (preg_match('/(^|;)\s*color:\s*(#fff|#ffffff|white)\b/i', $r[2])) $literalInk[] = trim($r[0]);
+}
+t_ok('nothing on the bar hard-codes white text', $inkRules !== [] && $literalInk === [], implode(' | ', $literalInk));
+t_ok('an uploaded logo gets a plate on the coloured bar', strpos($shell, '.mail-page .topbar .topbar-logo,') !== false);
+t_ok('the card layout is desktop-only', preg_match('/@media \(min-width: 821px\) \{\s*\.mail-page \.app-shell \{ background: var\(--o-desk\); \}/', $shell) === 1);
+t_ok('the open row is a tint with dark text, not white on blue',
+     strpos($shell, '.mail-page .msg-item.active .msg-subject { color: var(--m-label); }') !== false);
+foreach (['replyBtn', 'replyAllBtn', 'forwardBtn'] as $id) {
+    t_ok("the footer's $id presses the real button", strpos($ib, 'class="reading-foot-btn" data-press="' . $id . '"') !== false
+         && strpos($ib, 'id="' . $id . '"') !== false);
+}
+t_ok('the footer has one handler and no logic of its own',
+     strpos($js, "\$('readingFoot').addEventListener('click'") !== false && strpos($js, 'if (real && !real.disabled && !real.hidden) real.click();') !== false);

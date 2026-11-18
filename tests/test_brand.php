@@ -86,3 +86,23 @@ foreach (['#0078d4', '#FFFFFF', '#000000', '#1f6feb'] as $good) {
 foreach (['red', '#fff', '#00zzff', 'rgb(0,0,0)', '#0078d4;background:url(x)', '', 'javascript:1'] as $bad) {
     t_ok("rejects " . ($bad === '' ? '(empty)' : $bad), !$colourOk($bad));
 }
+
+t_group('the header ink is readable on any brand colour');
+/* The inbox header is filled with whatever colour the tenant chose. White ink
+   is right for most brand colours and invisible on a pale one, so the ink is
+   picked by measured contrast rather than assumed. */
+t_eq('default blue takes white ink',   brand_bar_colors('#0078d4')['ink'], '#ffffff');
+t_eq('orange-red takes white ink',     brand_bar_colors('#d83b01')['ink'], '#ffffff');
+t_eq('navy takes white ink',           brand_bar_colors('#0b1f3a')['ink'], '#ffffff');
+t_eq('pale yellow takes dark ink',     brand_bar_colors('#ffd84d')['ink'], '#1a1d23');
+t_eq('white takes dark ink',           brand_bar_colors('#ffffff')['ink'], '#1a1d23');
+t_eq('upper case is normalised',       brand_bar_colors('#D83B01')['bar'], '#d83b01');
+t_eq('free-form text never reaches the page', brand_bar_colors('red;}body{display:none')['bar'], '#0078d4');
+t_eq('a short hex is refused too',     brand_bar_colors('#fff')['bar'], '#0078d4');
+t_eq('a non-string is refused',        brand_bar_colors(null)['bar'], '#0078d4');
+foreach (['#0078d4', '#d83b01', '#ffd84d', '#7fba00', '#888888', '#00b7c3', '#ffffff', '#000000'] as $hex) {
+    $c = brand_bar_colors($hex);
+    $a = brand_luminance($c['bar']); $b = brand_luminance($c['ink']);
+    $ratio = (max($a, $b) + 0.05) / (min($a, $b) + 0.05);
+    t_ok("$hex: ink clears 3:1 on the bar", $ratio >= 3.0, 'ratio ' . round($ratio, 2));
+}

@@ -7643,3 +7643,296 @@ html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body hr { bord
 @media (max-width: 480px) {
   .settings-page .settings-back > span { font-size: 15px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   WORKSPACE SHELL — November 2026
+   ═══════════════════════════════════════════════════════════════════════════
+   The inbox drawn the way a desk mail client is: a header in the install's own
+   brand colour, the toolbar as a raised ribbon, and the message list and the
+   reading pane as two cards on a tinted desk, with the folders sitting on the
+   desk itself. Only appearance changes — no control moves, none is removed, and
+   every id the script looks up is where it was.
+
+   Three things here are load-bearing:
+   · --brand-bar / --brand-bar-ink come from inbox.php (brand_bar_colors), which
+     picks white or near-black ink by measured contrast. Never hard-code white
+     on the bar: a tenant with a pale brand colour would lose the whole header.
+   · The topbar and action bar stay OPAQUE and declare no transform / filter /
+     contain (see the warning above the first .mail-page .topbar rule — the Move
+     menu is a position:fixed child of the action bar).
+   · The card layout is desktop-only (min-width: 821px). Phones and the drawer
+     keep the single-pane layout they already had; only the header colour and
+     the list-row treatment reach them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.mail-page {
+  --o-desk: #ecedf1;                 /* the surface the cards sit on */
+  --o-card-shadow: 0 0 0 0.5px rgba(60, 60, 67, 0.16), 0 1px 3px rgba(15, 23, 42, 0.08);
+  --o-search-bg: #ffffff;
+  --o-search-ink: #1a1d23;
+  --o-search-dim: #5f5f63;
+  --o-row-active: #dfe9f6;           /* selected row: a tint, with dark text on it */
+  --o-row-active-line: #0068cc;
+}
+html.theme-dark .mail-page {
+  --o-desk: #000000;
+  --o-card-shadow: 0 0 0 0.5px rgba(84, 84, 88, 0.65);
+  --o-search-bg: #1c1c1e;
+  --o-search-ink: #ffffff;
+  --o-search-dim: #b4b4bb;
+  --o-row-active: #1f3350;
+  --o-row-active-line: #0a84ff;
+}
+
+/* ---- header: the brand colour, with ink chosen to be readable on it ---- */
+.mail-page .topbar {
+  background: var(--brand-bar, #0078d4);
+  color: var(--brand-bar-ink, #ffffff);
+  border-bottom: 0;
+  box-shadow: none;
+}
+.mail-page .topbar .topbar-logo-text,
+.mail-page .topbar .topbar-user,
+.mail-page .topbar .topbar-user-name,
+.mail-page .topbar .topbar-user-logout,
+.mail-page .topbar .topbar-user:hover .topbar-user-logout,
+.mail-page .topbar .topbar-icon-light { color: var(--brand-bar-ink, #ffffff); }
+.mail-page .topbar .topbar-logo-text { font-size: 15px; font-weight: 600; }
+.mail-page .topbar .topbar-icon-light:hover,
+.mail-page .topbar .topbar-user:hover,
+.mail-page .topbar .topbar-logo-default:hover {
+  background: color-mix(in srgb, var(--brand-bar-ink, #fff) 18%, transparent);
+}
+.mail-page .topbar .topbar-logo-mark {
+  background: color-mix(in srgb, var(--brand-bar-ink, #fff) 20%, transparent);
+  color: var(--brand-bar-ink, #ffffff);
+}
+/* The avatar is the bar inverted, so it reads on any brand colour. */
+.mail-page .topbar .topbar-user-avatar {
+  background: var(--brand-bar-ink, #ffffff);
+  color: var(--brand-bar, #0078d4);
+  font-weight: 700;
+}
+/* An uploaded logo was drawn for a white letterhead, not for this colour, so it
+   gets a white plate — whatever the theme. The one exception is a knocked-out
+   white logo (logo-ink.js marks it "light"): white is what the bar's ink already
+   is, so it sits on the bar itself, or on a dark plate when the bar is pale. */
+.mail-page .topbar .topbar-logo,
+html.theme-dark .mail-page .topbar .topbar-logo[data-needs-plate],
+html.theme-light .mail-page .topbar .topbar-logo[data-needs-plate] {
+  background: #ffffff;
+  padding: 3px 8px;
+  border-radius: 6px;
+  filter: none;
+}
+html.theme-dark .mail-page .topbar .topbar-logo[data-needs-plate="light"],
+html.theme-light .mail-page .topbar .topbar-logo[data-needs-plate="light"] {
+  background: var(--brand-bar-plate, #1c1c1e);
+}
+
+/* The search field is a solid plate on the bar: dark text on white in the light
+   theme, light text on graphite in the dark one. Both states name their own
+   colours, so neither depends on what the base rule happens to say. */
+.mail-page .topbar .topbar-search-input {
+  background: var(--o-search-bg);
+  color: var(--o-search-ink);
+  border: 0;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+.mail-page .topbar .topbar-search-input:hover { background: var(--o-search-bg); }
+.mail-page .topbar .topbar-search-input::placeholder { color: var(--o-search-dim); }
+.mail-page .topbar .topbar-search-icon,
+.mail-page .topbar .topbar-search-input:focus + .topbar-search-icon,
+.mail-page .topbar .topbar-search-input:not(:placeholder-shown) + .topbar-search-icon { color: var(--o-search-dim); }
+body.mail-page .topbar .topbar-search-input:focus {
+  outline: none;
+  background: var(--o-search-bg);
+  color: var(--o-search-ink);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-bar-ink, #fff) 45%, transparent), 0 1px 2px rgba(0, 0, 0, 0.14);
+}
+body.mail-page .topbar .topbar-search-input:focus::placeholder { color: var(--o-search-dim); }
+
+/* ---- message list: rows the way a desk client draws them ---- */
+/* Date groups are a band across the list, not a caption floating in it. */
+.mail-page .list-group-header {
+  padding: 6px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--m-label);
+  background: var(--m-fill);
+  border-top: 0.5px solid var(--m-sep);
+  border-bottom: 0.5px solid var(--m-sep);
+}
+.mail-page .list-group-header:first-child { border-top: 0; }
+/* Hairlines run the full width; the row before a band needs none. */
+.mail-page .msg-item::after { left: 0; }
+/* Unread is carried by the row itself: a bar down the leading edge, a bold
+   sender and the subject in the accent colour. The dot keeps its place so the
+   columns do not shift between read and unread rows. */
+.mail-page .msg-item.unread { box-shadow: inset 3px 0 0 var(--m-blue); }
+.mail-page .msg-item.unread .msg-dot { background: transparent; }
+.mail-page .msg-item.unread .msg-subject { color: var(--m-blue); font-weight: 600; }
+.mail-page .msg-item.unread .msg-time { color: var(--m-blue); font-weight: 600; }
+/* The open message is a tint with ordinary dark text on it, so the row reads the
+   same selected as not — only its ground changes. */
+.mail-page .msg-item.active,
+.mail-page .msg-item.active:hover {
+  background: var(--o-row-active);
+  color: var(--m-label);
+  box-shadow: inset 3px 0 0 var(--o-row-active-line);
+}
+.mail-page .msg-item.active .msg-from,
+.mail-page .msg-item.active .msg-subject { color: var(--m-label); }
+.mail-page .msg-item.active .msg-preview,
+.mail-page .msg-item.active .msg-time { color: var(--m-label-2); }
+.mail-page .msg-item.active .msg-dot,
+.mail-page .msg-item.active.unread .msg-dot { background: transparent; }
+.mail-page .msg-item.active.unread .msg-subject,
+.mail-page .msg-item.active.unread .msg-time { color: var(--m-blue); }
+.mail-page .msg-item.active .msg-thread-count,
+.mail-page .msg-item.active.unread .msg-thread-count { background: var(--m-fill-2); color: var(--m-label); }
+.mail-page .msg-item.active mark.search-hit { background: #ffe58a; color: #1a1d23; }
+html.theme-dark .mail-page .msg-item.active mark.search-hit { background: #6b5200; color: #ffffff; }
+
+/* ---- folders: counts are numbers, the open folder is a quiet pill ---- */
+.mail-page .folder-item.active {
+  background: var(--m-fill-2);
+  color: var(--m-label);
+  font-weight: 600;
+}
+.mail-page .folder-item .folder-badge,
+.mail-page .folder-item.active .folder-badge {
+  background: transparent;
+  color: var(--m-blue);
+  padding: 0 2px;
+  font-weight: 600;
+}
+/* The glyph keeps its own tint on the open folder now that the row is not blue. */
+.mail-page .folder-item.active .folder-icon { color: var(--f-gray); }
+.mail-page .folder-item.active[data-folder-type="inbox"]   .folder-icon { color: var(--f-blue); }
+.mail-page .folder-item.active[data-folder-type="sent"]    .folder-icon { color: var(--f-green); }
+.mail-page .folder-item.active[data-folder-type="drafts"]  .folder-icon { color: var(--f-orange); }
+.mail-page .folder-item.active[data-folder-type="trash"]   .folder-icon { color: var(--f-red); }
+.mail-page .folder-item.active[data-folder-type="spam"]    .folder-icon { color: var(--f-brown); }
+.mail-page .folder-item.active[data-folder-type="archive"] .folder-icon { color: var(--f-indigo); }
+.mail-page .folder-item.active[data-folder-type="later"]   .folder-icon { color: var(--f-teal); }
+.mail-page .folder-item.active[data-folder-type="outbox"]  .folder-icon { color: var(--f-purple); }
+
+/* ---- reading pane: reply where the message ends ---- */
+.mail-page .reading-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+  padding-left: 48px;                /* under the body, clear of the avatar column */
+}
+.mail-page .reading-foot-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid var(--m-sep);
+  border-radius: 8px;
+  background: var(--m-surface);
+  color: var(--m-label);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.mail-page .reading-foot-btn .icon { color: var(--m-blue); }
+.mail-page .reading-foot-btn:hover { background: var(--m-fill); }
+.mail-page .reading-foot-btn:focus-visible { outline: 2px solid var(--m-blue); outline-offset: 2px; }
+@media (max-width: 720px) {
+  .mail-page .reading-foot { padding-left: 0; }
+  .mail-page .reading-foot-btn { min-height: 44px; flex: 1 1 0; justify-content: center; }
+}
+@media print {
+  .mail-page .reading-foot { display: none; }
+}
+
+/* ---- desktop: ribbon and cards ---- */
+@media (min-width: 821px) {
+  .mail-page .app-shell { background: var(--o-desk); }
+
+  /* The ribbon: one raised strip, inset from the window edge. */
+  .mail-page .actionbar {
+    height: auto;
+    min-height: 48px;
+    margin: 8px 8px 0;
+    padding: 5px 10px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--m-list);
+    box-shadow: var(--o-card-shadow);
+  }
+
+  /* The desk shows between the panes; the folders sit on it directly. */
+  .mail-page .app-main {
+    background: var(--o-desk);
+    padding: 8px;
+    gap: 8px;
+  }
+  .mail-page .folder-pane {
+    background: var(--o-desk);
+    border-right: 0;
+  }
+  .mail-page .list-pane,
+  .mail-page .reading-pane {
+    border: 0;
+    border-radius: 10px;
+    box-shadow: var(--o-card-shadow);
+    overflow: hidden;
+  }
+
+  /* The top-of-message actions say what they are. */
+  .mail-page .reading-action-btn[id="replyBtn"],
+  .mail-page .reading-action-btn[id="replyAllBtn"],
+  .mail-page .reading-action-btn[id="forwardBtn"] {
+    width: auto;
+    padding: 0 10px;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--m-label);
+  }
+  .mail-page .reading-action-btn[id="replyBtn"] .icon,
+  .mail-page .reading-action-btn[id="replyAllBtn"] .icon,
+  .mail-page .reading-action-btn[id="forwardBtn"] .icon { color: var(--m-blue); }
+  .mail-page .reading-action-btn[id="replyBtn"]::after,
+  .mail-page .reading-action-btn[id="replyAllBtn"]::after,
+  .mail-page .reading-action-btn[id="forwardBtn"]::after { content: attr(aria-label); }
+}
+
+/* Wide enough for every action to carry its label underneath its icon. */
+@media (min-width: 1100px) {
+  .mail-page .actionbar .ab-btn:not(.ab-primary):not(.ab-icon-only) {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+    height: 54px;
+    min-width: 58px;
+    padding: 5px 10px;
+    font-size: 11.5px;
+    line-height: 1.2;
+  }
+  .mail-page .actionbar .ab-btn:not(.ab-primary):not(.ab-icon-only) > .icon:not(.ab-chev) {
+    width: 21px;
+    height: 21px;
+  }
+  /* Move and Label: the chevron rides beside the icon rather than adding a row. */
+  .mail-page .actionbar .ab-btn .ab-chev {
+    position: absolute;
+    top: 11px;
+    right: 6px;
+    margin: 0;
+  }
+  .mail-page .actionbar .ab-btn.ab-primary {
+    height: 40px;
+    padding: 0 18px;
+    border-radius: 8px;
+    margin-right: 4px;
+  }
+  .mail-page .actionbar .ab-divider { height: 36px; margin: 0 8px; }
+}
