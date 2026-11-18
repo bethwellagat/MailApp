@@ -932,3 +932,10 @@ foreach (['replyBtn', 'replyAllBtn', 'forwardBtn'] as $id) {
 }
 t_ok('the footer has one handler and no logic of its own',
      strpos($js, "\$('readingFoot').addEventListener('click'") !== false && strpos($js, 'if (real && !real.disabled && !real.hidden) real.click();') !== false);
+
+t_group('one typeface on every device');
+t_ok('the font token leads with Segoe UI, then the bundled Inter',
+     preg_match("/--font-ui: 'Segoe UI', 'Inter',/", $css) === 1);
+t_ok('no page names the device system font ahead of it', strpos($css, '"SF Pro Text"') === false
+     && preg_match('/font-family:\s*-apple-system/', $css) === 0);
+t_ok('Inter ships with the app', is_file(T_ROOT . '/assets/fonts/inter-latin.woff2'));

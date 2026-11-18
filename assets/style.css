@@ -73,7 +73,12 @@
      fails to load. --font-mono is kept as an alias so legacy rules still
      render Inter; tabular-figure feature is enabled per-element where digits
      need to align (timestamps, badges). */
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* One typeface on every device. Segoe UI is what a desk mail client on Windows
+     is set in, so it is used where the machine has it; it is Microsoft's and
+     cannot be shipped, so everywhere else gets the bundled Inter — never the
+     device's own system font, which is what made a Mac and a PC look like two
+     different apps. Every page takes its font from this one token. */
+  --font-ui: 'Segoe UI', 'Inter', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
   --font-mono: var(--font-ui);
 
   /* Radii */
@@ -4921,8 +4926,7 @@ body.density-compact .msg-dot { top: 13px; }
   --ip-radius:        12px;
   --ip-radius-sm:     8px;
   --ip-row:           44px;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-               "Segoe UI", var(--font-ui, Inter), system-ui, sans-serif;
+  font-family: var(--font-ui);
   background: var(--ip-bg);
   color: var(--ip-label);
   -webkit-font-smoothing: antialiased;
@@ -5696,8 +5700,7 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
   --m-sep-solid:   #c6c6c8;
   --m-chrome:      #ffffff;
   --m-radius:      10px;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display",
-               "Segoe UI", var(--font-ui, Inter), system-ui, sans-serif;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   background: var(--m-bg);
 }
@@ -7936,3 +7939,12 @@ html.theme-dark .mail-page .msg-item.active mark.search-hit { background: #6b520
   }
   .mail-page .actionbar .ab-divider { height: 36px; margin: 0 8px; }
 }
+
+/* ---- type: weights a desk client uses ----
+   Unread is semibold, not full bold, and headings are a step lighter, so a list
+   of unread mail does not read as a block of black. Sizes are left to the
+   density setting, which already owns them. */
+.mail-page .msg-item.unread .msg-from { font-weight: 600; }
+.mail-page .list-folder-name { font-weight: 600; letter-spacing: -0.01em; }
+.mail-page .reading-subject { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+.mail-page .thread-msg-from-name { font-weight: 600; }
