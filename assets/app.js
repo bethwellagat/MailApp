@@ -5980,7 +5980,7 @@
     }
     function applyTheme(theme) {
         const valid = ['system', 'light', 'dark'];
-        const t = valid.includes(theme) ? theme : 'system';
+        const t = valid.includes(theme) ? theme : 'light';
         if (window.__PREFS__) window.__PREFS__.theme = t;
         const dark = t === 'dark' || (t === 'system' && !!(_themeMq && _themeMq.matches));
         document.documentElement.classList.toggle('theme-dark', dark);
@@ -5996,7 +5996,7 @@
             }
         }
     }
-    applyTheme((window.__PREFS__ && window.__PREFS__.theme) || 'system');
+    applyTheme((window.__PREFS__ && window.__PREFS__.theme) || 'light');
 
     const themeToggleBtn = $('themeToggle');
     if (themeToggleBtn) {

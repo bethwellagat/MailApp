@@ -68,6 +68,8 @@ if (isset($_POST['theme'])) {
         exit;
     }
     $updates['theme'] = $t;
+    // The user picked this themselves — see prefs_resolve_theme().
+    $updates['theme_chosen'] = true;
 }
 
 if (isset($_POST['notifications'])) {

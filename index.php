@@ -152,11 +152,8 @@ $brandLabel  = $brand['name'] . ' WorkSpace';
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script nonce="<?= csp_nonce() ?>">
-/* No saved theme at the login screen — follow the OS setting, before first paint. */
-(function(){try{
-  var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.classList.add(dark ? 'theme-dark' : 'theme-light');
-}catch(e){}})();
+/* No saved theme at the sign-in screen, so it is the default: light. */
+document.documentElement.classList.add('theme-light');
 </script>
 <title>Sign in · <?= h($brandLabel) ?></title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg?v=<?= @filemtime(__DIR__.'/assets/favicon.svg') ?>">

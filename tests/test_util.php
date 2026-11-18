@@ -107,3 +107,18 @@ t_eq('unbalanced quote still handled',
 t_eq('valueless attributes survive',
      strip_event_handlers('<td nowrap>'),
      '<td nowrap>');
+
+t_group('theme — light unless the user chose otherwise');
+require_once T_ROOT . '/lib/prefs.php';
+t_eq('a new account is light',                         default_prefs()['theme'], 'light');
+t_eq('no stored theme is light',                       prefs_resolve_theme([]), 'light');
+t_eq('a stored "system" left by the old default is light', prefs_resolve_theme(['theme' => 'system']), 'light');
+t_eq('a "system" the user picked is kept',             prefs_resolve_theme(['theme' => 'system', 'theme_chosen' => true]), 'system');
+t_eq('a stored dark is always a choice',               prefs_resolve_theme(['theme' => 'dark']), 'dark');
+t_eq('light stays light',                              prefs_resolve_theme(['theme' => 'light', 'theme_chosen' => true]), 'light');
+t_eq('rubbish is light',                               prefs_resolve_theme(['theme' => 'neon']), 'light');
+t_eq('a non-string is light',                          prefs_resolve_theme(['theme' => ['dark']]), 'light');
+$pj = (string)@file_get_contents(T_ROOT . '/ajax/prefs.php');
+t_ok('picking a theme is recorded as a choice', strpos($pj, "\$updates['theme_chosen'] = true;") !== false);
+$ix = (string)@file_get_contents(T_ROOT . '/index.php');
+t_ok('the sign-in page is light, not the device setting', strpos($ix, "classList.add('theme-light')") !== false && strpos($ix, 'prefers-color-scheme') === false);

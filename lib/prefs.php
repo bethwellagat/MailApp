@@ -26,7 +26,7 @@ function default_prefs() {
         'append_on_replies'   => true,
         'workspace_logo'      => '',
         'density'             => 'compact', // comfortable | cozy | compact
-        'theme'               => 'system',  // system | light | dark
+        'theme'               => 'light',   // light | dark | system — light unless the user picks otherwise
         'notifications'       => false,     // desktop new-mail notifications
         'display_name'        => '',        // From-name override, editable in Settings (empty = use login value)
         'remote_images'       => false,     // false = block remote images until asked (stops sender read-tracking)
@@ -42,7 +42,26 @@ function load_prefs($email) {
     if ($raw === false) return $defaults;
     $data = @json_decode($raw, true);
     if (!is_array($data)) return $defaults;
-    return array_merge($defaults, $data);
+    $merged = array_merge($defaults, $data);
+    $merged['theme'] = prefs_resolve_theme($data);
+    return $merged;
+}
+
+/**
+ * The theme a stored preferences file means.
+ *
+ * Light is the default for everyone. "system" used to be the default, and every
+ * save writes the whole merged file — so a stored "system" says only that the
+ * user once saved a signature, not that they asked to follow their device. It
+ * counts as a choice only when theme_chosen is set, which ajax/prefs.php stamps
+ * whenever the user picks a theme themselves. "dark" was never a default, so a
+ * stored "dark" is always a choice and is kept.
+ */
+function prefs_resolve_theme(array $data) {
+    $t = isset($data['theme']) && is_string($data['theme']) ? $data['theme'] : 'light';
+    if (!in_array($t, ['system', 'light', 'dark'], true)) return 'light';
+    if ($t === 'system' && empty($data['theme_chosen'])) return 'light';
+    return $t;
 }
 
 function save_prefs($email, $changes) {

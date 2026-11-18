@@ -314,11 +314,11 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
             </header>
             <div class="settings-card">
                 <div class="density-options" id="themeOptions">
-                    <?php $curTheme = $prefs['theme'] ?? 'system'; ?>
+                    <?php $curTheme = $prefs['theme'] ?? 'light'; ?>
                     <?php foreach ([
-                        'system' => ['System', 'Match your device\'s light or dark setting'],
-                        'light'  => ['Light',  'Always use the light appearance'],
+                        'light'  => ['Light',  'The default appearance'],
                         'dark'   => ['Dark',   'Always use the dark appearance'],
+                        'system' => ['System', 'Match your device\'s light or dark setting'],
                     ] as $val => $info): ?>
                         <label class="density-option <?= $curTheme === $val ? 'active' : '' ?>">
                             <input type="radio" name="theme" value="<?= h($val) ?>" <?= $curTheme === $val ? 'checked' : '' ?>>
