@@ -620,7 +620,17 @@ function find_thread_uids_in_folder($box, $folder, $needle) {
         $index = [];
         $check = @imap_check($box);
         $total = $check ? (int)$check->Nmsgs : 0;
-        if ($total > 0) {
+        /* Reading 1,200 overviews is most of what opening a message costs, and
+           the answer only changes when the folder does. So the index is kept
+           for ten minutes against a fingerprint of the folder — how many
+           messages it holds and the UID of the newest — and rebuilt the moment
+           either moves. A UID that has since gone is harmless: the caller
+           fetches each one and skips what is no longer there. */
+        $fp     = $total . ':' . ($total > 0 ? (int)@imap_uid($box, $total) : 0);
+        $cached = thread_index_cache_get($folder, $fp);
+        if ($cached !== null) {
+            $index = $cached;
+        } elseif ($total > 0) {
             $end   = $total;
             $start = max(1, $total - $MAX_SCAN + 1);
             $rows  = @imap_fetch_overview($box, "$start:$end", 0);
@@ -633,16 +643,35 @@ function find_thread_uids_in_folder($box, $folder, $needle) {
                         if (empty($om->$hdr)) continue;
                         foreach (thread_ids_in($om->$hdr) as $id) $ids[$id] = true;
                     }
-                    foreach ($ids as $id => $_) $index[$id][] = $u;
+                    foreach ($ids as $id => $_) $index[thread_index_key($id)][] = $u;
                 }
+                thread_index_cache_put($folder, $fp, $index);
             }
         }
         $indexCache[$folder] = $index;
     }
 
     $key = thread_norm_id($needle);
-    if ($key === '' || !isset($indexCache[$folder][$key])) return [];
-    return $indexCache[$folder][$key];
+    if ($key === '') return [];
+    $key = thread_index_key($key);
+    return $indexCache[$folder][$key] ?? [];
+}
+
+/* The index on disk holds hashes and UIDs only — never a Message-ID, which
+   carries the sender's domain. It shares the search cache's folder, so the
+   same sweep clears it. */
+function thread_index_cache_file($folder) {
+    return search_cache_file($_SESSION['email'] ?? '', account_effective_id(), 'threadidx|' . $folder);
+}
+function thread_index_cache_get($folder, $fp) {
+    $f = thread_index_cache_file($folder);
+    $d = is_file($f) ? @json_decode((string)@file_get_contents($f), true) : null;
+    return thread_index_usable($d, $fp, time()) ? $d['index'] : null;
+}
+function thread_index_cache_put($folder, $fp, array $index) {
+    $dir = search_cache_dir();
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true)) return false;
+    return (bool)atomic_write_json(thread_index_cache_file($folder), ['fp' => $fp, 'at' => time(), 'index' => $index]);
 }
 
 /**
@@ -1884,9 +1913,10 @@ if ($action === 'thread') {
             $focused['preview'] = thread_preview_text((string)search_snippet_text($mbox, $uid, $st));
         }
     }
-    @imap_close($mbox);
-
-    if (!$focused) fail('Could not load message');
+    /* The connection stays open: it is reused below to find the Sent folder and
+       to search this folder. Opening a message used to sign in to the mail
+       server four times; it now does so twice (this folder, and Sent). */
+    if (!$focused) { @imap_close($mbox); fail('Could not load message'); }
 
     // Passively harvest the people in this thread into the address book for
     // compose autocomplete. Thread opens are user-initiated and bounded, unlike
@@ -1899,6 +1929,7 @@ if ($action === 'thread') {
     if ($startInfo['msg_id'] === ''
         && $startInfo['in_reply_to'] === ''
         && empty($startInfo['references'])) {
+        @imap_close($mbox);
         if (!$peek) contacts_harvest_messages($_SESSION['email'], [$focused]);
         ok([
             'thread'      => [$focused],
@@ -1910,16 +1941,12 @@ if ($action === 'thread') {
 
     $foldersToSearch = [$folder];
     if (strcasecmp($folder, 'INBOX') !== 0) $foldersToSearch[] = 'INBOX';
-    $tmp = open_box('INBOX', OP_HALFOPEN);
-    if ($tmp) {
-        $sent = find_folder($tmp, $ref, ['sent']);
-        if ($sent && !in_array($sent, $foldersToSearch, true)) $foldersToSearch[] = $sent;
-        @imap_close($tmp);
-    }
+    $sent = find_folder($mbox, $ref, ['sent']);
+    if ($sent && !in_array($sent, $foldersToSearch, true)) $foldersToSearch[] = $sent;
 
     $boxes = [];
     foreach ($foldersToSearch as $f) {
-        $boxes[$f] = open_box($f);
+        $boxes[$f] = ($f === $folder) ? $mbox : open_box($f);
     }
 
     $threadIds = [];

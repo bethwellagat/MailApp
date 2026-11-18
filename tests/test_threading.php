@@ -579,3 +579,22 @@ t_ok('the one line of text is fetched without marking read', preg_match('/functi
 t_ok('the list asks with peek', strpos($js, "uid, peek: 1 }") !== false);
 t_ok('the open row stays the list row, whichever message is shown', strpos($js, 'state.currentUid = uid;' . "\n" . '        state.currentChild = focus ?') !== false);
 t_ok('drafts and the outbox never unfold', strpos($js, "if (state.currentFolder === OUTBOX_FOLDER || folderType(state.currentFolder) === 'drafts') return false;") !== false);
+
+t_group('the thread index is remembered between opens');
+t_eq('a key is a short hash, not the id', strlen(thread_index_key('abc@example.com')), 20);
+t_ok('…and says nothing readable', strpos(thread_index_key('abc@example.com'), 'example') === false);
+t_eq('the same id gives the same key', thread_index_key('a@b'), thread_index_key('a@b'));
+$c = ['fp' => '120:900', 'at' => 1000, 'index' => ['k' => [5]]];
+t_eq('same folder state, a minute on: used',      thread_index_usable($c, '120:900', 1060), true);
+t_eq('a new message arrived: rebuilt',            thread_index_usable($c, '121:901', 1060), false);
+t_eq('one deleted and one arrived: rebuilt',      thread_index_usable($c, '120:901', 1060), false);
+t_eq('older than ten minutes: rebuilt',           thread_index_usable($c, '120:900', 1000 + 601), false);
+t_eq('a clock that went backwards: rebuilt',      thread_index_usable($c, '120:900', 900), false);
+t_eq('rubbish on disk: rebuilt',                  thread_index_usable('x', '120:900', 1060), false);
+t_eq('no index in the file: rebuilt',             thread_index_usable(['fp' => '120:900', 'at' => 1000], '120:900', 1060), false);
+$f = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
+t_ok('only hashes reach the disk', strpos($f, '$index[thread_index_key($id)][] = $u;') !== false);
+t_ok('opening a message reuses its connection for the folder search', strpos($f, '$boxes[$f] = ($f === $folder) ? $mbox : open_box($f);') !== false);
+t_ok('…and for finding Sent', strpos($f, "\$sent = find_folder(\$mbox, \$ref, ['sent']);") !== false);
+$css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
+t_ok('the sticky date band is solid and above the rows', preg_match('/\.mail-page \.list-group-header \{\s*background: var\(--o-band\);\s*z-index: 3;/', $css) === 1);

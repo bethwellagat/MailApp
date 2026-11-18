@@ -308,3 +308,22 @@ function thread_preview_text($text, $max = 140) {
     return rtrim($cut, " ,;:.-") . '…';
 }
 
+/**
+ * A Message-ID as the remembered thread index stores it: a hash, so the file
+ * on disk says nothing about who anyone wrote to.
+ */
+function thread_index_key($normId) {
+    return substr(sha1((string)$normId), 0, 20);
+}
+
+/**
+ * Whether a remembered thread index may still be used: it must be for the
+ * folder as it is now (same fingerprint) and under ten minutes old.
+ */
+function thread_index_usable($cached, $fp, $now, $ttl = 600) {
+    if (!is_array($cached) || !isset($cached['index']) || !is_array($cached['index'])) return false;
+    if (!isset($cached['fp']) || (string)$cached['fp'] !== (string)$fp) return false;
+    $age = (int)$now - (int)($cached['at'] ?? 0);
+    return $age >= 0 && $age <= $ttl;
+}
+

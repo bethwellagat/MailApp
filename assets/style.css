@@ -8056,3 +8056,14 @@ html.theme-dark .mail-page .msg-item.active mark.search-hit { background: #6b520
   .mail-page .msg-expander { width: 30px; height: 44px; margin-top: -22px; left: 0; }
   .mail-page .msg-child { padding-top: 10px; padding-bottom: 11px; min-height: 44px; }
 }
+
+/* The date bands stick to the top of the list while it scrolls, so they have to
+   be solid and sit above the rows: a see-through band let the row passing
+   underneath read through its label, and the conversation arrows (which are
+   positioned, so they stack) drew on top of it. */
+.mail-page { --o-band: #f0f0f3; }
+html.theme-dark .mail-page { --o-band: #2a2a2d; }
+.mail-page .list-group-header {
+  background: var(--o-band);
+  z-index: 3;
+}
