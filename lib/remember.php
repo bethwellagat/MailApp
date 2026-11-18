@@ -172,8 +172,8 @@ function remember_list($email, $currentSelector = '', $now = null) {
     return $out;
 }
 /** Resolve a list id back to a selector (the page never sees selectors). */
-function remember_selector_for_id($email, $id) {
-    foreach (remember_records($email) as $r) if (substr(hash('sha256', $r['selector']), 0, 16) === (string)$id) return $r['selector'];
+function remember_selector_for_id($email, $id, $now = null) {
+    foreach (remember_records($email, $now) as $r) if (substr(hash('sha256', $r['selector']), 0, 16) === (string)$id) return $r['selector'];
     return null;
 }
 

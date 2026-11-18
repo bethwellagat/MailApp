@@ -126,6 +126,12 @@ if ('serviceWorker' in navigator) {
     <symbol id="ic-refresh-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
     </symbol>
+    <symbol id="ic-shield-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></symbol>
+    <symbol id="ic-doc-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></symbol>
+    <symbol id="ic-briefcase-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></symbol>
+    <symbol id="ic-users-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="ic-globe-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+    <symbol id="ic-activity-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></symbol>
     <symbol id="ic-tag-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></symbol>
     <symbol id="ic-funnel-s" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
@@ -163,7 +169,7 @@ if ('serviceWorker' in navigator) {
             <span>Account</span>
         </a>
         <a class="settings-nav-item" href="#security" data-target="security">
-            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span class="snav-icon snav-icon-green"><svg class="icon"><use href="#ic-shield-s"/></svg></span>
             <span>Security</span>
         </a>
         <a class="settings-nav-item" href="#signature" data-target="signature">
@@ -171,11 +177,11 @@ if ('serviceWorker' in navigator) {
             <span>Signature</span>
         </a>
         <a class="settings-nav-item" href="#templates" data-target="templates">
-            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-edit-s"/></svg></span>
+            <span class="snav-icon snav-icon-teal"><svg class="icon"><use href="#ic-doc-s"/></svg></span>
             <span>Templates</span>
         </a>
         <a class="settings-nav-item" href="#workspace" data-target="workspace">
-            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span class="snav-icon snav-icon-blue"><svg class="icon"><use href="#ic-briefcase-s"/></svg></span>
             <span>Workspace</span>
         </a>
         <a class="settings-nav-item" href="#logo" data-target="logo">
@@ -187,11 +193,11 @@ if ('serviceWorker' in navigator) {
             <span>Out of office</span>
         </a>
         <a class="settings-nav-item" href="#tasks" data-target="tasks">
-            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-play-s"/></svg></span>
+            <span class="snav-icon snav-icon-graphite"><svg class="icon"><use href="#ic-play-s"/></svg></span>
             <span>Background tasks</span>
         </a>
         <a class="settings-nav-item" href="#filters" data-target="filters">
-            <span class="snav-icon snav-icon-teal"><svg class="icon"><use href="#ic-funnel-s"/></svg></span>
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-funnel-s"/></svg></span>
             <span>Filters</span>
         </a>
         <a class="settings-nav-item" href="#labels" data-target="labels">
@@ -199,7 +205,7 @@ if ('serviceWorker' in navigator) {
             <span>Labels</span>
         </a>
         <a class="settings-nav-item" href="#contacts" data-target="contacts">
-            <span class="snav-icon snav-icon-green"><svg class="icon"><use href="#ic-user"/></svg></span>
+            <span class="snav-icon snav-icon-green"><svg class="icon"><use href="#ic-users-s"/></svg></span>
             <span>Contacts</span>
         </a>
         <a class="settings-nav-item" href="#calendars" data-target="calendars">
@@ -207,19 +213,19 @@ if ('serviceWorker' in navigator) {
             <span>Calendars</span>
         </a>
         <a class="settings-nav-item" href="#mail-server" data-target="mail-server">
-            <span class="snav-icon snav-icon-graphite"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-server"/></svg></span>
             <span>Mail server</span>
         </a>
         <a class="settings-nav-item" href="#update" data-target="update">
-            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-refresh-s"/></svg></span>
+            <span class="snav-icon snav-icon-blue"><svg class="icon"><use href="#ic-refresh-s"/></svg></span>
             <span>Software update</span>
         </a>
         <a class="settings-nav-item" href="#installations" data-target="installations">
-            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-link"/></svg></span>
+            <span class="snav-icon snav-icon-indigo"><svg class="icon"><use href="#ic-globe-s"/></svg></span>
             <span>Installations</span>
         </a>
         <a class="settings-nav-item" href="#diagnostics" data-target="diagnostics">
-            <span class="snav-icon snav-icon-gray"><svg class="icon"><use href="#ic-server"/></svg></span>
+            <span class="snav-icon snav-icon-pink"><svg class="icon"><use href="#ic-activity-s"/></svg></span>
             <span>Diagnostics</span>
         </a>
     </nav>
@@ -1358,6 +1364,10 @@ $HTTP["url"] =~ "^/data/" { url.access-deny = ("") }</code></pre>
                 const on = l.dataset.target === target;
                 l.classList.toggle('active', on);
                 if (on) l.setAttribute('aria-current', 'page'); else l.removeAttribute('aria-current');
+                // On a phone the menu is a strip that scrolls sideways: bring the
+                // open pane's item into it, or the strip shows Account while
+                // Labels is on screen. 'nearest' leaves a visible item alone.
+                if (on && l.scrollIntoView) { try { l.scrollIntoView({ block: 'nearest', inline: 'center' }); } catch (e) {} }
             });
             document.querySelector('.settings-content').scrollTop = 0;
             window.scrollTo(0, 0);

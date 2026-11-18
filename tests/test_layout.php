@@ -882,3 +882,28 @@ t_ok('wider screens never see the extra button', strpos($css, '.mail-page .ab-mo
      && preg_match('/@media \(max-width: 720px\) \{\s*\.mail-page \.ab-more-wrap \{ display: block;/', $css) === 1);
 t_ok('Escape closes it and the menu items are full touch targets', strpos($js, "e.key === 'Escape' && dd.classList.contains('open')") !== false && strpos($css, '.mail-page #moreDropdown .dropdown-item { min-height: 44px; }') !== false);
 
+t_group('settings: one rhythm across all sixteen panes');
+$st  = (string)@file_get_contents(T_ROOT . '/settings.php');
+$css = (string)@file_get_contents(T_ROOT . '/assets/style.css');
+preg_match_all('/<a class="settings-nav-item[^"]*" href="#([a-z-]+)"[^>]*>\s*<span class="snav-icon snav-icon-([a-z]+)"><svg class="icon"><use href="#([a-z-]+)"/', $st, $nav, PREG_SET_ORDER);
+t_eq('sixteen panes in the menu', count($nav), 16);
+$pairs = array_map(fn($n) => $n[2] . ' ' . $n[3], $nav);
+t_eq('no two menu items share an icon and a colour', count(array_unique($pairs)), count($pairs));
+$icons = array_count_values(array_map(fn($n) => $n[3], $nav));
+t_ok('no icon is used more than twice', max($icons) <= 2, json_encode(array_filter($icons, fn($c) => $c > 2)));
+foreach (array_unique(array_map(fn($n) => $n[3], $nav)) as $_sym) t_ok("the settings sprite defines $_sym", strpos($st, '<symbol id="' . $_sym . '"') !== false);
+for ($_i = 1; $_i < count($nav); $_i++) if ($nav[$_i][2] === $nav[$_i - 1][2]) { t_ok('neighbours in the menu differ in colour', false, $nav[$_i][1]); }
+t_ok('two columns are for the Account pane only — a single form is never cut in half', strpos($css, '.settings-page #account.settings-section.visible {') !== false
+     && preg_match('/\.settings-page \.settings-section\.visible \{\s*column-count/', $css) !== 1);
+t_ok('consecutive cards have air between them', strpos($css, '.settings-page .settings-card + .settings-card,') !== false);
+t_ok('…and a hidden card neither adds a gap nor removes one', strpos($css, '.settings-page .settings-card[hidden] + .settings-card { margin-top: 0; }') !== false
+     && strpos($css, '.settings-page .settings-card:not([hidden]) + [hidden] + .settings-card { margin-top: 16px; }') !== false);
+t_ok('a title or hint placed straight in a card is inset like a row', strpos($css, '.settings-page .settings-card > .settings-card-title {') !== false
+     && strpos($css, '.settings-page .settings-card > .settings-row-stack:not(.settings-row),') !== false);
+t_ok('a button keeps its icon beside its word', preg_match('/\.settings-page \.btn,\s*\.settings-page \.cal-modal-btn,\s*\.settings-page \.settings-inline-save \{\s*display: inline-flex;/', $css) === 1);
+t_ok('the sign-in page\'s full-width primary button does not reach into Settings', strpos($css, '.settings-page .settings-inline-edit > .btn,') !== false && strpos($css, '{ width: auto; flex: 0 0 auto; }') !== false);
+t_ok('the one raw checkbox is drawn as the switch every other pane has', strpos($css, '.settings-page .toggle-row input[type="checkbox"]:checked { background: var(--ip-green); }') !== false
+     && strpos($css, '.settings-page .toggle-row input[type="checkbox"]:focus-visible') !== false);
+t_ok('on a phone the menu strip follows the open pane', strpos($st, "l.scrollIntoView({ block: 'nearest', inline: 'center' })") !== false);
+t_ok('the back link stays on one line', strpos($css, '.settings-page .settings-back { white-space: nowrap; }') !== false);
+

@@ -61,5 +61,5 @@ t_eq('revoke all', remember_revoke_all('me@x.com', $T + 100), REMEMBER_MAX);
 t_eq('…leaves nothing', remember_list('me@x.com', '', $T + 100), []);
 $issued = remember_issue($acct, '', $T);
 $id = remember_list('me@x.com', '', $T + 1)[0]['id'];
-t_ok('a list id resolves to its device and only its account', remember_selector_for_id('me@x.com', $id) === $issued['selector'] && remember_selector_for_id('other@x.com', $id) === null);
+t_ok('a list id resolves to its device and only its account', remember_selector_for_id('me@x.com', $id, $T + 1) === $issued['selector'] && remember_selector_for_id('other@x.com', $id, $T + 1) === null);   // on the test's clock: this ran on the real one and began failing 30 days after it was written
 t_ok('a nameless account cannot be remembered', remember_issue(['email' => '', 'password' => 'x'], '', $T) === null);

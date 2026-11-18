@@ -5513,7 +5513,11 @@ html.theme-dark .settings-page .settings-inline-input { background: rgba(120,120
    a wide screen instead of one narrow ribbon down the left. break-inside keeps a
    card whole and break-after keeps each heading with the card it introduces. */
 @media (min-width: 1100px) {
-  .settings-page .settings-section.visible {
+  /* Two columns only where a pane is several independent groups (Account).
+     Applied to every pane, it cut single forms in half: a card's Save button
+     at the top of the second column, a list's heading in one column and its
+     rows in the other. */
+  .settings-page #account.settings-section.visible {
     column-count: 2;
     column-gap: 26px;
   }
@@ -7497,4 +7501,145 @@ html.theme-dark .mail-page .reading-pane.reading-dark .thread-msg-body hr { bord
   .mail-page .actionbar .ab-chev { display: none; }
   .mail-page #moreDropdown .dropdown-item { min-height: 44px; }
   .mail-page #moreDropdown .dropdown-item:disabled { opacity: 0.4; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SETTINGS — consistency pass (November 2026)
+   ═══════════════════════════════════════════════════════════════════════════
+   The panes added since the redesign (Security, Templates, Background tasks,
+   Labels, Installations, Diagnostics) reused the card but not its rhythm.
+   Measured across all sixteen panes: cards touching with no gap, titles and
+   hint lines flush against a card's edge, icon-over-text buttons, and one raw
+   checkbox where every other pane has a switch. Fixed here, once, on the
+   shared pieces rather than pane by pane.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* A single form reads best at a measure; only lists and editors use the full width. */
+.settings-page #security,
+.settings-page #templates,
+.settings-page #workspace,
+.settings-page #logo,
+.settings-page #out-of-office,
+.settings-page #tasks,
+.settings-page #labels,
+.settings-page #mail-server,
+.settings-page #update,
+.settings-page #signature { max-width: 860px; }
+
+/* Consecutive cards are separate groups: give them air. */
+.settings-page .settings-card + .settings-card,
+.settings-page .settings-card + .settings-hint,
+.settings-page .settings-hint + .settings-card { margin-top: 16px; }
+
+/* A title inside a card: a quiet caption, set in from the edge like every row. */
+.settings-page .settings-card > .settings-card-title {
+  margin: 0;
+  padding: 14px 16px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ip-label-2);
+}
+
+/* Loose content placed straight in a card — a hint line, a button row, a
+   list, a disclosure — takes the card's inset. Rows (.settings-row) already do. */
+.settings-page .settings-card > .settings-row-stack:not(.settings-row),
+.settings-page .settings-card > .settings-inline-edit,
+.settings-page .settings-card > .settings-details,
+.settings-page .settings-card > .signature-hint,
+.settings-page .settings-card > .dev-list,
+.settings-page .settings-card > p { padding-left: 16px; padding-right: 16px; }
+.settings-page .settings-card > .settings-row-stack:not(.settings-row):last-child,
+.settings-page .settings-card > .settings-inline-edit:last-child,
+.settings-page .settings-card > .settings-details:last-child,
+.settings-page .settings-card > .signature-hint:last-child,
+.settings-page .settings-card > p:last-child { padding-bottom: 14px; }
+.settings-page .settings-card > .settings-inline-edit { padding-top: 6px; padding-bottom: 10px; justify-content: flex-start; }
+.settings-page .settings-card > .settings-inline-edit:empty,
+.settings-page .settings-card > .settings-inline-edit:has(> .settings-status:only-child:empty) { display: none; }
+.settings-page .settings-card > .settings-row-stack:not(.settings-row) .settings-inline-hint,
+.settings-page .settings-card > .dev-list .settings-inline-hint { text-align: left; margin-top: 0; }
+.settings-page .settings-details > summary { cursor: pointer; padding: 6px 0; color: var(--ip-blue); font-size: 14px; }
+
+/* A button is one line: icon beside its word, never above it. */
+.settings-page .btn,
+.settings-page .cal-modal-btn,
+.settings-page .settings-inline-save {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.settings-page .btn > .icon,
+.settings-page .cal-modal-btn > .icon { flex: none; }
+
+/* A list's header: what is in it on the left, the way to add one on the right. */
+.settings-page .rules-list-header { justify-content: space-between; }
+.settings-page .rules-list-header > .settings-inline-hint { margin: 0; text-align: left; }
+.settings-page .rules-list-header > :only-child { margin-left: auto; }
+
+/* The one raw checkbox (Out of office) becomes the switch every other pane uses. */
+.settings-page .toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  cursor: pointer;
+  flex-direction: row-reverse;
+}
+.settings-page .toggle-row .toggle-label { flex: 1; font-size: 16px; color: var(--ip-label); }
+.settings-page .toggle-row input[type="checkbox"] {
+  -webkit-appearance: none; appearance: none;
+  flex: none; margin: 0;
+  width: 51px; height: 31px;
+  border-radius: 999px;
+  background: var(--ip-fill-2);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.settings-page .toggle-row input[type="checkbox"]::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 27px; height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
+}
+.settings-page .toggle-row input[type="checkbox"]:checked { background: var(--ip-green); }
+.settings-page .toggle-row input[type="checkbox"]:checked::after { transform: translateX(20px); }
+.settings-page .toggle-row input[type="checkbox"]:focus-visible { outline: 2px solid var(--ip-blue); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .settings-page .toggle-row input[type="checkbox"],
+  .settings-page .toggle-row input[type="checkbox"]::after { transition: none; }
+}
+
+/* Buttons in a card's action row: their own width, side by side, primary last.
+   (The sign-in page's full-width .btn-primary was reaching in here.) */
+.settings-page .settings-inline-edit { gap: 8px; }
+.settings-page .settings-inline-edit > .btn,
+.settings-page .settings-inline-edit > .cal-modal-btn { width: auto; flex: 0 0 auto; }
+.settings-page .btn:not(.btn-primary):not(.btn-danger) { background: var(--ip-fill); color: var(--ip-blue); }
+.settings-page .settings-inline-edit > .settings-status:empty { display: none; }
+
+/* The switch sits at the trailing edge, its label leading — as on every other pane. */
+.settings-page .toggle-row { flex-direction: row; }
+.settings-page .toggle-row input[type="checkbox"] { order: 2; margin-left: auto; }
+
+/* Panes hide and show whole cards. A hidden card must neither donate a gap to
+   the card after it nor swallow the gap between the visible ones around it. */
+.settings-page .settings-card[hidden] + .settings-card { margin-top: 0; }
+.settings-page .settings-card:not([hidden]) + [hidden] + .settings-card { margin-top: 16px; }
+
+/* Contacts: the import/export tools take the card's inset like everything else. */
+.settings-page .contact-tools { padding: 10px 16px; }
+
+/* "← Back to inbox" broke onto two lines in a phone's top bar. */
+.settings-page .settings-back { white-space: nowrap; }
+@media (max-width: 480px) {
+  .settings-page .settings-back > span { font-size: 15px; }
 }
