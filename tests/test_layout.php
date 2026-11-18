@@ -939,3 +939,12 @@ t_ok('the font token leads with Segoe UI, then the bundled Inter',
 t_ok('no page names the device system font ahead of it', strpos($css, '"SF Pro Text"') === false
      && preg_match('/font-family:\s*-apple-system/', $css) === 0);
 t_ok('Inter ships with the app', is_file(T_ROOT . '/assets/fonts/inter-latin.woff2'));
+
+t_group('search results in the workspace shell');
+t_ok('the matched line is readable on the open result', strpos($css, '.mail-page .search-result.active .msg-snippet { color: var(--m-label-2); opacity: 1; }') !== false);
+t_ok('the folder tag is one quiet tag in both themes', strpos($css, ".mail-page .msg-folder-badge,\n.mail-page .msg-folder-badge[data-folder-type] {") !== false);
+t_ok('the two widen/narrow buttons use label ink', preg_match('/\.mail-page \.search-fulltext-cta \{[^}]*color: var\(--m-label\);/', $css) === 1);
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('a search that found nothing is not offered again',
+     strpos($js, 'function forgetSearch(q)') !== false
+     && strpos($js, 'if (!searchTotal && page === 1 && !(data.errors && data.errors.length)) forgetSearch(q);') !== false);

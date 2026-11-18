@@ -8067,3 +8067,40 @@ html.theme-dark .mail-page { --o-band: #2a2a2d; }
   background: var(--o-band);
   z-index: 3;
 }
+
+/* Search results on the open row. These were written for white text on a blue
+   row; on the tint the open row now has, the matched line and the folder tag
+   were white on pale blue — there, but unreadable. */
+.mail-page .search-result.active .msg-snippet { color: var(--m-label-2); opacity: 1; }
+.mail-page .search-result.active .msg-folder-badge {
+  color: var(--m-label);
+  background: var(--m-fill);
+  border-color: var(--m-sep);
+}
+
+/* The folder tag on a result says where the message is; it does not need its
+   own colour to do that, and the tinted versions fell under 4.5:1 on the
+   top-result tint and in the dark theme. One quiet tag, like the one on an
+   unfolded conversation. */
+.mail-page .msg-folder-badge,
+.mail-page .msg-folder-badge[data-folder-type] {
+  height: 17px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--m-fill-2);
+  color: var(--m-label);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* "Subjects and senders only" / "Search every folder": the old brand blue on a
+   pale blue plate measured 3.8:1 (3.2:1 dark). Same buttons, readable ink. */
+.mail-page .search-fulltext-cta {
+  background: var(--m-fill);
+  border-color: var(--m-sep);
+  color: var(--m-label);
+}
+.mail-page .search-fulltext-cta .icon { color: var(--m-blue); }
+.mail-page .search-fulltext-cta:hover { background: var(--m-fill-2); border-color: var(--m-sep); }

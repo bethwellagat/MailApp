@@ -1317,6 +1317,16 @@
             localStorage.setItem('mailapp.recentSearches', JSON.stringify(list.slice(0, 8)));
         } catch (e) {}
     }
+    /** A search that found nothing is not worth offering again. */
+    function forgetSearch(q) {
+        q = String(q || '').trim().toLowerCase();
+        if (!q) return;
+        try {
+            const list = recentSearches();
+            const kept = list.filter(x => x.toLowerCase() !== q);
+            if (kept.length !== list.length) localStorage.setItem('mailapp.recentSearches', JSON.stringify(kept));
+        } catch (e) {}
+    }
     function suggClose() {
         if (sugg.box) sugg.box.hidden = true;
         sugg.items = []; sugg.active = -1;
@@ -1692,6 +1702,8 @@
             searchPage          = data.page  || 1;
             searchPages         = data.pages || 1;
             searchTotal         = data.total || 0;
+            // Enter remembers a search before its answer is known; an empty answer takes it back.
+            if (!searchTotal && page === 1 && !(data.errors && data.errors.length)) forgetSearch(q);
             searchSort          = data.sort  || sort;
             searchMatched       = data.matched || '';
             searchNote          = data.note    || '';
