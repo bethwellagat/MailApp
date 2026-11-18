@@ -275,3 +275,36 @@ function thread_scan_chunks($total, $window, $chunk) {
     }
     return $out;
 }
+
+/**
+ * One line of a message for the unfolded conversation in the list: what the
+ * person wrote, not what they were replying to.
+ *
+ * A reply carries the whole exchange underneath it, so the opening of the raw
+ * text is fine but anything from the quote marker on is somebody else's words.
+ * The text arrives already flattened to one line (search_plain_text), so the
+ * markers are matched inline: "On … wrote:", Outlook's "From: … Sent:" block,
+ * "-----Original Message-----", and a run of "> " quoting.
+ */
+function thread_preview_text($text, $max = 140) {
+    $t = trim((string)preg_replace('/\s+/u', ' ', (string)$text));
+    if ($t === '') return '';
+    $cuts = [
+        '/\bOn\b.{5,160}?\bwrote:/us',
+        '/-{2,}\s*Original Message\s*-{2,}/iu',
+        '/\bFrom:\s.{1,200}?\b(Sent|Date):\s/us',
+        '/(^|\s)>\s?\S/u',
+    ];
+    $end = null;
+    foreach ($cuts as $re) {
+        if (preg_match($re, $t, $m, PREG_OFFSET_CAPTURE) && ($end === null || $m[0][1] < $end)) $end = $m[0][1];
+    }
+    // A message that is nothing but a quote keeps its text rather than going blank.
+    if ($end !== null && $end > 0) $t = trim(substr($t, 0, $end));
+    if (mb_strlen($t) <= $max) return $t;
+    $cut = mb_substr($t, 0, $max);
+    $sp  = mb_strrpos($cut, ' ');
+    if ($sp !== false && $sp > $max * 0.6) $cut = mb_substr($cut, 0, $sp);
+    return rtrim($cut, " ,;:.-") . '…';
+}
+

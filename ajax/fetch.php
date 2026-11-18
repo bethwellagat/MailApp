@@ -704,6 +704,8 @@ function build_thread_msg($mbox, $uid, $folder, $withBody) {
         'date'       => $h->date ?? '',
         'timestamp'  => isset($h->udate) ? (int)$h->udate : (int)strtotime($h->date ?? 'now'),
         'seen'       => empty($h->Unseen),
+        'flagged'    => (($h->Flagged ?? '') === 'F'),
+        'answered'   => (($h->Answered ?? '') === 'A'),
         'has_body'   => (bool)$withBody,
         'has_attachments' => false,
         'body'       => '',
@@ -1864,11 +1866,24 @@ if ($action === 'thread') {
         fail('Message not found');
     }
 
+    /* peek=1 is the message list unfolding a conversation in place: it wants to
+       know who wrote what and when, not to read anything. So nothing is marked
+       read, no body is loaded, and each message gets one line of its opening
+       text instead — fetched with FT_PEEK, which is what keeps it unread. */
+    $peek = !empty($_GET['peek']);
+
     $rawHeaders = @imap_fetchheader($mbox, $uid, FT_UID);
     $startInfo  = parse_thread_ids($rawHeaders);
-    $focused    = build_thread_msg($mbox, $uid, $folder, true);
+    $focused    = build_thread_msg($mbox, $uid, $folder, !$peek);
 
-    @imap_setflag_full($mbox, (string)$uid, '\\Seen', ST_UID);
+    if (!$peek) @imap_setflag_full($mbox, (string)$uid, '\\Seen', ST_UID);
+    if ($peek && $focused) {
+        $st = @imap_fetchstructure($mbox, $uid, FT_UID);
+        if ($st) {
+            $focused['has_attachments'] = structure_has_attachment($st);
+            $focused['preview'] = thread_preview_text((string)search_snippet_text($mbox, $uid, $st));
+        }
+    }
     @imap_close($mbox);
 
     if (!$focused) fail('Could not load message');
@@ -1884,7 +1899,7 @@ if ($action === 'thread') {
     if ($startInfo['msg_id'] === ''
         && $startInfo['in_reply_to'] === ''
         && empty($startInfo['references'])) {
-        contacts_harvest_messages($_SESSION['email'], [$focused]);
+        if (!$peek) contacts_harvest_messages($_SESSION['email'], [$focused]);
         ok([
             'thread'      => [$focused],
             'subject'     => $focused['subject'],
@@ -1996,15 +2011,22 @@ if ($action === 'thread') {
     // not the latest) already carries its body from build_thread_msg() above.
     // The thread is capped ($maxMessages), so this is a bounded number of
     // structure fetches — not the per-row N+1 the message list deliberately avoids.
-    $eagerCount = min(1, count($messages));
+    $eagerCount   = $peek ? 0 : min(1, count($messages));
+    $peekDeadline = microtime(true) + 6.0;
     foreach ($messages as $i => $_m) {
         $f       = $messages[$i]['folder'];
         $bodyUid = (int)$messages[$i]['uid'];
         if (!isset($boxes[$f]) || !$boxes[$f]) continue;
+        if ($peek && isset($messages[$i]['preview'])) continue;      // the focused one, done above
+        if ($peek && microtime(true) > $peekDeadline) break;          // rows still list, just without a line of text
         $structure = @imap_fetchstructure($boxes[$f], $bodyUid, FT_UID);
         if (!$structure) continue;
         $atts = enumerate_attachments($structure);
         $messages[$i]['has_attachments'] = has_visible_attachments($atts);
+        if ($peek) {
+            $messages[$i]['preview'] = thread_preview_text((string)search_snippet_text($boxes[$f], $bodyUid, $structure));
+            continue;
+        }
         if ($i < $eagerCount && empty($messages[$i]['has_body'])) {
             $body = extract_body($boxes[$f], $bodyUid, $structure);
             $messages[$i]['attachments'] = $atts;
@@ -2026,6 +2048,7 @@ if ($action === 'thread') {
     $markedRead = [];
     $toFlag     = [];
     foreach ($messages as $i => $m) {
+        if ($peek) break;                 // unfolding a conversation is not reading it
         if (!empty($m['seen'])) continue;
         $f = $m['folder'];
         if (empty($boxes[$f])) continue;
@@ -2039,7 +2062,7 @@ if ($action === 'thread') {
 
     foreach ($boxes as $box) { if ($box) @imap_close($box); }
 
-    contacts_harvest_messages($_SESSION['email'], $messages);
+    if (!$peek) contacts_harvest_messages($_SESSION['email'], $messages);
 
     ok([
         'thread'      => $messages,

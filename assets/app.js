@@ -53,6 +53,9 @@
         labels: [], labelsAcct: null,            // the account's label registry (ajax/labels.php)
         labelFlags: {}, labelChecked: new Set(), // uid → [label ids], filled after the list like paperclips
         pollInflight: false,
+        threadOpen: new Map(),                   // conversations unfolded in the list: key → { status, items }
+        threadSingle: new Set(),                 // rows that turned out to have nothing to unfold
+        currentChild: null,                      // "folder|uid" of the unfolded message that is open, if one is
     };
 
     let searchDebounceTimer = null;
@@ -1847,8 +1850,12 @@
         if (filterPane) filterPane.style.display = visible ? '' : 'none';
     }
 
+    let threadScope = '';
     function renderMessages() {
         if (state.searchActive) { renderSearchResults(); return; }
+        // What is unfolded belongs to the page of the folder it was unfolded on.
+        const scope = viewAcct() + '|' + state.currentFolder + '|' + state.currentPage;
+        if (scope !== threadScope) { threadScope = scope; state.threadOpen.clear(); state.threadSingle.clear(); }
         $('listFilters').hidden = false;
         if ($('searchFilters')) $('searchFilters').hidden = true;
         toggleFilterPane(true);
@@ -1945,8 +1952,22 @@
                          ' aria-selected="' + (state.selectedUids.has(m.uid) || isActive ? 'true' : 'false') + '"' +
                          ' tabindex="' + (isActive ? '0' : '-1') + '"';
 
+        // A conversation unfolds in place. The arrow is offered wherever there is
+        // reason to think there is more than this one message: several here, a
+        // reply you sent, or a message that is itself a reply.
+        const tKey = threadKey(m);
+        const tOpen = state.threadOpen.get(tKey);
+        const expander = canUnfold(m)
+            ? '<button class="msg-expander" type="button" data-action="expand" tabindex="-1" aria-expanded="' + (tOpen ? 'true' : 'false') + '"' +
+              ' aria-label="' + (tOpen ? 'Hide' : 'Show') + ' the messages in this conversation">' +
+              (tOpen ? '<svg class="icon" width="12" height="12"><use href="#ic-chev-down"/></svg>'
+                     : '<svg class="icon" width="12" height="12"><use href="#ic-chev-right"/></svg>') + '</button>'
+            : '';
+        if (tOpen) cls.push('unfolded');
+
         return (
             '<div class="' + cls.join(' ') + '"' + rowAttrs + ' draggable="true">' +
+                expander +
                 '<span class="msg-dot"></span>' +
                 '<button class="msg-select" type="button" data-action="select" tabindex="-1" aria-label="Select message">' +
                     '<span class="msg-avatar" style="background:' + color + '">' + escapeHtml(initial) + '</span>' +
@@ -1963,8 +1984,114 @@
                     '<div class="msg-subject">' + labelChipsFor(m) + escapeHtml(m.subject || '(no subject)') + acctBadge + '</div>' +
                     '<div class="msg-preview">' + escapeHtml(m.preview || '') + '</div>' +
                 '</div>' +
-            '</div>'
+            '</div>' +
+            (tOpen ? renderThreadChildren(m, tOpen) : '')
         );
+    }
+
+    /* ---------- Conversations unfolded in the list ---------- */
+    function threadKey(m) {
+        return (m.acct || '') + '|' + (m.folder || state.currentFolder) + '|' + m.uid;
+    }
+    function canUnfold(m) {
+        if (state.currentFolder === OUTBOX_FOLDER || folderType(state.currentFolder) === 'drafts') return false;
+        if (state.threadSingle.has(threadKey(m))) return false;
+        return m.thread_count > 1 || !!m.answered || !!m.in_reply_to || !!m.references;
+    }
+    /** "Sent", "Inbox", or the folder's own last name — for a message that lives elsewhere. */
+    function folderShortName(name) {
+        const t = folderType(name);
+        if (t === 'sent') return 'Sent';
+        if (t === 'inbox') return 'Inbox';
+        if (t === 'trash') return 'Trash';
+        if (t === 'archive') return 'Archive';
+        return String(name || '').split(/[\.\/]/).pop();
+    }
+    function renderThreadChildren(m, entry) {
+        const parentFolder = m.folder || state.currentFolder;
+        if (entry.status === 'loading') {
+            return '<div class="msg-children" role="group"><div class="msg-child-note">Loading conversation…</div></div>';
+        }
+        if (entry.status === 'error') {
+            return '<div class="msg-children" role="group"><div class="msg-child-note msg-child-error">' + escapeHtml(entry.error || 'Could not load this conversation.') + '</div></div>';
+        }
+        let html = '<div class="msg-children" role="group" aria-label="Messages in this conversation">';
+        for (const c of entry.items) {
+            const cls = ['msg-child'];
+            if (!c.seen) cls.push('unread');
+            const isOpen = state.currentUid === m.uid && state.currentChild === (c.folder + '|' + c.uid);
+            if (isOpen) cls.push('active');
+            let ind = '';
+            if (c.has_attachments) ind += '<svg class="msg-indicator" width="12" height="12"><use href="#ic-paperclip"/></svg>';
+            if (c.answered)        ind += '<svg class="msg-indicator" width="12" height="12"><use href="#ic-replied"/></svg>';
+            if (c.flagged)         ind += '<svg class="msg-indicator msg-indicator-pin" width="12" height="12"><use href="#ic-pin"/></svg>';
+            // A message from another folder says which; one from here says when.
+            const elsewhere = c.folder && c.folder.toLowerCase() !== parentFolder.toLowerCase();
+            const when = elsewhere
+                ? '<span class="msg-child-folder" title="' + escapeAttr(formatTime(c.timestamp)) + '">' + escapeHtml(folderShortName(c.folder)) + '</span>'
+                : '<span class="msg-child-when">' + escapeHtml(formatTime(c.timestamp)) + '</span>';
+            html +=
+                '<div class="' + cls.join(' ') + '" role="option" tabindex="-1" aria-selected="' + (isOpen ? 'true' : 'false') + '"' +
+                    ' data-parent-uid="' + m.uid + '" data-child-uid="' + c.uid + '" data-child-folder="' + escapeAttr(c.folder || parentFolder) + '">' +
+                    '<div class="msg-child-row1">' +
+                        '<span class="msg-child-from">' + escapeHtml(c.from_name || c.from_addr || '(unknown)') + '</span>' +
+                        '<span class="msg-meta">' + ind + '</span>' +
+                    '</div>' +
+                    '<div class="msg-child-row2">' +
+                        '<span class="msg-child-preview">' + escapeHtml(c.preview || c.subject || '') + '</span>' +
+                        when +
+                    '</div>' +
+                '</div>';
+        }
+        return html + '</div>';
+    }
+    /** Fold or unfold one conversation. Unfolding reads nothing: the server is asked to peek. */
+    async function toggleThread(uid) {
+        const m = state.messages.find(x => x.uid === uid);
+        if (!m) return;
+        const key = threadKey(m);
+        const list = $('messageList');
+        const refocus = () => {
+            const row = list.querySelector('.msg-item[data-uid="' + uid + '"]');
+            if (row) focusMessageRow(row);
+        };
+        const hadFocus = list.contains(document.activeElement);
+        if (state.threadOpen.has(key)) {
+            state.threadOpen.delete(key);
+            if (state.currentUid === uid) state.currentChild = null;
+            renderMessages();
+            if (hadFocus) refocus();
+            return;
+        }
+        const entry = { status: 'loading', items: [] };
+        state.threadOpen.set(key, entry);
+        renderMessages();
+        if (hadFocus) refocus();
+        const data = await apiGet('thread', withAcct({ folder: m.folder || state.currentFolder, uid, peek: 1 }, m.acct || viewAcct()));
+        if (state.threadOpen.get(key) !== entry) return;     // folded again, or the list moved on
+        if (!data || data.error) {
+            entry.status = 'error';
+            entry.error = (data && data.error) || 'Could not load this conversation.';
+        } else {
+            entry.items = Array.isArray(data.thread) ? data.thread : [];
+            entry.status = 'ready';
+            if (entry.items.length <= 1) {
+                // Nothing to unfold after all: say so once and stop offering it.
+                state.threadOpen.delete(key);
+                state.threadSingle.add(key);
+                showToast('This is the only message in the conversation.');
+            }
+        }
+        const keepFocus = list.contains(document.activeElement);
+        renderMessages();
+        if (keepFocus) refocus();
+    }
+    /** Open the conversation at one of its unfolded messages. */
+    function openThreadChild(el) {
+        const parentUid = parseInt(el.dataset.parentUid, 10);
+        const uid = parseInt(el.dataset.childUid, 10);
+        if (isNaN(parentUid) || isNaN(uid)) return;
+        loadMessage(parentUid, { uid, folder: el.dataset.childFolder });
     }
 
     function renderPagination() {
@@ -1979,6 +2106,7 @@
     /* ---------- Reading pane ---------- */
     function clearReadingPane() {
         state.currentUid = null;
+        state.currentChild = null;
         state.currentMessage = null;
         $('readingEmpty').classList.remove('hidden');
         $('readingContent').classList.add('hidden');
@@ -1988,9 +2116,14 @@
     }
 
     let loadMessageSeq = 0;
-    async function loadMessage(uid) {
+    /* `focus` opens the conversation at one particular message — a row of an
+       unfolded thread, which may live in another folder. state.currentUid stays
+       the LIST ROW's uid either way: Delete, Move and the rest act on the row,
+       and a uid from Sent must never be applied to the folder on screen. */
+    async function loadMessage(uid, focus) {
         const seq = ++loadMessageSeq;
         state.currentUid = uid;
+        state.currentChild = focus ? (focus.folder + '|' + focus.uid) : null;
         renderMessages();
 
         // Route the thread fetch to the mailbox that actually owns this row.
@@ -2009,7 +2142,9 @@
         $('readThread').innerHTML = '<div class="list-loading" style="text-align:left;padding:8px 0;">Loading conversation…</div>';
         updateExpandAllBtn();   // no cards yet — do not leave the last thread's toggle on screen
 
-        const data = await apiGet('thread', withAcct({ folder: msgFolder, uid }, msgAcct));
+        const fetchUid    = focus ? focus.uid : uid;
+        const fetchFolder = (focus && focus.folder) || msgFolder;
+        const data = await apiGet('thread', withAcct({ folder: fetchFolder, uid: fetchUid }, msgAcct));
         if (seq !== loadMessageSeq) return; // a newer message open superseded this one
         if (data.error) {
             $('readThread').innerHTML = '<div style="color:var(--c-error)">' + escapeHtml(data.error) + '</div>';
@@ -2019,12 +2154,19 @@
         }
 
         const thread = data.thread || [];
-        const focused = thread.find(m => m.uid === uid && (!m.folder || m.folder === msgFolder)) || thread[0];
+        const focused = thread.find(m => m.uid === fetchUid && (!m.folder || m.folder === fetchFolder)) || thread[0];
         state.currentThread = thread;
         state.currentMessage = focused;
 
         renderThread(data, focused);
         updateUnsubscribeBtn(focused);
+
+        // Opening a conversation reads all of it, so its unfolded rows stop being bold too.
+        const openEntry = srcMsg && state.threadOpen.get(threadKey(srcMsg));
+        if (openEntry && openEntry.items.some(i => !i.seen)) {
+            openEntry.items.forEach(i => { i.seen = true; });
+            if (!srcMsg || srcMsg.seen) renderMessages();
+        }
 
         const m = state.messages.find(x => x.uid === uid);
         if (m && !m.seen) {
@@ -4766,6 +4908,17 @@
                 if (state.searchQuery) runServerSearch(state.searchQuery, 'headers', searchResultWhere);
                 return;
             }
+            // An unfolded message: open the conversation at it.
+            const child = e.target.closest('.msg-child');
+            if (child) { openThreadChild(child); return; }
+            // The arrow folds and unfolds; it neither opens nor selects the row.
+            const exp = e.target.closest('[data-action="expand"]');
+            if (exp) {
+                const row = exp.closest('.msg-item');
+                const rowUid = row ? parseInt(row.dataset.uid, 10) : NaN;
+                if (!isNaN(rowUid)) toggleThread(rowUid);
+                return;
+            }
             const item = e.target.closest('.msg-item');
             if (!item) return;
             const uid = parseInt(item.dataset.uid, 10);
@@ -4813,9 +4966,39 @@
         // fire when focus is NOT inside a control, so once a row had real focus the
         // list became unusable without this.
         $('messageList').addEventListener('keydown', (e) => {
+            // Inside an unfolded conversation: Enter opens, the arrows walk it,
+            // and Left goes back up to the conversation's own row.
+            const kid = e.target.closest && e.target.closest('.msg-child');
+            if (kid) {
+                const parentRow = $('messageList').querySelector('.msg-item[data-uid="' + kid.dataset.parentUid + '"]');
+                const sibs = Array.from(kid.parentNode.querySelectorAll('.msg-child'));
+                const at = sibs.indexOf(kid);
+                // Handled here in full: the page-wide j/k/arrow shortcuts would
+                // otherwise also fire and move on to the next conversation.
+                if (['Enter', ' ', 'Spacebar', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'Escape'].includes(e.key)) e.stopPropagation();
+                switch (e.key) {
+                    case 'Enter': case ' ': case 'Spacebar': e.preventDefault(); openThreadChild(kid); return;
+                    case 'ArrowDown': e.preventDefault(); if (sibs[at + 1]) sibs[at + 1].focus(); return;
+                    case 'ArrowUp':   e.preventDefault(); if (at > 0) sibs[at - 1].focus(); else if (parentRow) focusMessageRow(parentRow); return;
+                    case 'ArrowLeft': case 'Escape': e.preventDefault(); if (parentRow) focusMessageRow(parentRow); return;
+                }
+                return;
+            }
             const row = e.target.closest && e.target.closest('.msg-item');
             if (!row) return;
             const uid = parseInt(row.dataset.uid, 10);
+            // Right unfolds (or steps into what is unfolded); Left folds.
+            if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && !isNaN(uid) && row.querySelector('.msg-expander')) {
+                e.preventDefault();
+                const open = row.classList.contains('unfolded');
+                if (e.key === 'ArrowRight' && open) {
+                    const first = row.nextElementSibling && row.nextElementSibling.querySelector('.msg-child');
+                    if (first) first.focus();
+                } else if ((e.key === 'ArrowRight') !== open) {
+                    toggleThread(uid);
+                }
+                return;
+            }
             switch (e.key) {
                 case 'Enter':
                 case ' ':

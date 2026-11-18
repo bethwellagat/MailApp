@@ -546,3 +546,36 @@ t_eq('one message, one chunk',  thread_scan_chunks(1, 400, 100), [[1, 1]]);
 t_eq('a folder smaller than the window is read whole',
      thread_scan_chunks(5, 400, 100), [[1, 5]]);
 t_ok('a zero chunk size cannot loop forever', count(thread_scan_chunks(10, 400, 0)) === 10);
+
+t_group('one line of a message for the unfolded conversation');
+t_eq('short text is kept whole', thread_preview_text('Thank you, looking forward to it!'), 'Thank you, looking forward to it!');
+t_eq('white space is flattened', thread_preview_text("Dear Adam,\r\n\r\n  Good   evening."), 'Dear Adam, Good evening.');
+t_eq('empty stays empty', thread_preview_text(''), '');
+t_eq('the quoted exchange under a reply is dropped',
+     thread_preview_text('Noted, will do. On Mon, 26 Oct 2026 at 10:14, Adam Ridhiwani <adam@x.test> wrote: Dear Dennis, please confirm'),
+     'Noted, will do.');
+t_eq('…Outlook\'s header block too',
+     thread_preview_text('Approved. From: Adam Ridhiwani Sent: Monday, October 26, 2026 To: Dennis Subject: RE: Quote Dear Dennis'),
+     'Approved.');
+t_eq('…and an original-message rule',
+     thread_preview_text('See below. -----Original Message----- From: someone'), 'See below.');
+t_eq('…and > quoting', thread_preview_text('Yes please. > Shall we go ahead? > Thanks'), 'Yes please.');
+t_eq('a message that is only a quote keeps its text rather than going blank',
+     thread_preview_text('> Shall we go ahead?'), '> Shall we go ahead?');
+t_eq('"On" in ordinary prose is not a quote marker',
+     thread_preview_text('On Friday we will deliver the radios to site.'), 'On Friday we will deliver the radios to site.');
+$long = thread_preview_text(str_repeat('satellite handset rental ', 20));
+t_ok('long text is cut at a word and marked', mb_strlen($long) <= 141 && mb_substr($long, -1) === '…' && !preg_match('/\s…$/u', $long), $long);
+t_eq('non-Latin text is cut by characters, not bytes', mb_strlen(thread_preview_text(str_repeat('مرحبا بالعالم ', 30))) <= 141, true);
+
+t_group('unfolding a conversation in the list reads nothing');
+$f  = (string)@file_get_contents(T_ROOT . '/ajax/fetch.php');
+$js = (string)@file_get_contents(T_ROOT . '/assets/app.js');
+t_ok('the thread action has a peek mode', strpos($f, "\$peek = !empty(\$_GET['peek']);") !== false);
+t_ok('peek does not flag the opened message as read', strpos($f, "if (!\$peek) @imap_setflag_full(\$mbox, (string)\$uid, '\\\\Seen', ST_UID);") !== false);
+t_ok('peek does not flag the rest of the conversation either', strpos($f, 'if ($peek) break;                 // unfolding a conversation is not reading it') !== false);
+t_ok('peek loads no body', strpos($f, 'build_thread_msg($mbox, $uid, $folder, !$peek)') !== false && strpos($f, '$eagerCount   = $peek ? 0 : min(1, count($messages));') !== false);
+t_ok('the one line of text is fetched without marking read', preg_match('/function search_snippet_text.*?FT_UID \| FT_PEEK/s', $f) === 1);
+t_ok('the list asks with peek', strpos($js, "uid, peek: 1 }") !== false);
+t_ok('the open row stays the list row, whichever message is shown', strpos($js, 'state.currentUid = uid;' . "\n" . '        state.currentChild = focus ?') !== false);
+t_ok('drafts and the outbox never unfold', strpos($js, "if (state.currentFolder === OUTBOX_FOLDER || folderType(state.currentFolder) === 'drafts') return false;") !== false);
